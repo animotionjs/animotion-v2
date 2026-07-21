@@ -1,10 +1,10 @@
 <script lang="ts">
 	import { page } from '$app/state';
-	import { deck } from '$lib/slides/config';
+	import { deck } from '#lib/slides/config';
 	import { goto } from '$app/navigation';
-	import favicon from '$lib/assets/favicon.svg';
-	import { SceneManager } from '$lib/timeline/runtime.svelte';
-	import { setSceneManager } from '$lib/timeline/context.svelte';
+	import favicon from '#lib/assets/favicon.svg';
+	import { SceneManager } from '#lib/timeline/runtime.svelte';
+	import { setSceneManager } from '#lib/timeline/context.svelte';
 	import './theme.css';
 
 	let { children } = $props();
