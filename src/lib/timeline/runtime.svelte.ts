@@ -1,5 +1,7 @@
 import { untrack } from 'svelte';
+import { SvelteSet } from 'svelte/reactivity';
 import { getSceneManager } from './context.svelte';
+import { signalManager, type Signal } from './signal.svelte';
 
 export const PAUSE = Symbol('pause');
 export const TICK = Symbol('tick');
@@ -18,6 +20,12 @@ export class SceneManager {
 	#totalSteps = $state(0);
 	#rafId: number | null = null;
 	#gen: Generator | null = null;
+	#factory: (() => Generator) | null = null;
+	#signals = new SvelteSet<Signal<unknown>>();
+
+	register(signal: Signal<unknown>): void {
+		this.#signals.add(signal);
+	}
 
 	get finished(): boolean {
 		return this.#phase === 'finished';
@@ -38,6 +46,9 @@ export class SceneManager {
 
 	attach(factory: () => Generator) {
 		this.detach();
+		this.#factory = factory;
+		this.#signals.clear();
+		signalManager.currentManager = this;
 
 		const gen = factory();
 		const result = gen.next(0);
@@ -53,11 +64,13 @@ export class SceneManager {
 	}
 
 	detach() {
+		signalManager.currentManager = null;
 		this.#stopLoop();
 		this.#gen = null;
 		this.#phase = 'finished';
 		this.#step = 0;
 		this.#totalSteps = 0;
+		this.#signals.clear();
 	}
 
 	next() {
@@ -75,8 +88,46 @@ export class SceneManager {
 		}
 	}
 
-	prev() {
-		// no-op in v1
+	async prev() {
+		if (this.#step === 0) return;
+		const target = this.#step - 1;
+		const factory = this.#factory;
+		if (!factory) return;
+
+		this.#stopLoop();
+		this.#gen = null;
+		this.#phase = 'paused';
+		this.#step = 0;
+		this.#totalSteps = 0;
+
+		for (const sig of this.#signals) sig.reset();
+
+		signalManager.currentManager = this;
+		const gen = factory();
+		this.#gen = gen;
+		let r = gen.next(0);
+
+		while (this.#step < target && !r.done) {
+			while (r.value !== PAUSE && r.value !== TICK && !r.done) {
+				r = gen.next(Infinity);
+			}
+			if (r.done) break;
+
+			if (r.value === TICK) {
+				await raf();
+				r = gen.next(0);
+				continue;
+			}
+
+			this.#step++;
+			if (this.#step > this.#totalSteps) this.#totalSteps = this.#step;
+			if (this.#step >= target) break;
+
+			await raf();
+			r = gen.next(0);
+		}
+
+		if (r.done) this.#phase = 'finished';
 	}
 
 	#advance(initial: IteratorResult<unknown, void>) {
@@ -161,7 +212,11 @@ export class SceneManager {
 	}
 }
 
-export function useScene(sceneFactory: () => Generator) {
+function raf(): Promise<void> {
+	return new Promise((resolve) => requestAnimationFrame(() => resolve()));
+}
+
+export function scene(sceneFactory: () => Generator) {
 	const manager = getSceneManager();
 
 	$effect(() => {

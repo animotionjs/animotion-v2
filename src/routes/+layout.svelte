@@ -33,6 +33,8 @@
 			e.preventDefault();
 			if (manager.step === 0) {
 				if (index > 0) goto('/' + deck[index - 1].slug);
+			} else {
+				manager.prev();
 			}
 		}
 	}}

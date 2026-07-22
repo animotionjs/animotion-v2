@@ -1,25 +1,34 @@
+import { flushSync } from 'svelte';
 import { clamp, easeInOut, lerp } from './easing';
-import { tick } from './runtime.svelte';
 
-export function* flip(
+export function* layout(
 	layoutChange: () => void,
 	duration = 0.5,
 	ease: (t: number) => number = easeInOut
 ): Generator<unknown, void, number> {
-	const elements = [...document.querySelectorAll('[data-flip-key]')] as HTMLElement[];
+	const elements = [...document.querySelectorAll('[data-layout]')] as HTMLElement[];
 	const firstBounds: Record<string, DOMRect> = {};
 	for (const el of elements) {
-		firstBounds[el.dataset.flipKey!] = el.getBoundingClientRect();
+		const rect = el.getBoundingClientRect();
+		if (rect.width > 0 && rect.height > 0) {
+			firstBounds[el.dataset.layout!] = rect;
+		}
 	}
 
 	layoutChange();
-	yield tick();
+	flushSync();
 
-	const lastElements = [...document.querySelectorAll('[data-flip-key]')] as HTMLElement[];
+	const lastElements = [...document.querySelectorAll('[data-layout]')] as HTMLElement[];
 	const tweens = lastElements.flatMap((el) => {
-		const prev = firstBounds[el.dataset.flipKey!];
-		if (!prev) return [];
 		const curr = el.getBoundingClientRect();
+		const prev = firstBounds[el.dataset.layout!];
+
+		if (!prev) {
+			// el.style.transform = 'scale(0, 0)';
+			// return { el, deltaX: 0, deltaY: 0, scaleX: 0, scaleY: 0 };
+			return { el, deltaX: 0, deltaY: 0 };
+		}
+
 		const deltaX = prev.left - curr.left;
 		const deltaY = prev.top - curr.top;
 		const scaleX = prev.width / curr.width;
