@@ -17,13 +17,11 @@
 </script>
 
 <div class="grid place-items-center gap-16">
-	<p data-layout="title" style:opacity={opacity()} class="text-9xl font-bold">
-		🪄 Animotion
-	</p>
+	<p data-layout="title" style:opacity={opacity()} class="text-6xl font-bold">🪄 Animotion</p>
 
 	<div
 		data-layout="circle"
 		style:scale={scale()}
-		class={['h-80 w-80 rounded-full bg-amber-400', { hidden: hidden() }]}
+		class={['h-48 w-48 rounded-full bg-amber-400', { hidden: hidden() }]}
 	></div>
 </div>
