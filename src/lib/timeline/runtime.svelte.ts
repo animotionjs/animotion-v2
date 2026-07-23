@@ -1,17 +1,11 @@
 import { untrack } from 'svelte';
-import { SvelteSet } from 'svelte/reactivity';
 import { getSceneManager } from './context.svelte';
-import { signalManager, type Signal } from './signal.svelte';
+import { signalManager } from './signal.svelte';
 
 export const PAUSE = Symbol('pause');
-export const TICK = Symbol('tick');
 
 export function pause() {
 	return PAUSE;
-}
-
-export function tick() {
-	return TICK;
 }
 
 export class SceneManager {
@@ -21,9 +15,9 @@ export class SceneManager {
 	#rafId: number | null = null;
 	#gen: Generator | null = null;
 	#factory: (() => Generator) | null = null;
-	#signals = new SvelteSet<Signal<unknown>>();
+	#signals = new Set<{ reset(): void }>();
 
-	register(signal: Signal<unknown>): void {
+	register(signal: { reset(): void }): void {
 		this.#signals.add(signal);
 	}
 
@@ -70,6 +64,7 @@ export class SceneManager {
 		this.#phase = 'finished';
 		this.#step = 0;
 		this.#totalSteps = 0;
+		for (const sig of this.#signals) sig.reset();
 		this.#signals.clear();
 	}
 
@@ -108,16 +103,10 @@ export class SceneManager {
 		let r = gen.next(0);
 
 		while (this.#step < target && !r.done) {
-			while (r.value !== PAUSE && r.value !== TICK && !r.done) {
+			while (r.value !== PAUSE && !r.done) {
 				r = gen.next(Infinity);
 			}
 			if (r.done) break;
-
-			if (r.value === TICK) {
-				await raf();
-				r = gen.next(0);
-				continue;
-			}
 
 			this.#step++;
 			if (this.#step > this.#totalSteps) this.#totalSteps = this.#step;
@@ -157,30 +146,8 @@ export class SceneManager {
 		this.#phase = 'tweening';
 
 		let lastTimestamp = performance.now();
-		let awaitingCommit = false;
 
 		const onFrame = (now: number) => {
-			if (awaitingCommit) {
-				awaitingCommit = false;
-				const result = gen.next(0);
-				lastTimestamp = now;
-
-				if (result.done) {
-					this.#phase = 'finished';
-					return;
-				}
-				if (result.value === PAUSE) {
-					this.#crossPause();
-					this.#phase = 'paused';
-					return;
-				}
-				if (result.value === TICK) {
-					awaitingCommit = true;
-				}
-				this.#rafId = requestAnimationFrame(onFrame);
-				return;
-			}
-
 			const delta = (now - lastTimestamp) / 1000;
 			lastTimestamp = now;
 			const result = gen.next(delta);
@@ -193,9 +160,6 @@ export class SceneManager {
 				this.#crossPause();
 				this.#phase = 'paused';
 				return;
-			}
-			if (result.value === TICK) {
-				awaitingCommit = true;
 			}
 			this.#rafId = requestAnimationFrame(onFrame);
 		};

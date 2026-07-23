@@ -1,10 +1,10 @@
 import { clamp, easeInOut, lerp } from './easing';
 
 interface SignalManager {
-	register(signal: Signal<unknown>): void;
+	register(signal: { reset(): void }): void;
 }
 
-interface Signal<T = number> {
+export interface Signal<T = number> {
 	(): T;
 	(v: T): void;
 	readonly initial: T;
@@ -19,16 +19,16 @@ export const signalManager = {
 export function signal<T>(initial: T): Signal<T> {
 	let value = $state(initial);
 
-	function s(v?: T) {
-		signalManager.currentManager?.register(s);
+	function s(): T;
+	function s(v: T): void;
+	function s(v?: T): T | void {
 		if (v === undefined) return value;
 		value = v;
 	}
 
-	return Object.assign(s, {
+	const obj = Object.assign(s, {
 		initial,
 		tween: function* (to: number, dur: number, ease = easeInOut) {
-			signalManager.currentManager?.register(s);
 			const from = value as number;
 			let elapsed = 0;
 			while (elapsed < dur) {
@@ -41,5 +41,8 @@ export function signal<T>(initial: T): Signal<T> {
 		reset: () => {
 			value = initial;
 		}
-	}) as Signal<T>;
+	}) as unknown as Signal<T>;
+
+	signalManager.currentManager?.register(obj);
+	return obj;
 }

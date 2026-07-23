@@ -25,8 +25,7 @@ export function* layout(
 
 		if (!prev) {
 			// el.style.transform = 'scale(0, 0)';
-			// return { el, deltaX: 0, deltaY: 0, scaleX: 0, scaleY: 0 };
-			return { el, deltaX: 0, deltaY: 0 };
+			return { el, deltaX: 0, deltaY: 0, scaleX: 1, scaleY: 1 };
 		}
 
 		const deltaX = prev.left - curr.left;
