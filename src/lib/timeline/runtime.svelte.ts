@@ -1,32 +1,22 @@
-import { untrack } from 'svelte';
-import { getSceneManager } from './context.svelte';
-import { signalManager } from './signal.svelte';
-
-export const PAUSE = Symbol('pause');
-
-export function pause() {
-	return PAUSE;
-}
+import type { Step } from './steps';
 
 export class SceneManager {
 	#phase: 'paused' | 'tweening' | 'finished' = $state('finished');
-	#step = $state(0);
+	#stepIndex = $state(0);
 	#totalSteps = $state(0);
+	#steps: Step[] = [];
+	#reset: (() => void) | null = null;
+	#elapsed = 0;
+	#stepCompleted = false;
 	#rafId: number | null = null;
-	#gen: Generator | null = null;
-	#factory: (() => Generator) | null = null;
-	#signals = new Set<{ reset(): void }>();
-
-	register(signal: { reset(): void }): void {
-		this.#signals.add(signal);
-	}
+	#lastFrame = 0;
 
 	get finished(): boolean {
 		return this.#phase === 'finished';
 	}
 
 	get step(): number {
-		return this.#step;
+		return this.#stepIndex;
 	}
 
 	get totalSteps(): number {
@@ -35,156 +25,172 @@ export class SceneManager {
 
 	get completion(): number {
 		if (this.#phase === 'finished') return 1;
-		return Math.min(this.#step / (this.#totalSteps + 1), 1);
+		if (this.#totalSteps === 0) return 0;
+
+		let progress = 0;
+		if (this.#stepCompleted) {
+			progress = 1;
+		} else if (this.#phase === 'tweening') {
+			const step = this.#currentStep();
+			if (step && step.duration > 0) {
+				progress = Math.min(this.#elapsed / step.duration, 1);
+			}
+		}
+
+		return (this.#stepIndex + progress) / this.#totalSteps;
 	}
 
-	attach(factory: () => Generator) {
+	attach({ steps, reset }: { steps: Step[]; reset: () => void }): void {
 		this.detach();
-		this.#factory = factory;
-		this.#signals.clear();
-		signalManager.currentManager = this;
+		this.#steps = steps;
+		this.#reset = reset;
+		this.#totalSteps = steps.length;
 
-		const gen = factory();
-		const result = gen.next(0);
-		this.#gen = gen;
-
-		if (result.done) {
+		if (steps.length === 0) {
 			this.#phase = 'finished';
 			return;
 		}
-		this.#phase = 'paused';
-		this.#step = 0;
-		this.#totalSteps = 0;
+
+		this.#enterStep(0);
 	}
 
-	detach() {
-		signalManager.currentManager = null;
+	detach(): void {
 		this.#stopLoop();
-		this.#gen = null;
+		this.#currentStep()?.exit();
+		this.#steps = [];
+		this.#reset = null;
 		this.#phase = 'finished';
-		this.#step = 0;
+		this.#stepIndex = 0;
 		this.#totalSteps = 0;
-		for (const sig of this.#signals) sig.reset();
-		this.#signals.clear();
+		this.#elapsed = 0;
+		this.#stepCompleted = false;
 	}
 
-	next() {
+	next(): void {
 		if (this.#phase === 'finished') return;
-		const gen = this.#gen;
-		if (!gen) return;
 
 		if (this.#phase === 'tweening') {
 			this.#stopLoop();
-			const result = gen.next(Infinity);
-			this.#advance(result);
+			this.#currentStep()?.setProgress(1);
+			this.#currentStep()?.exit();
+			this.#stepCompleted = false;
+			this.#advance();
+			this.#playCurrent();
+			return;
+		}
+
+		if (this.#stepCompleted) {
+			this.#stepCompleted = false;
+			this.#advance();
+			this.#playCurrent();
 		} else {
-			const result = gen.next(0);
-			this.#advance(result);
+			this.#phase = 'tweening';
+			this.#startLoop();
 		}
 	}
 
-	async prev() {
-		if (this.#step === 0) return;
-		const target = this.#step - 1;
-		const factory = this.#factory;
-		if (!factory) return;
+	prev(): void {
+		if (this.#stepIndex === 0) return;
 
+		const target = this.#stepIndex - 1;
 		this.#stopLoop();
-		this.#gen = null;
+		this.#reset?.();
+
+		this.#stepIndex = 0;
+		this.#elapsed = 0;
+		this.#stepCompleted = false;
+
+		while (this.#stepIndex < target) {
+			const step = this.#steps[this.#stepIndex];
+			if (!step) break;
+			step.enter();
+			step.setProgress(1);
+			step.exit();
+			this.#stepIndex++;
+		}
+
+		const step = this.#steps[target];
+		if (step) {
+			step.enter();
+			this.#phase = 'paused';
+			this.#stepCompleted = false;
+		}
+	}
+
+	#currentStep(): Step | undefined {
+		return this.#steps[this.#stepIndex];
+	}
+
+	#playCurrent(): void {
+		const step = this.#currentStep();
+		if (step && step.duration > 0) {
+			this.#phase = 'tweening';
+			this.#startLoop();
+		}
+	}
+
+	#enterStep(index: number): void {
+		const step = this.#steps[index];
+		if (!step) return;
+
+		step.enter();
+		this.#elapsed = 0;
+		this.#stepCompleted = false;
 		this.#phase = 'paused';
-		this.#step = 0;
-		this.#totalSteps = 0;
-
-		for (const sig of this.#signals) sig.reset();
-
-		signalManager.currentManager = this;
-		const gen = factory();
-		this.#gen = gen;
-		let r = gen.next(0);
-
-		while (this.#step < target && !r.done) {
-			while (r.value !== PAUSE && !r.done) {
-				r = gen.next(Infinity);
-			}
-			if (r.done) break;
-
-			this.#step++;
-			if (this.#step > this.#totalSteps) this.#totalSteps = this.#step;
-			if (this.#step >= target) break;
-
-			await raf();
-			r = gen.next(0);
-		}
-
-		if (r.done) this.#phase = 'finished';
 	}
 
-	#advance(initial: IteratorResult<unknown, void>) {
-		let result = initial;
+	#advance(): void {
+		this.#stepIndex++;
+		this.#elapsed = 0;
+		this.#stepCompleted = false;
 
-		while (!result.done) {
-			if (result.value !== PAUSE) {
-				this.#startLoop();
-				return;
-			}
-			this.#crossPause();
-			result = this.#gen!.next(0);
+		if (this.#stepIndex >= this.#steps.length) {
+			this.#phase = 'finished';
+			return;
 		}
 
-		this.#phase = 'finished';
+		this.#enterStep(this.#stepIndex);
 	}
 
-	#crossPause() {
-		this.#step++;
-		if (this.#step > this.#totalSteps) {
-			this.#totalSteps = this.#step;
-		}
-	}
+	#startLoop(): void {
+		const step = this.#currentStep();
+		if (!step) return;
 
-	#startLoop() {
-		const gen = this.#gen!;
 		this.#phase = 'tweening';
-
-		let lastTimestamp = performance.now();
+		this.#lastFrame = performance.now();
 
 		const onFrame = (now: number) => {
-			const delta = (now - lastTimestamp) / 1000;
-			lastTimestamp = now;
-			const result = gen.next(delta);
+			const delta = (now - this.#lastFrame) / 1000;
+			this.#lastFrame = now;
 
-			if (result.done) {
-				this.#phase = 'finished';
+			this.#elapsed += delta;
+			const progress = this.#elapsed / step.duration;
+			step.setProgress(progress);
+
+			if (progress >= 1) {
+				step.exit();
+				this.#stepCompleted = true;
+				this.#rafId = null;
+				if (this.#stepIndex >= this.#steps.length - 1) {
+					this.#phase = 'finished';
+				} else {
+					this.#phase = 'paused';
+				}
 				return;
 			}
-			if (result.value === PAUSE) {
-				this.#crossPause();
-				this.#phase = 'paused';
-				return;
-			}
+
+			if (this.#phase !== 'tweening') return;
+
 			this.#rafId = requestAnimationFrame(onFrame);
 		};
 
-		lastTimestamp = performance.now();
 		this.#rafId = requestAnimationFrame(onFrame);
 	}
 
-	#stopLoop() {
+	#stopLoop(): void {
 		if (this.#rafId !== null) {
 			cancelAnimationFrame(this.#rafId);
 			this.#rafId = null;
 		}
 	}
-}
-
-function raf(): Promise<void> {
-	return new Promise((resolve) => requestAnimationFrame(() => resolve()));
-}
-
-export function scene(sceneFactory: () => Generator) {
-	const manager = getSceneManager();
-
-	$effect(() => {
-		untrack(() => manager.attach(sceneFactory));
-		return () => manager.detach();
-	});
 }
