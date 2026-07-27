@@ -26,22 +26,12 @@ export class SceneManager {
 	get completion(): number {
 		if (this.#phase === 'finished') return 1;
 		if (this.#totalSteps === 0) return 0;
-
-		let progress = 0;
-		if (this.#stepCompleted) {
-			progress = 1;
-		} else if (this.#phase === 'tweening') {
-			const step = this.#currentStep();
-			if (step && step.duration > 0) {
-				progress = Math.min(this.#elapsed / step.duration, 1);
-			}
-		}
-
-		return (this.#stepIndex + progress) / this.#totalSteps;
+		const done = this.#phase !== 'paused' || this.#stepCompleted;
+		return (this.#stepIndex + (done ? 1 : 0)) / this.totalSteps;
 	}
 
-	attach({ steps, reset }: { steps: Step[]; reset: () => void }): void {
-		this.detach();
+	load({ steps, reset }: { steps: Step[]; reset: () => void }) {
+		this.clear();
 		this.#steps = steps;
 		this.#reset = reset;
 		this.#totalSteps = steps.length;
@@ -54,9 +44,9 @@ export class SceneManager {
 		this.#enterStep(0);
 	}
 
-	detach(): void {
+	clear() {
 		this.#stopLoop();
-		this.#currentStep()?.exit();
+		this.#currentStep()?.end();
 		this.#steps = [];
 		this.#reset = null;
 		this.#phase = 'finished';
@@ -66,13 +56,13 @@ export class SceneManager {
 		this.#stepCompleted = false;
 	}
 
-	next(): void {
+	next() {
 		if (this.#phase === 'finished') return;
 
 		if (this.#phase === 'tweening') {
 			this.#stopLoop();
 			this.#currentStep()?.setProgress(1);
-			this.#currentStep()?.exit();
+			this.#currentStep()?.end();
 			this.#stepCompleted = false;
 			this.#advance();
 			this.#playCurrent();
@@ -89,7 +79,7 @@ export class SceneManager {
 		}
 	}
 
-	prev(): void {
+	prev() {
 		if (this.#stepIndex === 0) return;
 
 		const target = this.#stepIndex - 1;
@@ -103,15 +93,15 @@ export class SceneManager {
 		while (this.#stepIndex < target) {
 			const step = this.#steps[this.#stepIndex];
 			if (!step) break;
-			step.enter();
+			step.start();
 			step.setProgress(1);
-			step.exit();
+			step.end();
 			this.#stepIndex++;
 		}
 
 		const step = this.#steps[target];
 		if (step) {
-			step.enter();
+			step.start();
 			this.#phase = 'paused';
 			this.#stepCompleted = false;
 		}
@@ -121,7 +111,7 @@ export class SceneManager {
 		return this.#steps[this.#stepIndex];
 	}
 
-	#playCurrent(): void {
+	#playCurrent() {
 		const step = this.#currentStep();
 		if (step && step.duration > 0) {
 			this.#phase = 'tweening';
@@ -129,17 +119,17 @@ export class SceneManager {
 		}
 	}
 
-	#enterStep(index: number): void {
+	#enterStep(index: number) {
 		const step = this.#steps[index];
 		if (!step) return;
 
-		step.enter();
+		step.start();
 		this.#elapsed = 0;
 		this.#stepCompleted = false;
 		this.#phase = 'paused';
 	}
 
-	#advance(): void {
+	#advance() {
 		this.#stepIndex++;
 		this.#elapsed = 0;
 		this.#stepCompleted = false;
@@ -152,14 +142,14 @@ export class SceneManager {
 		this.#enterStep(this.#stepIndex);
 	}
 
-	#startLoop(): void {
+	#startLoop() {
 		const step = this.#currentStep();
 		if (!step) return;
 
 		this.#phase = 'tweening';
 		this.#lastFrame = performance.now();
 
-		const onFrame = (now: number) => {
+		const frame = (now: number) => {
 			const delta = (now - this.#lastFrame) / 1000;
 			this.#lastFrame = now;
 
@@ -168,7 +158,7 @@ export class SceneManager {
 			step.setProgress(progress);
 
 			if (progress >= 1) {
-				step.exit();
+				step.end();
 				this.#stepCompleted = true;
 				this.#rafId = null;
 				if (this.#stepIndex >= this.#steps.length - 1) {
@@ -181,13 +171,13 @@ export class SceneManager {
 
 			if (this.#phase !== 'tweening') return;
 
-			this.#rafId = requestAnimationFrame(onFrame);
+			this.#rafId = requestAnimationFrame(frame);
 		};
 
-		this.#rafId = requestAnimationFrame(onFrame);
+		this.#rafId = requestAnimationFrame(frame);
 	}
 
-	#stopLoop(): void {
+	#stopLoop() {
 		if (this.#rafId !== null) {
 			cancelAnimationFrame(this.#rafId);
 			this.#rafId = null;

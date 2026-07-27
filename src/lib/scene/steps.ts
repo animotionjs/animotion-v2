@@ -1,11 +1,11 @@
-import { clamp, easeInOut, lerp } from './easing';
 import { flushSync } from 'svelte';
+import { clamp, easeInOut, lerp } from './easing';
 
 export interface Step {
 	readonly duration: number;
-	enter(): void;
-	setProgress(p: number): void;
-	exit(): void;
+	setProgress(p: number);
+	start();
+	end();
 }
 
 export class TweenStep implements Step {
@@ -34,15 +34,15 @@ export class TweenStep implements Step {
 		return this.#duration;
 	}
 
-	enter(): void {
-		this.#from = this.#state[this.#key] as number;
-	}
-
-	setProgress(p: number): void {
+	setProgress(p: number) {
 		this.#state[this.#key] = lerp(this.#from, this.#to, this.#ease(clamp(p, 0, 1)));
 	}
 
-	exit(): void {
+	start() {
+		this.#from = this.#state[this.#key] as number;
+	}
+
+	end() {
 		this.#state[this.#key] = this.#to;
 	}
 }
@@ -69,7 +69,7 @@ export class LayoutStep implements Step {
 		return this.#duration;
 	}
 
-	enter(): void {
+	start() {
 		const elements = [...document.querySelectorAll('[data-layout]')] as HTMLElement[];
 		const firstBounds: Record<string, DOMRect> = {};
 		for (const el of elements) {
@@ -101,7 +101,7 @@ export class LayoutStep implements Step {
 		}
 	}
 
-	setProgress(p: number): void {
+	setProgress(p: number) {
 		const progress = clamp(p, 0, 1);
 		const eased = this.#ease(progress);
 		for (const { el, deltaX, deltaY, scaleX, scaleY } of this.#tweens) {
@@ -109,7 +109,7 @@ export class LayoutStep implements Step {
 		}
 	}
 
-	exit(): void {
+	end() {
 		for (const { el } of this.#tweens) el.style.transform = '';
 		this.#tweens = [];
 	}
@@ -127,26 +127,26 @@ export class ParallelStep implements Step {
 		return Math.max(...this.#steps.map((s) => s.duration));
 	}
 
-	enter(): void {
+	start() {
 		this.#done = this.#steps.map(() => false);
-		for (const step of this.#steps) step.enter();
+		for (const step of this.#steps) step.start();
 	}
 
-	setProgress(p: number): void {
+	setProgress(p: number) {
 		const progress = clamp(p, 0, 1);
 		for (let i = 0; i < this.#steps.length; i++) {
 			if (this.#done[i]) continue;
 			this.#steps[i].setProgress(progress);
 			if (progress >= 1) {
 				this.#done[i] = true;
-				this.#steps[i].exit();
+				this.#steps[i].end();
 			}
 		}
 	}
 
-	exit(): void {
+	end() {
 		for (let i = 0; i < this.#steps.length; i++) {
-			if (!this.#done[i]) this.#steps[i].exit();
+			if (!this.#done[i]) this.#steps[i].end();
 		}
 		this.#done = [];
 	}

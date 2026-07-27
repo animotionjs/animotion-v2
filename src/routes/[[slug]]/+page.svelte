@@ -1,13 +1,13 @@
 <script lang="ts">
 	import { page } from '$app/state';
 	import { deck } from '#lib/slides/config';
-	import Slide from '#lib/components/Slide.svelte';
+	import Scene from '#lib/components/Scene.svelte';
 
-	let slug = $derived(page.params.slug ?? deck[0].slug);
-	let slide = $derived(deck.find((s) => s.slug === slug) ?? deck[0]);
-	let { default: Content } = $derived(await slide.component());
+	const slug = $derived(page.params.slug ?? deck[0].slug);
+	const scene = $derived(deck.find((s) => s.slug === slug) ?? deck[0]);
+	const Content = $derived((await scene.component()).default);
 </script>
 
-<Slide>
+<Scene>
 	<Content />
-</Slide>
+</Scene>
