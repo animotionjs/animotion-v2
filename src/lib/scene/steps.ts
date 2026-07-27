@@ -3,9 +3,10 @@ import { clamp, easeInOut, lerp } from './easing';
 
 export interface Step {
 	readonly duration: number;
-	setProgress(p: number);
-	start();
-	end();
+	setProgress(p: number): void;
+	start(): void;
+	end(): void;
+	revert(): void;
 }
 
 export class TweenStep implements Step {
@@ -45,12 +46,18 @@ export class TweenStep implements Step {
 	end() {
 		this.#state[this.#key] = this.#to;
 	}
+
+	revert() {
+		this.#state[this.#key] = this.#from;
+	}
 }
 
 export class LayoutStep implements Step {
+	#state: Record<string, unknown>;
 	#change: () => void;
 	#duration: number;
 	#ease: (t: number) => number;
+	#snapshot: Record<string, unknown> = {};
 	#tweens: Array<{
 		el: HTMLElement;
 		deltaX: number;
@@ -59,7 +66,13 @@ export class LayoutStep implements Step {
 		scaleY: number;
 	}> = [];
 
-	constructor(change: () => void, duration: number, ease: (t: number) => number = easeInOut) {
+	constructor(
+		state: Record<string, unknown>,
+		change: () => void,
+		duration: number,
+		ease: (t: number) => number = easeInOut
+	) {
+		this.#state = state;
 		this.#change = change;
 		this.#duration = duration;
 		this.#ease = ease;
@@ -69,7 +82,25 @@ export class LayoutStep implements Step {
 		return this.#duration;
 	}
 
+	setProgress(p: number) {
+		const progress = clamp(p, 0, 1);
+		const eased = this.#ease(progress);
+		for (const { el, deltaX, deltaY, scaleX, scaleY } of this.#tweens) {
+			el.style.transform = `translate(${deltaX * (1 - eased)}px, ${deltaY * (1 - eased)}px) scale(${lerp(scaleX, 1, eased)}, ${lerp(scaleY, 1, eased)})`;
+		}
+	}
+
 	start() {
+		this.#snapshot = {};
+		for (const key of Object.keys(this.#state)) {
+			const val = this.#state[key];
+			if (Array.isArray(val)) {
+				this.#snapshot[key] = [...val];
+			} else {
+				this.#snapshot[key] = val;
+			}
+		}
+
 		const elements = [...document.querySelectorAll('[data-layout]')] as HTMLElement[];
 		const firstBounds: Record<string, DOMRect> = {};
 		for (const el of elements) {
@@ -101,17 +132,18 @@ export class LayoutStep implements Step {
 		}
 	}
 
-	setProgress(p: number) {
-		const progress = clamp(p, 0, 1);
-		const eased = this.#ease(progress);
-		for (const { el, deltaX, deltaY, scaleX, scaleY } of this.#tweens) {
-			el.style.transform = `translate(${deltaX * (1 - eased)}px, ${deltaY * (1 - eased)}px) scale(${lerp(scaleX, 1, eased)}, ${lerp(scaleY, 1, eased)})`;
-		}
-	}
-
 	end() {
 		for (const { el } of this.#tweens) el.style.transform = '';
 		this.#tweens = [];
+	}
+
+	revert() {
+		for (const key of Object.keys(this.#snapshot)) {
+			this.#state[key] = this.#snapshot[key];
+		}
+		for (const { el } of this.#tweens) el.style.transform = '';
+		this.#tweens = [];
+		this.#snapshot = {};
 	}
 }
 
@@ -127,11 +159,6 @@ export class ParallelStep implements Step {
 		return Math.max(...this.#steps.map((s) => s.duration));
 	}
 
-	start() {
-		this.#done = this.#steps.map(() => false);
-		for (const step of this.#steps) step.start();
-	}
-
 	setProgress(p: number) {
 		const progress = clamp(p, 0, 1);
 		for (let i = 0; i < this.#steps.length; i++) {
@@ -144,10 +171,19 @@ export class ParallelStep implements Step {
 		}
 	}
 
+	start() {
+		this.#done = this.#steps.map(() => false);
+		for (const step of this.#steps) step.start();
+	}
+
 	end() {
 		for (let i = 0; i < this.#steps.length; i++) {
 			if (!this.#done[i]) this.#steps[i].end();
 		}
 		this.#done = [];
+	}
+
+	revert() {
+		for (const step of this.#steps) step.revert();
 	}
 }

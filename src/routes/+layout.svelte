@@ -11,11 +11,13 @@
 	setSceneManager(manager);
 
 	let { children } = $props();
-	const index = $derived(deck.findIndex((s) => s.slug === page.params.slug));
+	const slug = $derived(page.params.slug ?? deck[0].slug);
+	const index = $derived(deck.findIndex((s) => s.slug === slug));
 	const progress = $derived(((index + manager.completion) / deck.length) * 100);
 
 	function next() {
 		if (manager.finished) {
+			manager.saveState(slug);
 			if (index < deck.length - 1) goto('/' + deck[index + 1].slug);
 		} else {
 			manager.next();
@@ -23,7 +25,8 @@
 	}
 
 	function prev() {
-		if (manager.step === 0) {
+		if (manager.atStart) {
+			manager.saveState(slug);
 			if (index > 0) goto('/' + deck[index - 1].slug);
 		} else {
 			manager.prev();

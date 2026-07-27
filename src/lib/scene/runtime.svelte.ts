@@ -1,15 +1,17 @@
 import type { Step } from './steps';
 
+type SavedState = { stepIndex: number; stepCompleted: boolean };
+
 export class SceneManager {
 	#phase: 'paused' | 'tweening' | 'finished' = $state('finished');
 	#stepIndex = $state(0);
 	#totalSteps = $state(0);
 	#steps: Step[] = [];
-	#reset: (() => void) | null = null;
 	#elapsed = 0;
-	#stepCompleted = false;
+	#stepCompleted = $state(false);
 	#rafId: number | null = null;
 	#lastFrame = 0;
+	#savedStates = new Map<string, SavedState>();
 
 	get finished(): boolean {
 		return this.#phase === 'finished';
@@ -23,6 +25,10 @@ export class SceneManager {
 		return this.#totalSteps;
 	}
 
+	get atStart(): boolean {
+		return this.#stepIndex === 0 && !this.#stepCompleted;
+	}
+
 	get completion(): number {
 		if (this.#phase === 'finished') return 1;
 		if (this.#totalSteps === 0) return 0;
@@ -30,10 +36,19 @@ export class SceneManager {
 		return (this.#stepIndex + (done ? 1 : 0)) / this.totalSteps;
 	}
 
-	load({ steps, reset }: { steps: Step[]; reset: () => void }) {
+	saveState(slug: string) {
+		this.#savedStates.set(slug, {
+			stepIndex: this.#stepIndex,
+			stepCompleted: this.#stepCompleted
+		});
+	}
+
+	load({ steps, slug }: { steps: Step[]; slug?: string }) {
 		this.clear();
+
+		const saved = slug ? this.#savedStates.get(slug) : undefined;
+
 		this.#steps = steps;
-		this.#reset = reset;
 		this.#totalSteps = steps.length;
 
 		if (steps.length === 0) {
@@ -41,14 +56,32 @@ export class SceneManager {
 			return;
 		}
 
-		this.#enterStep(0);
+		this.#stepIndex = 0;
+		this.#elapsed = 0;
+		this.#stepCompleted = false;
+
+		const target = saved ? (saved.stepCompleted ? saved.stepIndex + 1 : saved.stepIndex) : 0;
+		while (this.#stepIndex < target) {
+			const step = this.#steps[this.#stepIndex];
+			if (!step) break;
+			step.start();
+			step.setProgress(1);
+			step.end();
+			this.#stepIndex++;
+		}
+
+		if (this.#stepIndex >= steps.length) {
+			this.#stepIndex = steps.length - 1;
+			this.#phase = 'finished';
+		} else {
+			this.#enterStep(this.#stepIndex);
+		}
 	}
 
 	clear() {
 		this.#stopLoop();
 		this.#currentStep()?.end();
 		this.#steps = [];
-		this.#reset = null;
 		this.#phase = 'finished';
 		this.#stepIndex = 0;
 		this.#totalSteps = 0;
@@ -80,31 +113,27 @@ export class SceneManager {
 	}
 
 	prev() {
-		if (this.#stepIndex === 0) return;
-
-		const target = this.#stepIndex - 1;
 		this.#stopLoop();
-		this.#reset?.();
 
-		this.#stepIndex = 0;
-		this.#elapsed = 0;
-		this.#stepCompleted = false;
-
-		while (this.#stepIndex < target) {
-			const step = this.#steps[this.#stepIndex];
-			if (!step) break;
-			step.start();
-			step.setProgress(1);
-			step.end();
-			this.#stepIndex++;
-		}
-
-		const step = this.#steps[target];
-		if (step) {
-			step.start();
+		if (this.#stepIndex >= this.#steps.length) {
+			this.#stepIndex = this.#steps.length - 1;
+			this.#currentStep()?.revert();
+			this.#stepCompleted = true;
 			this.#phase = 'paused';
-			this.#stepCompleted = false;
+			return;
 		}
+
+		this.#currentStep()?.revert();
+
+		if (this.#stepIndex === 0) {
+			this.#stepCompleted = false;
+			this.#phase = 'paused';
+			return;
+		}
+
+		this.#stepIndex--;
+		this.#stepCompleted = true;
+		this.#phase = 'paused';
 	}
 
 	#currentStep(): Step | undefined {

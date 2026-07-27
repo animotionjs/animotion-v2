@@ -1,4 +1,6 @@
 import { onMount } from 'svelte';
+import { page } from '$app/state';
+import { deck } from '#lib/slides/config';
 import { TweenStep, LayoutStep, ParallelStep, type Step } from './steps';
 import { getSceneManager } from './context.svelte';
 import { easeInOut } from './easing';
@@ -13,7 +15,6 @@ type Object = Record<string, unknown>;
 
 export function scene<T extends Object>(initial: T) {
 	const state = $state(initial) as Scene<T>;
-	const snapshot = { ...initial };
 	let steps: Step[] = [];
 
 	state.tween = function (
@@ -31,7 +32,7 @@ export function scene<T extends Object>(initial: T) {
 		duration = 0.5,
 		ease: (t: number) => number = easeInOut
 	) {
-		steps.push(new LayoutStep(change, duration, ease));
+		steps.push(new LayoutStep(state, change, duration, ease));
 		return this;
 	};
 
@@ -48,14 +49,7 @@ export function scene<T extends Object>(initial: T) {
 	const manager = getSceneManager();
 
 	onMount(() => {
-		manager.load({
-			steps,
-			reset: () => {
-				for (const key of Object.keys(snapshot)) {
-					(state as Object)[key] = snapshot[key];
-				}
-			}
-		});
+		manager.load({ steps, slug: page.params.slug ?? deck[0].slug });
 		return () => manager.clear();
 	});
 
