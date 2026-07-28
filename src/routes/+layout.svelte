@@ -16,18 +16,24 @@
 	const progress = $derived(((index + manager.completion) / deck.length) * 100);
 
 	function next() {
+		if (manager.exitBusy) return;
 		if (manager.finished) {
+			if (index >= deck.length - 1) return;
 			manager.saveState(slug);
-			if (index < deck.length - 1) goto('/' + deck[index + 1].slug);
+			manager.setDirection('forward');
+			manager.playExit().then(() => goto('/' + deck[index + 1].slug));
 		} else {
 			manager.next();
 		}
 	}
 
 	function prev() {
+		if (manager.exitBusy) return;
 		if (manager.atStart) {
+			if (index <= 0) return;
 			manager.saveState(slug);
-			if (index > 0) goto('/' + deck[index - 1].slug);
+			manager.setDirection('backward');
+			manager.playExit().then(() => goto('/' + deck[index - 1].slug));
 		} else {
 			manager.prev();
 		}

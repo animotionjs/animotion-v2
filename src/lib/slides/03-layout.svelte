@@ -2,6 +2,7 @@
 	import { scene } from '#lib/scene';
 
 	const s = scene({ order: ['Svelte 5', 'SvelteKit', 'Tailwind 4', 'TypeScript'] })
+		.slideTransition({ duration: 0.4 })
 		.layout(() => {
 			s.order = [...s.order].reverse();
 		}, 0.5)

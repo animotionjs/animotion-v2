@@ -2,6 +2,7 @@
 	import { scene } from '#lib/scene';
 
 	const s = scene({ opacity: 0, scale: 0, hidden: true })
+		.slideTransition({ duration: 0.4 })
 		.tween('opacity', 1, 0.6)
 		.all(
 			(t) => t.layout(() => (t.hidden = false), 0.6),

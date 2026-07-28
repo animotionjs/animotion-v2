@@ -1,6 +1,35 @@
-import type { Step } from './steps';
+import { SvelteMap } from 'svelte/reactivity';
+import { TweenStep, ParallelStep, type Step } from './steps';
+import { easeInOut } from './easing';
 
-type SavedState = { stepIndex: number; stepCompleted: boolean };
+type SavedState = {
+	stepIndex: number;
+	stepCompleted: boolean;
+};
+export type Direction = 'forward' | 'backward';
+export type TransitionBuild = (builder: TransitionBuilder, direction: Direction) => void;
+
+export class TransitionBuilder {
+	#state: Record<string, number>;
+	#steps: Step[] = [];
+
+	constructor(state: Record<string, number>) {
+		this.#state = state;
+	}
+
+	set(key: string, value: number) {
+		this.#state[key] = value;
+	}
+
+	tween(key: string, to: number, duration = 0.5, ease: (t: number) => number = easeInOut) {
+		this.#steps.push(new TweenStep(this.#state, key, to, duration, ease));
+		return this;
+	}
+
+	getSteps(): Step[] {
+		return this.#steps;
+	}
+}
 
 export class SceneManager {
 	#phase: 'paused' | 'tweening' | 'finished' = $state('finished');
@@ -10,8 +39,17 @@ export class SceneManager {
 	#elapsed = 0;
 	#stepCompleted = $state(false);
 	#rafId: number | null = null;
+	#transitionRafId: number | null = null;
 	#lastFrame = 0;
-	#savedStates = new Map<string, SavedState>();
+	#transitionLastFrame = 0;
+	#transitionElapsed = 0;
+	#savedStates = new SvelteMap<string, SavedState>();
+
+	#transitionState = $state({ opacity: 1, x: 0, y: 0, scale: 1 });
+	#direction: Direction = 'forward';
+	#enterBuild: TransitionBuild | null = null;
+	#exitBuild: TransitionBuild | null = null;
+	#exitBusy = false;
 
 	get finished(): boolean {
 		return this.#phase === 'finished';
@@ -36,6 +74,30 @@ export class SceneManager {
 		return (this.#stepIndex + (done ? 1 : 0)) / this.totalSteps;
 	}
 
+	get transitionState() {
+		return this.#transitionState;
+	}
+
+	get direction(): Direction {
+		return this.#direction;
+	}
+
+	get exitBusy(): boolean {
+		return this.#exitBusy;
+	}
+
+	setDirection(direction: Direction) {
+		this.#direction = direction;
+	}
+
+	setEnterTransition(build: TransitionBuild | null) {
+		this.#enterBuild = build;
+	}
+
+	setExitTransition(build: TransitionBuild | null) {
+		this.#exitBuild = build;
+	}
+
 	saveState(slug: string) {
 		this.#savedStates.set(slug, {
 			stepIndex: this.#stepIndex,
@@ -43,8 +105,25 @@ export class SceneManager {
 		});
 	}
 
-	load({ steps, slug }: { steps: Step[]; slug?: string }) {
-		this.clear();
+	hasSavedState(slug: string): boolean {
+		return this.#savedStates.has(slug);
+	}
+
+	load({
+		steps,
+		slug,
+		enterBuild,
+		exitBuild
+	}: {
+		steps: Step[];
+		slug?: string;
+		enterBuild?: TransitionBuild | null;
+		exitBuild?: TransitionBuild | null;
+	}) {
+		this.#softClear();
+
+		if (enterBuild) this.#enterBuild = enterBuild;
+		if (exitBuild) this.#exitBuild = exitBuild;
 
 		const saved = slug ? this.#savedStates.get(slug) : undefined;
 
@@ -53,40 +132,134 @@ export class SceneManager {
 
 		if (steps.length === 0) {
 			this.#phase = 'finished';
-			return;
-		}
-
-		this.#stepIndex = 0;
-		this.#elapsed = 0;
-		this.#stepCompleted = false;
-
-		const target = saved ? (saved.stepCompleted ? saved.stepIndex + 1 : saved.stepIndex) : 0;
-		while (this.#stepIndex < target) {
-			const step = this.#steps[this.#stepIndex];
-			if (!step) break;
-			step.start();
-			step.setProgress(1);
-			step.end();
-			this.#stepIndex++;
-		}
-
-		if (this.#stepIndex >= steps.length) {
-			this.#stepIndex = steps.length - 1;
-			this.#phase = 'finished';
 		} else {
-			this.#enterStep(this.#stepIndex);
+			this.#stepIndex = 0;
+			this.#elapsed = 0;
+			this.#stepCompleted = false;
+
+			const target = saved ? (saved.stepCompleted ? saved.stepIndex + 1 : saved.stepIndex) : 0;
+			while (this.#stepIndex < target) {
+				const step = this.#steps[this.#stepIndex];
+				if (!step) break;
+				step.start();
+				step.setProgress(1);
+				step.end();
+				this.#stepIndex++;
+			}
+
+			if (this.#stepIndex >= steps.length) {
+				this.#stepIndex = steps.length - 1;
+				this.#phase = 'finished';
+				this.#stepCompleted = true;
+			} else {
+				this.#enterStep(this.#stepIndex);
+			}
+		}
+
+		if (this.#enterBuild) {
+			this.playEnter();
+		} else {
+			this.#resetTransitionState();
 		}
 	}
 
-	clear() {
+	#softClear() {
 		this.#stopLoop();
+		this.#stopTransitionLoop();
 		this.#currentStep()?.end();
 		this.#steps = [];
+		this.#enterBuild = null;
+		this.#exitBuild = null;
+		this.#exitBusy = false;
 		this.#phase = 'finished';
 		this.#stepIndex = 0;
 		this.#totalSteps = 0;
 		this.#elapsed = 0;
 		this.#stepCompleted = false;
+	}
+
+	clear() {
+		this.#softClear();
+		this.#resetTransitionState();
+	}
+
+	playEnter(): Promise<void> {
+		return this.#playTransition(this.#enterBuild);
+	}
+
+	playExit(): Promise<void> {
+		const promise = this.#playTransition(this.#exitBuild);
+		this.#exitBusy = true;
+		promise.then(() => {
+			this.#exitBusy = false;
+		});
+		return promise;
+	}
+
+	#resetTransitionState() {
+		this.#stopTransitionLoop();
+		this.#transitionState.opacity = 1;
+		this.#transitionState.x = 0;
+		this.#transitionState.y = 0;
+		this.#transitionState.scale = 1;
+	}
+
+	#playTransition(buildFn: TransitionBuild | null): Promise<void> {
+		return new Promise((resolve) => {
+			if (!buildFn) {
+				this.#resetTransitionState();
+				resolve();
+				return;
+			}
+
+			this.#resetTransitionState();
+
+			const builder = new TransitionBuilder(this.#transitionState);
+			buildFn(builder, this.#direction);
+			const steps = builder.getSteps();
+
+			if (steps.length === 0) {
+				resolve();
+				return;
+			}
+
+			const composite = steps.length === 1 ? steps[0] : new ParallelStep(steps);
+			this.#playStep(composite, resolve);
+		});
+	}
+
+	#playStep(step: Step, onComplete: () => void) {
+		this.#stopTransitionLoop();
+		step.start();
+		this.#transitionElapsed = 0;
+		this.#transitionLastFrame = performance.now();
+
+		const frame = (now: number) => {
+			const delta = (now - this.#transitionLastFrame) / 1000;
+			this.#transitionLastFrame = now;
+
+			this.#transitionElapsed += delta;
+			const progress = this.#transitionElapsed / step.duration;
+			step.setProgress(progress);
+
+			if (progress >= 1) {
+				step.end();
+				this.#transitionRafId = null;
+				onComplete();
+				return;
+			}
+
+			this.#transitionRafId = requestAnimationFrame(frame);
+		};
+
+		this.#transitionRafId = requestAnimationFrame(frame);
+	}
+
+	#stopTransitionLoop() {
+		if (this.#transitionRafId !== null) {
+			cancelAnimationFrame(this.#transitionRafId);
+			this.#transitionRafId = null;
+		}
 	}
 
 	next() {
