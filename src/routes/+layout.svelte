@@ -1,14 +1,31 @@
 <script lang="ts">
+	import { onMount } from 'svelte';
 	import { page } from '$app/state';
-	import { goto } from '$app/navigation';
+	import { afterNavigate, goto } from '$app/navigation';
 	import { deck } from '#lib/slides/config';
+	import { plugins } from '#lib/slides/plugins';
 	import { SceneManager } from '#lib/scene/runtime.svelte';
 	import { setSceneManager } from '#lib/scene/context.svelte';
+	import { PluginManager } from '#lib/plugins/manager.svelte';
 	import favicon from '#lib/assets/favicon.svg';
 	import './theme.css';
 
+	let { children } = $props();
+
 	const manager = new SceneManager();
 	setSceneManager(manager);
+
+	const pluginManager = new PluginManager({ manager, deck, navigateTo, next, prev });
+	for (const plugin of plugins) pluginManager.register(plugin);
+
+	onMount(() => {
+		pluginManager.setup();
+		return () => pluginManager.cleanup();
+	});
+
+	afterNavigate(() => {
+		pluginManager.emitSlideChange({ slug, index });
+	});
 
 	if (typeof window !== 'undefined' && page.url.searchParams.get('render') === 'video') {
 		const scheduler = manager.enableRenderMode();
@@ -21,7 +38,6 @@
 		};
 	}
 
-	let { children } = $props();
 	const slug = $derived(page.params.slug ?? deck[0].slug);
 	const index = $derived(deck.findIndex((s) => s.slug === slug));
 	const progress = $derived(((index + manager.completion) / deck.length) * 100);
@@ -61,6 +77,7 @@
 	}
 
 	function onkeydown(e: KeyboardEvent) {
+		if (pluginManager.handleKeydown(e)) return;
 		if (e.key === 'ArrowRight') next();
 		if (e.key === 'ArrowLeft') prev();
 	}

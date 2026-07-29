@@ -55,6 +55,19 @@ export class SceneManager {
 	#exitBuild: TransitionBuild | null = null;
 	#exitBusy = false;
 
+	#stepChangeListeners = new Set<(step: number, total: number) => void>();
+
+	onStepChange(listener: (step: number, total: number) => void): () => void {
+		this.#stepChangeListeners.add(listener);
+		return () => this.#stepChangeListeners.delete(listener);
+	}
+
+	#emitStepChange() {
+		for (const listener of this.#stepChangeListeners) {
+			listener(this.#stepIndex, this.#totalSteps);
+		}
+	}
+
 	get finished(): boolean {
 		return this.#phase === 'finished';
 	}
@@ -189,6 +202,8 @@ export class SceneManager {
 				this.#enterStep(this.#stepIndex);
 			}
 		}
+
+		this.#emitStepChange();
 
 		if (this.#enterBuild) {
 			this.playEnter();
@@ -328,6 +343,7 @@ export class SceneManager {
 			this.#currentStep()?.revert();
 			this.#stepCompleted = true;
 			this.#phase = 'paused';
+			this.#emitStepChange();
 			return;
 		}
 
@@ -342,6 +358,7 @@ export class SceneManager {
 		this.#stepIndex--;
 		this.#stepCompleted = true;
 		this.#phase = 'paused';
+		this.#emitStepChange();
 	}
 
 	#currentStep(): Step | undefined {
@@ -373,10 +390,12 @@ export class SceneManager {
 
 		if (this.#stepIndex >= this.#steps.length) {
 			this.#phase = 'finished';
+			this.#emitStepChange();
 			return;
 		}
 
 		this.#enterStep(this.#stepIndex);
+		this.#emitStepChange();
 	}
 
 	#startLoop() {
