@@ -160,7 +160,6 @@ export function scene<T extends Object>(initial: T = {} as T) {
 
 	onMount(() => {
 		manager.load({ steps, enterBuild, exitBuild, slug: page.params.slug ?? deck[0].slug });
-		return () => manager.clear();
 	});
 
 	return state;

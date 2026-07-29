@@ -1,5 +1,7 @@
+import { flushSync } from 'svelte';
 import { SvelteMap } from 'svelte/reactivity';
 import { TweenStep, ParallelStep, type Step } from './steps';
+import { RealTimeScheduler, RenderScheduler, type FrameScheduler } from './scheduler';
 import { easeInOut } from './easing';
 
 type SavedState = {
@@ -47,6 +49,8 @@ export class SceneManager {
 
 	#transitionState = $state({ opacity: 1, x: 0, y: 0, scale: 1 });
 	#direction: Direction = 'forward';
+	#scheduler: FrameScheduler = new RealTimeScheduler();
+	#renderMode = false;
 	#enterBuild: TransitionBuild | null = null;
 	#exitBuild: TransitionBuild | null = null;
 	#exitBusy = false;
@@ -82,6 +86,18 @@ export class SceneManager {
 		return this.#direction;
 	}
 
+	get phase(): string {
+		return this.#phase;
+	}
+
+	get transitionActive(): boolean {
+		return this.#transitionRafId !== null;
+	}
+
+	get isAnimating(): boolean {
+		return this.#phase === 'tweening' || this.#transitionRafId !== null;
+	}
+
 	get exitBusy(): boolean {
 		return this.#exitBusy;
 	}
@@ -96,6 +112,24 @@ export class SceneManager {
 
 	setExitTransition(build: TransitionBuild | null) {
 		this.#exitBuild = build;
+	}
+
+	enableRenderMode(): RenderScheduler {
+		this.#stopLoop();
+		this.#stopTransitionLoop();
+		const render = new RenderScheduler();
+		this.#scheduler = render;
+		this.#rafId = null;
+		this.#transitionRafId = null;
+		this.#renderMode = true;
+		return render;
+	}
+
+	advanceFrame(deltaSeconds: number): { done: boolean } {
+		const pending = (this.#scheduler as RenderScheduler).tick(deltaSeconds);
+		return {
+			done: pending === 0 && !this.transitionActive && !this.isAnimating
+		};
 	}
 
 	saveState(slug: string) {
@@ -232,7 +266,7 @@ export class SceneManager {
 		this.#stopTransitionLoop();
 		step.start();
 		this.#transitionElapsed = 0;
-		this.#transitionLastFrame = performance.now();
+		this.#transitionLastFrame = this.#scheduler.now();
 
 		const frame = (now: number) => {
 			const delta = (now - this.#transitionLastFrame) / 1000;
@@ -241,6 +275,7 @@ export class SceneManager {
 			this.#transitionElapsed += delta;
 			const progress = this.#transitionElapsed / step.duration;
 			step.setProgress(progress);
+			if (this.#renderMode) flushSync();
 
 			if (progress >= 1) {
 				step.end();
@@ -249,15 +284,15 @@ export class SceneManager {
 				return;
 			}
 
-			this.#transitionRafId = requestAnimationFrame(frame);
+			this.#transitionRafId = this.#scheduler.request(frame);
 		};
 
-		this.#transitionRafId = requestAnimationFrame(frame);
+		this.#transitionRafId = this.#scheduler.request(frame);
 	}
 
 	#stopTransitionLoop() {
 		if (this.#transitionRafId !== null) {
-			cancelAnimationFrame(this.#transitionRafId);
+			this.#scheduler.cancel(this.#transitionRafId);
 			this.#transitionRafId = null;
 		}
 	}
@@ -349,7 +384,7 @@ export class SceneManager {
 		if (!step) return;
 
 		this.#phase = 'tweening';
-		this.#lastFrame = performance.now();
+		this.#lastFrame = this.#scheduler.now();
 
 		const frame = (now: number) => {
 			const delta = (now - this.#lastFrame) / 1000;
@@ -358,6 +393,7 @@ export class SceneManager {
 			this.#elapsed += delta;
 			const progress = this.#elapsed / step.duration;
 			step.setProgress(progress);
+			if (this.#renderMode) flushSync();
 
 			if (progress >= 1) {
 				step.end();
@@ -373,15 +409,15 @@ export class SceneManager {
 
 			if (this.#phase !== 'tweening') return;
 
-			this.#rafId = requestAnimationFrame(frame);
+			this.#rafId = this.#scheduler.request(frame);
 		};
 
-		this.#rafId = requestAnimationFrame(frame);
+		this.#rafId = this.#scheduler.request(frame);
 	}
 
 	#stopLoop() {
 		if (this.#rafId !== null) {
-			cancelAnimationFrame(this.#rafId);
+			this.#scheduler.cancel(this.#rafId);
 			this.#rafId = null;
 		}
 	}
