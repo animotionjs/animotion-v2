@@ -1,6 +1,52 @@
 import { describe, expect, it } from 'vitest';
 import { createCodeState } from './code.svelte';
-import { CodeStep } from './steps';
+import { CodeStep, TickStep, type TickFrame } from './steps';
+import { easeInOut } from './easing';
+
+describe('TickStep', () => {
+	it('reports eased progress and linear time', () => {
+		const frames: TickFrame[] = [];
+		const step = new TickStep((frame) => frames.push(frame), 2, easeInOut);
+
+		expect(step.duration).toBe(2);
+
+		step.start();
+		step.setProgress(0.5);
+		step.setProgress(1);
+
+		expect(frames[0].time).toBe(1);
+		expect(frames[0].progress).toBe(easeInOut(0.5));
+		expect(frames[0].deltaTime).toBe(1);
+		expect(frames[0].frame).toBe(1);
+
+		expect(frames[1].time).toBe(2);
+		expect(frames[1].progress).toBe(1);
+		expect(frames[1].deltaTime).toBe(1);
+		expect(frames[1].frame).toBe(2);
+	});
+
+	it('defaults to raw (identity) progress', () => {
+		const frames: TickFrame[] = [];
+		const step = new TickStep((frame) => frames.push(frame), 1);
+
+		step.start();
+		step.setProgress(0.4);
+
+		expect(frames[0].progress).toBe(0.4);
+		expect(frames[0].time).toBe(0.4);
+	});
+
+	it('revert rewinds to the start frame', () => {
+		const frames: TickFrame[] = [];
+		const step = new TickStep((frame) => frames.push(frame), 1);
+
+		step.start();
+		step.setProgress(0.75);
+		step.revert();
+
+		expect(frames.at(-1)).toEqual({ progress: 0, time: 0, deltaTime: 0, frame: 0 });
+	});
+});
 
 describe('CodeStep language change', () => {
 	it('fades between languages: all delete + create, no retain', () => {

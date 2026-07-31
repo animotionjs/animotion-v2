@@ -54,6 +54,64 @@ export class TweenStep implements Step {
 	}
 }
 
+export interface TickFrame {
+	/** eased progress 0..1 within this step */
+	progress: number;
+	/** linear seconds elapsed within this step (0..duration) */
+	time: number;
+	/** seconds since this step's previous frame */
+	deltaTime: number;
+	/** number of frames rendered for this step */
+	frame: number;
+}
+
+export class TickStep implements Step {
+	#onTick: (frame: TickFrame) => void;
+	#duration: number;
+	#ease: (t: number) => number;
+	#time = 0;
+	#frame = 0;
+
+	constructor(
+		onTick: (frame: TickFrame) => void,
+		duration: number,
+		ease: (t: number) => number = (t) => t
+	) {
+		this.#onTick = onTick;
+		this.#duration = duration;
+		this.#ease = ease;
+	}
+
+	get duration(): number {
+		return this.#duration;
+	}
+
+	start() {
+		this.#time = 0;
+		this.#frame = 0;
+	}
+
+	setProgress(p: number) {
+		const time = clamp(p, 0, 1) * this.#duration;
+		this.#frame++;
+		this.#onTick({
+			progress: this.#ease(clamp(p, 0, 1)),
+			time,
+			deltaTime: time - this.#time,
+			frame: this.#frame
+		});
+		this.#time = time;
+	}
+
+	end() {}
+
+	revert() {
+		this.#onTick({ progress: 0, time: 0, deltaTime: 0, frame: 0 });
+		this.#time = 0;
+		this.#frame = 0;
+	}
+}
+
 export class LayoutStep implements Step {
 	#state: Record<string, unknown>;
 	#change: () => void;

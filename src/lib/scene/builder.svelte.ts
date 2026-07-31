@@ -1,7 +1,16 @@
 import { onMount } from 'svelte';
 import { page } from '$app/state';
 import { deck } from '#lib/slides/config';
-import { TweenStep, LayoutStep, ParallelStep, CodeStep, SelectionStep, type Step } from './steps';
+import {
+	TweenStep,
+	LayoutStep,
+	ParallelStep,
+	CodeStep,
+	SelectionStep,
+	TickStep,
+	type Step,
+	type TickFrame
+} from './steps';
 import { getSceneManager } from './context.svelte';
 import { TransitionBuilder, type TransitionBuild } from './runtime.svelte';
 import { easeInOut } from './easing';
@@ -24,6 +33,7 @@ import {
 
 export interface SceneBuilder<T> {
 	tween(key: keyof T, to: number, duration?: number, ease?: (t: number) => number): this;
+	tick(onTick: (frame: TickFrame) => void, duration?: number, ease?: (t: number) => number): this;
 	layout(change: () => void, duration?: number, ease?: (t: number) => number): this;
 	all(...fns: ((t: this) => void)[]): this;
 	transitionIn(fn: TransitionBuild): this;
@@ -102,6 +112,15 @@ export function scene<T extends Object>(initial: T = {} as T) {
 		ease: (t: number) => number = easeInOut
 	) {
 		steps.push(new TweenStep(state, key, to, duration, ease));
+		return this;
+	};
+
+	state.tick = function (
+		onTick: (frame: TickFrame) => void,
+		duration = 0.5,
+		ease: (t: number) => number = (t) => t
+	) {
+		steps.push(new TickStep(onTick, duration, ease));
 		return this;
 	};
 
