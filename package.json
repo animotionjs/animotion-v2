@@ -22,7 +22,9 @@
 		"test:e2e": "playwright install && playwright test"
 	},
 	"pnpm": {
-		"onlyBuiltDependencies": ["ffmpeg-static"]
+		"onlyBuiltDependencies": [
+			"ffmpeg-static"
+		]
 	},
 	"devDependencies": {
 		"@eslint/js": "^10.0.1",
@@ -52,7 +54,13 @@
 		"vitest-browser-svelte": "^3.0.0"
 	},
 	"dependencies": {
+		"@codemirror/language": "^6.12.4",
 		"@fontsource-variable/jetbrains-mono": "^5.3.0",
-		"@fontsource/atkinson-hyperlegible": "^5.3.0"
+		"@fontsource/atkinson-hyperlegible": "^5.3.0",
+		"@lezer/common": "^1.5.2",
+		"@lezer/highlight": "^1.2.3",
+		"@lezer/javascript": "^1.5.4",
+		"@lezer/lr": "^1.4.10",
+		"@lezer/rust": "^1.0.2"
 	}
 }

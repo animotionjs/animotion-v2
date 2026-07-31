@@ -1,10 +1,26 @@
 import { onMount } from 'svelte';
 import { page } from '$app/state';
 import { deck } from '#lib/slides/config';
-import { TweenStep, LayoutStep, ParallelStep, type Step } from './steps';
+import { TweenStep, LayoutStep, ParallelStep, CodeStep, SelectionStep, type Step } from './steps';
 import { getSceneManager } from './context.svelte';
 import { TransitionBuilder, type TransitionBuild } from './runtime.svelte';
 import { easeInOut } from './easing';
+import { getParser } from './lezer';
+import {
+	setCodeState,
+	createCodeState,
+	buildEditTrees,
+	makeCodeTree,
+	resolveSingleRange,
+	resolveRangeArray,
+	smartIndent,
+	DEFAULT,
+	ALL_LINES,
+	type CodeState,
+	type CodeRange,
+	type RangeResolver,
+	type RawCodeFragment
+} from './code.svelte';
 
 export interface SceneBuilder<T> {
 	tween(key: keyof T, to: number, duration?: number, ease?: (t: number) => number): this;
@@ -19,16 +35,65 @@ export interface SceneBuilder<T> {
 	}): this;
 	fadeTransition(opts?: { duration?: number; ease?: (t: number) => number }): this;
 	zoomTransition(opts?: { duration?: number; ease?: (t: number) => number; scale?: number }): this;
+	codeTo(
+		code: string,
+		duration?: number,
+		opts?: { language?: string; ease?: (t: number) => number }
+	): this;
+	codeAppend(code: string, duration?: number, ease?: (t: number) => number): this;
+	codePrepend(code: string, duration?: number, ease?: (t: number) => number): this;
+	codeInsert(
+		range: CodeRange | CodeRange[] | RangeResolver,
+		code: string,
+		duration?: number,
+		ease?: (t: number) => number
+	): this;
+	codeReplace(
+		range: CodeRange | CodeRange[] | RangeResolver | string,
+		code: string,
+		duration?: number,
+		ease?: (t: number) => number
+	): this;
+	codeRemove(
+		range: CodeRange | CodeRange[] | RangeResolver | string,
+		duration?: number,
+		ease?: (t: number) => number
+	): this;
+	codeEdit(
+		duration?: number
+	): (strings: TemplateStringsArray, ...tags: (string | RawCodeFragment)[]) => this;
+	codeSelection(
+		range?: CodeRange | CodeRange[] | RangeResolver | string | typeof DEFAULT,
+		duration?: number
+	): this;
 }
 type Scene<T> = T & SceneBuilder<T>;
 type Object = Record<string, unknown>;
 
 export function scene<T extends Object>(initial: T = {} as T) {
+	const rawInitial = initial as Record<string, unknown>;
+	const indent =
+		typeof rawInitial.indent === 'string' && rawInitial.indent.length > 0
+			? rawInitial.indent
+			: '  ';
+	delete rawInitial.indent;
 	const state = $state(initial) as Scene<T>;
 	const manager = getSceneManager();
 	let steps: Step[] = [];
 	let enterBuild: TransitionBuild | null = null;
 	let exitBuild: TransitionBuild | null = null;
+
+	let codeState: CodeState | null = null;
+	const initialCode = rawInitial.code;
+	const initialLanguage = rawInitial.language as string | undefined;
+	if (typeof initialCode === 'string') {
+		codeState = createCodeState(initialLanguage ?? 'ts', smartIndent(initialCode, indent));
+		setCodeState(codeState);
+	}
+
+	function applyIndent(code: string): string {
+		return smartIndent(code, indent);
+	}
 
 	state.tween = function (
 		key: string,
@@ -158,9 +223,221 @@ export function scene<T extends Object>(initial: T = {} as T) {
 		return this;
 	};
 
+	state.codeTo = function (
+		this: Scene<T>,
+		code: string,
+		duration = 0.6,
+		opts?: { language?: string; ease?: (t: number) => number }
+	) {
+		if (!codeState) throw new Error('codeTo: no code state. Pass initial `code` to scene().');
+		const lang = opts?.language ?? codeState.language;
+		if (opts?.language) getParser(opts.language);
+		steps.push(
+			new CodeStep(
+				codeState,
+				() => ({
+					from: makeCodeTree(codeState.resolved),
+					to: makeCodeTree(applyIndent(code)),
+					resolved: applyIndent(code)
+				}),
+				duration,
+				opts?.ease ?? easeInOut,
+				lang
+			)
+		);
+		return this;
+	};
+
+	state.codeAppend = function (
+		this: Scene<T>,
+		code: string,
+		duration = 0.6,
+		ease: (t: number) => number = easeInOut
+	) {
+		if (!codeState) throw new Error('codeAppend: no code state. Pass initial `code` to scene().');
+		steps.push(
+			new CodeStep(
+				codeState,
+				() => {
+					const resolved = applyIndent(codeState.resolved + code);
+					return {
+						from: makeCodeTree(codeState.resolved),
+						to: makeCodeTree(resolved),
+						resolved
+					};
+				},
+				duration,
+				ease
+			)
+		);
+		return this;
+	};
+
+	state.codePrepend = function (
+		this: Scene<T>,
+		code: string,
+		duration = 0.6,
+		ease: (t: number) => number = easeInOut
+	) {
+		if (!codeState) throw new Error('codePrepend: no code state. Pass initial `code` to scene().');
+		steps.push(
+			new CodeStep(
+				codeState,
+				() => {
+					const resolved = applyIndent(code + codeState.resolved);
+					return {
+						from: makeCodeTree(codeState.resolved),
+						to: makeCodeTree(resolved),
+						resolved
+					};
+				},
+				duration,
+				ease
+			)
+		);
+		return this;
+	};
+
+	state.codeInsert = function (
+		this: Scene<T>,
+		anchor: CodeRange | CodeRange[] | RangeResolver,
+		text: string,
+		duration = 0.6,
+		ease: (t: number) => number = easeInOut
+	) {
+		if (!codeState) throw new Error('codeInsert: no code state. Pass initial `code` to scene().');
+		steps.push(
+			new CodeStep(
+				codeState,
+				() => {
+					const current = codeState.resolved;
+					const range = resolveSingleRange(anchor, current);
+					const { start } = rangeToSplice(current, range);
+					const result = applyIndent(current.slice(0, start) + text + current.slice(start));
+					return {
+						from: makeCodeTree(current),
+						to: makeCodeTree(result),
+						resolved: result
+					};
+				},
+				duration,
+				ease
+			)
+		);
+		return this;
+	};
+
+	state.codeReplace = function (
+		this: Scene<T>,
+		target: CodeRange | CodeRange[] | RangeResolver,
+		text: string,
+		duration = 0.6,
+		ease: (t: number) => number = easeInOut
+	) {
+		if (!codeState) throw new Error('codeReplace: no code state. Pass initial `code` to scene().');
+		steps.push(
+			new CodeStep(
+				codeState,
+				() => {
+					const current = codeState.resolved;
+					const range = resolveSingleRange(target, current);
+					const { start, end } = rangeToSplice(current, range);
+					const result = applyIndent(current.slice(0, start) + text + current.slice(end));
+					return {
+						from: makeCodeTree(current),
+						to: makeCodeTree(result),
+						resolved: result
+					};
+				},
+				duration,
+				ease
+			)
+		);
+		return this;
+	};
+
+	state.codeRemove = function (
+		this: Scene<T>,
+		target: CodeRange | CodeRange[] | RangeResolver,
+		duration = 0.6,
+		ease: (t: number) => number = easeInOut
+	) {
+		if (!codeState) throw new Error('codeRemove: no code state. Pass initial `code` to scene().');
+		steps.push(
+			new CodeStep(
+				codeState,
+				() => {
+					const current = codeState.resolved;
+					const range = resolveSingleRange(target, current);
+					const { start, end } = rangeToSplice(current, range);
+					const result = applyIndent(current.slice(0, start) + current.slice(end));
+					return {
+						from: makeCodeTree(current),
+						to: makeCodeTree(result),
+						resolved: result
+					};
+				},
+				duration,
+				ease
+			)
+		);
+		return this;
+	};
+
+	state.codeEdit = function (this: Scene<T>, duration = 0.6) {
+		if (!codeState) throw new Error('codeEdit: no code state. Pass initial `code` to scene().');
+		return (strings: TemplateStringsArray, ...tags: (string | RawCodeFragment)[]) => {
+			steps.push(
+				new CodeStep(
+					codeState,
+					() => {
+						const { to } = buildEditTrees(strings, tags);
+						const resolved = applyIndent(to);
+						return { from: codeState.resolved, to: resolved, resolved };
+					},
+					duration,
+					easeInOut
+				)
+			);
+			return this;
+		};
+	};
+
+	state.codeSelection = function (
+		this: Scene<T>,
+		range: CodeRange | CodeRange[] | RangeResolver | string | typeof DEFAULT = DEFAULT,
+		duration = 0.6
+	) {
+		if (!codeState)
+			throw new Error('codeSelection: no code state. Pass initial `code` to scene().');
+		const resolvedRanges =
+			range === DEFAULT ? ALL_LINES : resolveRangeArray(range, codeState.resolved);
+		steps.push(new SelectionStep(codeState, resolvedRanges, duration));
+		return this;
+	};
+
 	onMount(() => {
 		manager.load({ steps, enterBuild, exitBuild, slug: page.params.slug ?? deck[0].slug });
 	});
 
 	return state;
+}
+
+function rangeToSplice(code: string, range: CodeRange): { start: number; end: number } {
+	const [[sl, sc], [el, ec]] = range;
+	const lines = code.split('\n');
+	let start = 0;
+	for (let i = 0; i < Math.min(sl, lines.length); i++) {
+		start += lines[i].length + 1;
+	}
+	start += Math.min(sc, lines[Math.min(sl, lines.length - 1)]?.length ?? 0);
+	let end = 0;
+	for (let i = 0; i < Math.min(el, lines.length); i++) {
+		end += lines[i].length + 1;
+	}
+	end +=
+		ec === Infinity
+			? (lines[Math.min(el, lines.length - 1)]?.length ?? Infinity)
+			: Math.min(ec, lines[Math.min(el, lines.length - 1)]?.length ?? 0);
+	return { start, end };
 }

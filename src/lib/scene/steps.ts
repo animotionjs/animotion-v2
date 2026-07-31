@@ -1,5 +1,7 @@
 import { flushSync } from 'svelte';
+import { type CodeRange, type CodeState } from './code.svelte';
 import { clamp, easeInOut, lerp } from './easing';
+import { diffStrings, highlight, type MorphToken, type PositionedToken } from './lezer';
 
 export interface Step {
 	readonly duration: number;
@@ -185,5 +187,143 @@ export class ParallelStep implements Step {
 
 	revert() {
 		for (const step of this.#steps) step.revert();
+	}
+}
+
+export class CodeStep implements Step {
+	#codeState: CodeState;
+	#build: () => { from: string; to: string; resolved: string };
+	#duration: number;
+	#ease: (t: number) => number;
+	#language: string | null = null;
+	#snapshot: {
+		resolved: string;
+		settled: PositionedToken[];
+		tokens: MorphToken[] | null;
+		progress: number;
+		language: string;
+	} | null = null;
+	#pendingResolved = '';
+	#pendingSettled: PositionedToken[] = [];
+
+	constructor(
+		codeState: CodeState,
+		build: () => { from: string; to: string; resolved: string },
+		duration: number,
+		ease: (t: number) => number = easeInOut,
+		language?: string
+	) {
+		this.#codeState = codeState;
+		this.#build = build;
+		this.#duration = duration;
+		this.#ease = ease;
+		this.#language = language ?? null;
+	}
+
+	get duration(): number {
+		return this.#duration;
+	}
+
+	start() {
+		const langChanged = this.#language !== null && this.#language !== this.#codeState.language;
+		this.#snapshot = {
+			resolved: this.#codeState.resolved,
+			settled: this.#codeState.settled,
+			tokens: this.#codeState.tokens,
+			progress: this.#codeState.progress,
+			language: this.#codeState.language
+		};
+		this.#pendingResolved = this.#codeState.resolved;
+		this.#pendingSettled = this.#codeState.settled;
+		const { from, to, resolved } = this.#build();
+		if (langChanged) {
+			this.#codeState.language = this.#language!;
+			const deletes: MorphToken[] = this.#codeState.settled.map((t) => ({
+				code: t.code,
+				classes: t.classes,
+				morph: 'delete',
+				from: [t.col, t.line],
+				to: null
+			}));
+			const creates: MorphToken[] = highlight(to, this.#codeState.language).map((t) => ({
+				code: t.code,
+				classes: t.classes,
+				morph: 'create',
+				from: null,
+				to: [t.col, t.line]
+			}));
+			this.#codeState.tokens = [...deletes, ...creates];
+			this.#pendingSettled = highlight(to, this.#codeState.language);
+		} else {
+			this.#codeState.tokens = diffStrings(from, to, this.#codeState.language);
+			this.#pendingSettled = highlight(to, this.#codeState.language);
+		}
+		this.#codeState.progress = 0;
+		this.#pendingResolved = resolved;
+	}
+
+	setProgress(p: number) {
+		this.#codeState.progress = this.#ease(clamp(p, 0, 1));
+	}
+
+	end() {
+		this.#codeState.resolved = this.#pendingResolved;
+		this.#codeState.settled = this.#pendingSettled;
+		this.#codeState.tokens = null;
+		this.#codeState.progress = 1;
+	}
+
+	revert() {
+		if (!this.#snapshot) return;
+		this.#codeState.resolved = this.#snapshot.resolved;
+		this.#codeState.settled = this.#snapshot.settled;
+		this.#codeState.tokens = this.#snapshot.tokens;
+		this.#codeState.progress = this.#snapshot.progress;
+		this.#codeState.language = this.#snapshot.language;
+		this.#snapshot = null;
+	}
+}
+
+export class SelectionStep implements Step {
+	#codeState: CodeState;
+	#range: CodeRange[];
+	#duration: number;
+	#snapshot: { selection: CodeRange[]; selectionProgress: number | null } | null = null;
+
+	constructor(codeState: CodeState, range: CodeRange[], duration: number) {
+		this.#codeState = codeState;
+		this.#range = range;
+		this.#duration = duration;
+	}
+
+	get duration(): number {
+		return this.#duration;
+	}
+
+	start() {
+		this.#snapshot = {
+			selection: this.#codeState.selection,
+			selectionProgress: this.#codeState.selectionProgress
+		};
+		this.#codeState.previousSelection = this.#snapshot.selection;
+		this.#codeState.selection = this.#range;
+		this.#codeState.selectionProgress = 0;
+	}
+
+	setProgress(p: number) {
+		this.#codeState.selectionProgress = clamp(p, 0, 1);
+	}
+
+	end() {
+		this.#codeState.selectionProgress = null;
+		this.#codeState.previousSelection = null;
+	}
+
+	revert() {
+		if (!this.#snapshot) return;
+		this.#codeState.selection = this.#snapshot.selection;
+		this.#codeState.selectionProgress = this.#snapshot.selectionProgress;
+		this.#codeState.previousSelection = null;
+		this.#snapshot = null;
 	}
 }

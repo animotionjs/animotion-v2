@@ -1,0 +1,97 @@
+.code-block {
+	color: #f0f0f0;
+
+	& :where(.tok-comment, .tok-docComment, .tok-docString) {
+		color: #4a4a4a;
+	}
+
+	& :where(.tok-keyword) {
+		color: #ffd54f;
+	}
+
+	& :where(.tok-string, .tok-string2, .tok-escape, .tok-regexp) {
+		color: #ffd54f;
+	}
+
+	& :where(.tok-number, .tok-bool, .tok-null) {
+		color: #ffd54f;
+	}
+
+	& :where(.tok-atom, .tok-constant) {
+		color: #f0f0f0;
+	}
+
+	& :where(.tok-function) {
+		color: #f0f0f0;
+	}
+
+	& :where(.tok-typeName, .tok-className) {
+		color: #f0f0f0;
+	}
+
+	& :where(.tok-variableName, .tok-variableName2, .tok-self, .tok-propertyName) {
+		color: #f0f0f0;
+	}
+
+	& :where(.tok-tagName) {
+		color: #ffd54f;
+	}
+
+	& :where(.tok-attributeName) {
+		color: #f0f0f0;
+	}
+
+	& :where(.tok-operator, .tok-keyword-operator) {
+		color: #f0f0f0;
+	}
+
+	& :where(.tok-punctuation) {
+		color: #f0f0f0;
+	}
+
+	& :where(.tok-bracket, .tok-paren, .tok-brace, .tok-angleBracket) {
+		color: #a0a096;
+	}
+
+	& :where(.tok-separator) {
+		color: #f0f0f0;
+	}
+
+	& :where(.tok-contentSeparator) {
+		color: #ffd54f;
+	}
+
+	& :where(.tok-special, .tok-meta, .tok-macroName, .tok-namespace, .tok-annotations) {
+		color: #ffd54f;
+	}
+
+	& :where(.tok-labelName) {
+		color: #ffd54f;
+	}
+
+	& :where(.tok-heading) {
+		color: #f0f0f0;
+		font-weight: 700;
+	}
+
+	& :where(.tok-emphasis) {
+		color: #4a4a4a;
+	}
+
+	& :where(.tok-strong) {
+		color: #4a4a4a;
+		font-weight: 700;
+	}
+
+	& :where(.tok-link) {
+		color: #ffd54f;
+	}
+
+	& :where(.tok-monospace) {
+		color: #c4b8a0;
+	}
+
+	& :where(.tok-definition, .tok-local, .tok-standard) {
+		color: #f0f0f0;
+	}
+}

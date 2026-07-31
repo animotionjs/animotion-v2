@@ -1,14 +1,14 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { page } from '$app/state';
 	import { afterNavigate, goto } from '$app/navigation';
+	import { page } from '$app/state';
+	import favicon from '#lib/assets/favicon.svg';
+	import { PluginManager } from '#lib/plugins/manager.svelte';
+	import { setSceneManager } from '#lib/scene/context.svelte';
+	import { SceneManager } from '#lib/scene/runtime.svelte';
 	import { deck } from '#lib/slides/config';
 	import { plugins } from '#lib/slides/plugins';
-	import { SceneManager } from '#lib/scene/runtime.svelte';
-	import { setSceneManager } from '#lib/scene/context.svelte';
-	import { PluginManager } from '#lib/plugins/manager.svelte';
-	import favicon from '#lib/assets/favicon.svg';
-	import './theme.css';
+	import '../styles/theme.css';
 
 	let { children } = $props();
 

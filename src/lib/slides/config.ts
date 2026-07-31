@@ -1,3 +1,4 @@
+import './register';
 import type { Component } from 'svelte';
 
 interface SceneEntry {
