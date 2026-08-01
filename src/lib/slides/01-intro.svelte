@@ -4,9 +4,9 @@
 	const scene = createScene({ opacity: 0, scale: 0, hidden: true })
 		.slideTransition({ duration: 0.4 })
 		.tween('opacity', 1, 0.6)
-		.all((scene) => {
-			scene.layout(() => (scene.hidden = false), 0.6);
-			scene.tween('scale', 1, 0.6);
+		.all((s) => {
+			s.layout(() => (s.hidden = false), 0.6);
+			s.tween('scale', 1, 0.6);
 		});
 </script>
 
