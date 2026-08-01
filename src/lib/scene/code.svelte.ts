@@ -147,14 +147,19 @@ export function makeCodeTree(code: string): string {
  * Leading whitespace on every line is replaced by `unit` repeated `depth`
  * times, where `depth` is the number of unclosed opening brackets seen on
  * previous lines (minus one if the line starts with a closing bracket).
+ * Lines continuing a chained method call (starting with `.` or `?.`) are
+ * indented one unit beyond the statement they belong to.
  * Braces inside strings, templates and comments are ignored, and lines that
  * continue inside a multi-line string/template/comment are left untouched.
  * Leading and trailing blank lines are dropped. Idempotent.
  */
+const CHAIN_START = /^(\?\.|\.\s*[$A-Z_a-z(])/;
+
 export function smartIndent(code: string, unit = '  '): string {
 	const lines = code.split('\n');
 	const out: string[] = [];
 	let depth = 0;
+	let statementLevel = 0;
 	let inBlockComment = false;
 	let inTemplate = false;
 	let inString: "'" | '"' | null = null;
@@ -170,8 +175,10 @@ export function smartIndent(code: string, unit = '  '): string {
 			out.push(raw);
 		} else {
 			const closes = trimmed[0] === '}' || trimmed[0] === ')' || trimmed[0] === ']';
-			const level = Math.max(0, depth - (closes ? 1 : 0));
+			const chain = !closes && CHAIN_START.test(trimmed);
+			const level = chain ? statementLevel + 1 : Math.max(0, depth - (closes ? 1 : 0));
 			out.push(unit.repeat(level) + trimmed);
+			if (!chain) statementLevel = level;
 		}
 
 		for (let i = 0; i < raw.length; i++) {

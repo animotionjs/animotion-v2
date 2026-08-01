@@ -39,6 +39,23 @@ describe('smartIndent', () => {
 		expect(smartIndent(input)).toBe(`function f() {\n  const o = {\n    a: 1,\n    b: 2,\n  };\n}`);
 	});
 
+	it('indents chained method calls as statement continuations', () => {
+		const input = `const scene = createScene()\n.layout(() => { showCode = true }, 0.7)\n.tween('turn', 2, 3)`;
+		expect(smartIndent(input)).toBe(
+			`const scene = createScene()\n  .layout(() => { showCode = true }, 0.7)\n  .tween('turn', 2, 3)`
+		);
+	});
+
+	it('indents chained method calls nested inside a block', () => {
+		const input = `function setup() {\ncreateScene()\n.layout(() => {}, 0.5)\n}`;
+		expect(smartIndent(input)).toBe(`function setup() {\n  createScene()\n    .layout(() => {}, 0.5)\n}`);
+	});
+
+	it('does not treat spread or numeric decimals as chain continuation', () => {
+		const input = `const o = {\n  a: 1,\n  ...rest,\n  b: .5,\n};`;
+		expect(smartIndent(input)).toBe(`const o = {\n  a: 1,\n  ...rest,\n  b: .5,\n};`);
+	});
+
 	it('indents with a custom unit', () => {
 		const input = `function f() {\nx();\n}`;
 		expect(smartIndent(input, '    ')).toBe(`function f() {\n    x();\n}`);
