@@ -11,6 +11,7 @@ export { getSceneManager, setSceneManager, getSceneId, setSceneId } from './cont
 export { SceneManager } from './runtime.svelte.js';
 export type { SceneEntry, Sequence } from './sequence.js';
 export { TickStep, type TickFrame } from './steps.js';
+export type { LayoutTransition, LayoutOptions } from './steps.js';
 export { createScene } from './builder.svelte.js';
 export { registerLanguage, registerLanguages, getParser } from './lezer.js';
 export {

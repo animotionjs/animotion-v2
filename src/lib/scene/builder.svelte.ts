@@ -7,7 +7,8 @@ import {
 	SelectionStep,
 	TickStep,
 	type Step,
-	type TickFrame
+	type TickFrame,
+	type LayoutOptions
 } from './steps';
 import { getSceneManager, getSceneId } from './context.svelte';
 import { TransitionBuilder, type TransitionBuild } from './runtime.svelte';
@@ -32,7 +33,12 @@ import {
 export interface SceneBuilder<T> {
 	tween(key: keyof T, to: number, duration?: number, ease?: (p: number) => number): this;
 	tick(onTick: (frame: TickFrame) => void, duration?: number, ease?: (p: number) => number): this;
-	layout(change: () => void, duration?: number, ease?: (p: number) => number): this;
+	layout(
+		change: () => void,
+		duration?: number,
+		ease?: (p: number) => number,
+		options?: LayoutOptions
+	): this;
 	all(fn: (scene: this) => void): this;
 	transitionIn(fn: TransitionBuild): this;
 	transitionOut(fn: TransitionBuild): this;
@@ -125,9 +131,10 @@ export function createScene<T extends Object>(initial: T = {} as T) {
 	state.layout = function (
 		change: () => void,
 		duration = 0.5,
-		ease: (p: number) => number = easeInOut
+		ease: (p: number) => number = easeInOut,
+		options?: LayoutOptions
 	) {
-		steps.push(new LayoutStep(state, change, duration, ease));
+		steps.push(new LayoutStep(state, change, duration, ease, options));
 		return this;
 	};
 

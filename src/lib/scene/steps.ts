@@ -112,30 +112,74 @@ export class TickStep implements Step {
 	}
 }
 
+export type LayoutTransition = 'fade' | 'scale' | 'clip' | 'wipe' | 'none';
+
+export interface LayoutOptions {
+	enter?: LayoutTransition;
+	exit?: LayoutTransition;
+}
+
+const DEFAULT_ENTER: LayoutTransition = 'fade';
+const DEFAULT_EXIT: LayoutTransition = 'fade';
+
+type LayoutMode = 'flip' | 'enter' | 'exit';
+
+interface LayoutTween {
+	el: HTMLElement;
+	mode: LayoutMode;
+	transition: LayoutTransition;
+	deltaX: number;
+	deltaY: number;
+	scaleX: number;
+	scaleY: number;
+}
+
+function transitionValue(
+	transition: LayoutTransition,
+	p: number,
+	direction: 'enter' | 'exit'
+): { opacity?: number; transform?: string; clipPath?: string } {
+	switch (transition) {
+		case 'fade':
+			return { opacity: direction === 'enter' ? p : 1 - p };
+		case 'scale':
+			return { transform: `scale(${direction === 'enter' ? p : 1 - p})` };
+		case 'clip': {
+			const r = direction === 'enter' ? 100 * p : 100 * (1 - p);
+			return { clipPath: `circle(${r}% at 50% 50%)` };
+		}
+		case 'wipe': {
+			const side = direction === 'enter' ? 100 * (1 - p) : 100 * p;
+			return { clipPath: `inset(0 ${side}% 0 0)` };
+		}
+		case 'none':
+			return {};
+	}
+}
+
 export class LayoutStep implements Step {
 	#state: Record<string, unknown>;
 	#change: () => void;
 	#duration: number;
 	#ease: (p: number) => number;
+	#enter: LayoutTransition;
+	#exit: LayoutTransition;
 	#snapshot: Record<string, unknown> = {};
-	#tweens: Array<{
-		el: HTMLElement;
-		deltaX: number;
-		deltaY: number;
-		scaleX: number;
-		scaleY: number;
-	}> = [];
+	#tweens: LayoutTween[] = [];
 
 	constructor(
 		state: Record<string, unknown>,
 		change: () => void,
 		duration: number,
-		ease: (p: number) => number = easeInOut
+		ease: (p: number) => number = easeInOut,
+		options: LayoutOptions = {}
 	) {
 		this.#state = state;
 		this.#change = change;
 		this.#duration = duration;
 		this.#ease = ease;
+		this.#enter = options.enter ?? DEFAULT_ENTER;
+		this.#exit = options.exit ?? DEFAULT_EXIT;
 	}
 
 	get duration(): number {
@@ -145,8 +189,19 @@ export class LayoutStep implements Step {
 	setProgress(p: number) {
 		const progress = clamp(p, 0, 1);
 		const eased = this.#ease(progress);
-		for (const { el, deltaX, deltaY, scaleX, scaleY } of this.#tweens) {
-			el.style.transform = `translate(${deltaX * (1 - eased)}px, ${deltaY * (1 - eased)}px) scale(${lerp(scaleX, 1, eased)}, ${lerp(scaleY, 1, eased)})`;
+		for (const tween of this.#tweens) {
+			if (tween.mode === 'flip') {
+				tween.el.style.transform = `translate(${tween.deltaX * (1 - eased)}px, ${tween.deltaY * (1 - eased)}px) scale(${lerp(tween.scaleX, 1, eased)}, ${lerp(tween.scaleY, 1, eased)})`;
+			} else {
+				const value = transitionValue(
+					tween.transition,
+					eased,
+					tween.mode === 'enter' ? 'enter' : 'exit'
+				);
+				if (value.opacity !== undefined) tween.el.style.opacity = String(value.opacity);
+				if (value.transform !== undefined) tween.el.style.transform = value.transform;
+				if (value.clipPath !== undefined) tween.el.style.clipPath = value.clipPath;
+			}
 		}
 	}
 
@@ -162,11 +217,11 @@ export class LayoutStep implements Step {
 		}
 
 		const elements = [...document.querySelectorAll('[data-layout]')] as HTMLElement[];
-		const firstBounds: Record<string, DOMRect> = {};
+		const firstBounds = new Map<string, { el: HTMLElement; rect: DOMRect }>();
 		for (const el of elements) {
 			const rect = el.getBoundingClientRect();
 			if (rect.width > 0 && rect.height > 0) {
-				firstBounds[el.dataset.layout!] = rect;
+				firstBounds.set(el.dataset.layout!, { el, rect });
 			}
 		}
 
@@ -174,26 +229,98 @@ export class LayoutStep implements Step {
 		flushSync();
 
 		const lastElements = [...document.querySelectorAll('[data-layout]')] as HTMLElement[];
-		this.#tweens = [];
+		const lastBounds = new Map<string, { el: HTMLElement; rect: DOMRect }>();
 		for (const el of lastElements) {
-			const curr = el.getBoundingClientRect();
-			const prev = firstBounds[el.dataset.layout!];
-			if (!prev) continue;
+			const rect = el.getBoundingClientRect();
+			if (rect.width > 0 && rect.height > 0) {
+				lastBounds.set(el.dataset.layout!, { el, rect });
+			}
+		}
 
-			const deltaX = prev.left - curr.left;
-			const deltaY = prev.top - curr.top;
-			const scaleX = prev.width / curr.width;
-			const scaleY = prev.height / curr.height;
+		this.#tweens = [];
 
-			el.style.transformOrigin = 'top left';
-			el.style.transform = `translate(${deltaX}px, ${deltaY}px) scale(${scaleX}, ${scaleY})`;
+		for (const [key, { el, rect }] of lastBounds) {
+			const prev = firstBounds.get(key);
+			if (prev) {
+				const deltaX = prev.rect.left - rect.left;
+				const deltaY = prev.rect.top - rect.top;
+				const scaleX = prev.rect.width / rect.width;
+				const scaleY = prev.rect.height / rect.height;
+				el.style.transformOrigin = 'top left';
+				el.style.transform = `translate(${deltaX}px, ${deltaY}px) scale(${scaleX}, ${scaleY})`;
+				this.#tweens.push({
+					el,
+					mode: 'flip',
+					transition: 'none',
+					deltaX,
+					deltaY,
+					scaleX,
+					scaleY
+				});
+			} else {
+				this.#applyStart(el, this.#enter, 'enter');
+				this.#tweens.push({
+					el,
+					mode: 'enter',
+					transition: this.#enter,
+					deltaX: 0,
+					deltaY: 0,
+					scaleX: 1,
+					scaleY: 1
+				});
+			}
+		}
 
-			this.#tweens.push({ el, deltaX, deltaY, scaleX, scaleY });
+		for (const [key, { el, rect }] of firstBounds) {
+			if (lastBounds.has(key)) continue;
+			if (this.#exit === 'none') continue;
+			const ghost = this.#createGhost(el, rect);
+			this.#applyStart(ghost, this.#exit, 'exit');
+			this.#tweens.push({
+				el: ghost,
+				mode: 'exit',
+				transition: this.#exit,
+				deltaX: 0,
+				deltaY: 0,
+				scaleX: 1,
+				scaleY: 1
+			});
 		}
 	}
 
+	#applyStart(el: HTMLElement, transition: LayoutTransition, direction: 'enter' | 'exit') {
+		if (transition === 'scale') el.style.transformOrigin = 'center';
+		const value = transitionValue(transition, 0, direction);
+		if (value.opacity !== undefined) el.style.opacity = String(value.opacity);
+		if (value.transform !== undefined) el.style.transform = value.transform;
+		if (value.clipPath !== undefined) el.style.clipPath = value.clipPath;
+	}
+
+	#createGhost(el: HTMLElement, rect: DOMRect): HTMLElement {
+		const ghost = el.cloneNode(true) as HTMLElement;
+		ghost.style.position = 'fixed';
+		ghost.style.left = `${rect.left}px`;
+		ghost.style.top = `${rect.top}px`;
+		ghost.style.width = `${rect.width}px`;
+		ghost.style.height = `${rect.height}px`;
+		ghost.style.margin = '0';
+		ghost.style.display = 'block';
+		ghost.style.pointerEvents = 'none';
+		document.body.appendChild(ghost);
+		return ghost;
+	}
+
 	end() {
-		for (const { el } of this.#tweens) el.style.transform = '';
+		for (const tween of this.#tweens) {
+			if (tween.mode === 'exit') {
+				tween.el.remove();
+			} else {
+				tween.el.style.transform = '';
+				tween.el.style.opacity = '';
+				tween.el.style.clipPath = '';
+				tween.el.style.transformOrigin = '';
+			}
+		}
 		this.#tweens = [];
 	}
 
@@ -201,7 +328,16 @@ export class LayoutStep implements Step {
 		for (const key of Object.keys(this.#snapshot)) {
 			this.#state[key] = this.#snapshot[key];
 		}
-		for (const { el } of this.#tweens) el.style.transform = '';
+		for (const tween of this.#tweens) {
+			if (tween.mode === 'exit') {
+				tween.el.remove();
+			} else {
+				tween.el.style.transform = '';
+				tween.el.style.opacity = '';
+				tween.el.style.clipPath = '';
+				tween.el.style.transformOrigin = '';
+			}
+		}
 		this.#tweens = [];
 		this.#snapshot = {};
 	}

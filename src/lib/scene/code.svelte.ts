@@ -265,22 +265,22 @@ export function buildEditTrees(
 }
 
 export function createCodeState(language: string, initial: string): CodeState {
+	let settled: PositionedToken[];
+	try {
+		settled = highlight(initial, language);
+	} catch {
+		settled = [];
+	}
 	const state = $state<CodeState>({
 		language,
 		resolved: initial,
-		settled: [],
+		settled,
 		tokens: null,
 		progress: 1,
 		selection: ALL_LINES,
 		selectionProgress: null,
 		previousSelection: null
 	});
-
-	try {
-		state.settled = highlight(initial, language);
-	} catch {
-		state.settled = [];
-	}
 
 	return state;
 }

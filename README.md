@@ -38,6 +38,8 @@ A presentation is an ordered `sequence` of scenes. Each scene is a component tha
 
 The library provides the player shell (`Scene`), the animation engine (`createScene`, `SceneManager`, step types), a code component (`Code`) that morphs between source states, and a plugin system (`PluginManager`, `fullscreenPlugin`).
 
+`layout()` accepts optional enter/exit transition presets: `layout(change, duration, ease, { enter: 'clip', exit: 'fade' })` — `fade` (default), `scale`, `clip` (circle reveal), `wipe` (left-to-right), or `none`. New elements animate in with `enter`; elements removed from the DOM (including `{#if}` and `{#each}` items) animate out via a pinned ghost with `exit`.
+
 ## Rendering a video
 
 ```sh
