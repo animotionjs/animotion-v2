@@ -10,7 +10,7 @@
 </script>
 
 <section
-	class="@container flex aspect-video w-[min(100dvw,calc(100dvh*16/9))] flex-col items-center justify-center overflow-hidden p-8 text-white"
+	class="@container flex aspect-video w-[min(100dvw,calc(100dvh*16/9))] flex-col items-center justify-center overflow-hidden p-8 text-foreground"
 	style:opacity={transition.opacity}
 	style:transform
 >

@@ -1,97 +1,97 @@
 .code-block {
-	color: #f0f0f0;
+	color: var(--code-base);
 
 	& :where(.tok-comment, .tok-docComment, .tok-docString) {
-		color: #4a4a4a;
+		color: var(--code-comment);
 	}
 
 	& :where(.tok-keyword) {
-		color: #ffd54f;
+		color: var(--code-keyword);
 	}
 
 	& :where(.tok-string, .tok-string2, .tok-escape, .tok-regexp) {
-		color: #ffd54f;
+		color: var(--code-string);
 	}
 
 	& :where(.tok-number, .tok-bool, .tok-null) {
-		color: #ffd54f;
+		color: var(--code-number);
 	}
 
 	& :where(.tok-atom, .tok-constant) {
-		color: #f0f0f0;
+		color: var(--code-atom);
 	}
 
 	& :where(.tok-function) {
-		color: #f0f0f0;
+		color: var(--code-function);
 	}
 
 	& :where(.tok-typeName, .tok-className) {
-		color: #f0f0f0;
+		color: var(--code-type);
 	}
 
 	& :where(.tok-variableName, .tok-variableName2, .tok-self, .tok-propertyName) {
-		color: #f0f0f0;
+		color: var(--code-variable);
 	}
 
 	& :where(.tok-tagName) {
-		color: #ffd54f;
+		color: var(--code-tag);
 	}
 
 	& :where(.tok-attributeName) {
-		color: #f0f0f0;
+		color: var(--code-attribute);
 	}
 
 	& :where(.tok-operator, .tok-keyword-operator) {
-		color: #f0f0f0;
+		color: var(--code-operator);
 	}
 
 	& :where(.tok-punctuation) {
-		color: #f0f0f0;
+		color: var(--code-punctuation);
 	}
 
 	& :where(.tok-bracket, .tok-paren, .tok-brace, .tok-angleBracket) {
-		color: #a0a096;
+		color: var(--code-bracket);
 	}
 
 	& :where(.tok-separator) {
-		color: #f0f0f0;
+		color: var(--code-separator);
 	}
 
 	& :where(.tok-contentSeparator) {
-		color: #ffd54f;
+		color: var(--code-content-separator);
 	}
 
 	& :where(.tok-special, .tok-meta, .tok-macroName, .tok-namespace, .tok-annotations) {
-		color: #ffd54f;
+		color: var(--code-special);
 	}
 
 	& :where(.tok-labelName) {
-		color: #ffd54f;
+		color: var(--code-label);
 	}
 
 	& :where(.tok-heading) {
-		color: #f0f0f0;
+		color: var(--code-heading);
 		font-weight: 700;
 	}
 
 	& :where(.tok-emphasis) {
-		color: #4a4a4a;
+		color: var(--code-emphasis);
 	}
 
 	& :where(.tok-strong) {
-		color: #4a4a4a;
+		color: var(--code-strong);
 		font-weight: 700;
 	}
 
 	& :where(.tok-link) {
-		color: #ffd54f;
+		color: var(--code-link);
 	}
 
 	& :where(.tok-monospace) {
-		color: #c4b8a0;
+		color: var(--code-monospace);
 	}
 
 	& :where(.tok-definition, .tok-local, .tok-standard) {
-		color: #f0f0f0;
+		color: var(--code-definition);
 	}
 }

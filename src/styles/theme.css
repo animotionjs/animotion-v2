@@ -1,15 +1,45 @@
 @import 'tailwindcss';
-@import './code-theme.css';
 @import '@fontsource/atkinson-hyperlegible/400.css';
 @import '@fontsource/atkinson-hyperlegible/700.css';
 @import '@fontsource/atkinson-hyperlegible/400-italic.css';
 @import '@fontsource/atkinson-hyperlegible/700-italic.css';
 @import '@fontsource-variable/jetbrains-mono/wght.css';
 @import '@fontsource-variable/jetbrains-mono/wght-italic.css';
+@import './code-theme.css';
 
 @theme {
 	--font-sans: 'Atkinson Hyperlegible', sans-serif;
 	--font-mono: 'JetBrains Mono Variable', monospace;
+
+	--color-background: #000;
+	--color-foreground: #fff;
+	--color-surface: #27272a;
+	--color-accent: #fbbf24;
+
+	--code-base: #f0f0f0;
+	--code-comment: #4a4a4a;
+	--code-keyword: #ffd54f;
+	--code-string: #ffd54f;
+	--code-number: #ffd54f;
+	--code-atom: #f0f0f0;
+	--code-function: #f0f0f0;
+	--code-type: #f0f0f0;
+	--code-variable: #f0f0f0;
+	--code-tag: #ffd54f;
+	--code-attribute: #f0f0f0;
+	--code-operator: #f0f0f0;
+	--code-punctuation: #f0f0f0;
+	--code-bracket: #a0a096;
+	--code-separator: #f0f0f0;
+	--code-content-separator: #ffd54f;
+	--code-special: #ffd54f;
+	--code-label: #ffd54f;
+	--code-heading: #f0f0f0;
+	--code-emphasis: #4a4a4a;
+	--code-strong: #4a4a4a;
+	--code-link: #ffd54f;
+	--code-monospace: #c4b8a0;
+	--code-definition: #f0f0f0;
 
 	--spacing: 0.25cqi;
 

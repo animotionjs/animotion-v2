@@ -90,12 +90,12 @@
 
 <svelte:window {onkeydown} />
 
-<div class="flex h-dvh w-dvw items-center justify-center overflow-hidden bg-black">
+<div class="flex h-dvh w-dvw items-center justify-center overflow-hidden bg-background">
 	{@render children()}
 </div>
 
 {#if showProgressBar}
-	<div class="fixed right-0 bottom-0 left-0 z-10 h-[4px] bg-zinc-800">
-		<div class="h-full bg-amber-400 transition-all" style:width="{progress}%"></div>
+	<div class="fixed right-0 bottom-0 left-0 z-10 h-[4px] bg-surface">
+		<div class="h-full bg-accent transition-all" style:width="{progress}%"></div>
 	</div>
 {/if}
