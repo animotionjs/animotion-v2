@@ -1,18 +1,18 @@
 <script lang="ts">
-	import { scene } from '#lib/scene';
+	import { createScene } from '#lib/scene';
 
-	const s = scene({ order: ['Svelte 5', 'SvelteKit', 'Tailwind 4', 'TypeScript'] })
+	const scene = createScene({ order: ['Svelte 5', 'SvelteKit', 'Tailwind 4', 'TypeScript'] })
 		.slideTransition({ duration: 0.4 })
 		.layout(() => {
-			s.order = [...s.order].reverse();
+			scene.order = [...scene.order].reverse();
 		}, 0.5)
 		.layout(() => {
-			s.order = [...s.order].reverse();
+			scene.order = [...scene.order].reverse();
 		}, 0.5);
 </script>
 
 <ul>
-	{#each s.order as item (item)}
+	{#each scene.order as item (item)}
 		<li data-layout={item} class="py-2 text-2xl">{item}</li>
 	{/each}
 </ul>

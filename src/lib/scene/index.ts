@@ -10,7 +10,7 @@ export {
 export { getSceneManager, setSceneManager } from './context.svelte.js';
 export { SceneManager } from './runtime.svelte.js';
 export { TickStep, type TickFrame } from './steps.js';
-export { scene } from './builder.svelte.js';
+export { createScene } from './builder.svelte.js';
 export { registerLanguage, registerLanguages, getParser } from './lezer.js';
 export {
 	insert,

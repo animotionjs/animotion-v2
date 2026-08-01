@@ -16,7 +16,7 @@ export class TweenStep implements Step {
 	#key: string;
 	#to: number;
 	#duration: number;
-	#ease: (t: number) => number;
+	#ease: (p: number) => number;
 	#from = 0;
 
 	constructor(
@@ -24,7 +24,7 @@ export class TweenStep implements Step {
 		key: string,
 		to: number,
 		duration: number,
-		ease: (t: number) => number = easeInOut
+		ease: (p: number) => number = easeInOut
 	) {
 		this.#state = state;
 		this.#key = key;
@@ -68,14 +68,14 @@ export interface TickFrame {
 export class TickStep implements Step {
 	#onTick: (frame: TickFrame) => void;
 	#duration: number;
-	#ease: (t: number) => number;
+	#ease: (p: number) => number;
 	#time = 0;
 	#frame = 0;
 
 	constructor(
 		onTick: (frame: TickFrame) => void,
 		duration: number,
-		ease: (t: number) => number = (t) => t
+		ease: (p: number) => number = (p) => p
 	) {
 		this.#onTick = onTick;
 		this.#duration = duration;
@@ -116,7 +116,7 @@ export class LayoutStep implements Step {
 	#state: Record<string, unknown>;
 	#change: () => void;
 	#duration: number;
-	#ease: (t: number) => number;
+	#ease: (p: number) => number;
 	#snapshot: Record<string, unknown> = {};
 	#tweens: Array<{
 		el: HTMLElement;
@@ -130,7 +130,7 @@ export class LayoutStep implements Step {
 		state: Record<string, unknown>,
 		change: () => void,
 		duration: number,
-		ease: (t: number) => number = easeInOut
+		ease: (p: number) => number = easeInOut
 	) {
 		this.#state = state;
 		this.#change = change;
@@ -252,7 +252,7 @@ export class CodeStep implements Step {
 	#codeState: CodeState;
 	#build: () => { from: string; to: string; resolved: string };
 	#duration: number;
-	#ease: (t: number) => number;
+	#ease: (p: number) => number;
 	#language: string | null = null;
 	#snapshot: {
 		resolved: string;
@@ -268,7 +268,7 @@ export class CodeStep implements Step {
 		codeState: CodeState,
 		build: () => { from: string; to: string; resolved: string },
 		duration: number,
-		ease: (t: number) => number = easeInOut,
+		ease: (p: number) => number = easeInOut,
 		language?: string
 	) {
 		this.#codeState = codeState;

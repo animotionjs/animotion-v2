@@ -1,7 +1,7 @@
 <script lang="ts">
-	import { scene, Code, code } from '#lib/scene';
+	import { createScene, Code, code } from '#lib/scene';
 
-	scene({
+	createScene({
 		code: `function example() {
 			console.log('Hello!');
 		}`

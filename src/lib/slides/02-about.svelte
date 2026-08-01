@@ -1,7 +1,7 @@
 <script lang="ts">
-	import { scene } from '#lib/scene';
+	import { createScene } from '#lib/scene';
 
-	scene().slideTransition({ duration: 0.4 });
+	createScene().slideTransition({ duration: 0.4 });
 </script>
 
 <h2 class="text-4xl font-bold">About</h2>

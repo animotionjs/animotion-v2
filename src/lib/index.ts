@@ -2,7 +2,7 @@ export type { Direction, TransitionBuild } from './scene/runtime.svelte.js';
 export { TransitionBuilder } from './scene/runtime.svelte.js';
 export { registerLanguage, registerLanguages, getParser } from './scene/lezer.js';
 export {
-	scene,
+	createScene,
 	Code,
 	insert,
 	remove,

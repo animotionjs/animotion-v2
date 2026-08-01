@@ -23,7 +23,7 @@ export class TransitionBuilder {
 		this.#state[key] = value;
 	}
 
-	tween(key: string, to: number, duration = 0.5, ease: (t: number) => number = easeInOut) {
+	tween(key: string, to: number, duration = 0.5, ease: (p: number) => number = easeInOut) {
 		this.#steps.push(new TweenStep(this.#state, key, to, duration, ease));
 		return this;
 	}

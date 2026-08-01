@@ -32,42 +32,42 @@ import {
 } from './code.svelte';
 
 export interface SceneBuilder<T> {
-	tween(key: keyof T, to: number, duration?: number, ease?: (t: number) => number): this;
-	tick(onTick: (frame: TickFrame) => void, duration?: number, ease?: (t: number) => number): this;
-	layout(change: () => void, duration?: number, ease?: (t: number) => number): this;
-	all(...fns: ((t: this) => void)[]): this;
+	tween(key: keyof T, to: number, duration?: number, ease?: (p: number) => number): this;
+	tick(onTick: (frame: TickFrame) => void, duration?: number, ease?: (p: number) => number): this;
+	layout(change: () => void, duration?: number, ease?: (p: number) => number): this;
+	all(fn: (scene: this) => void): this;
 	transitionIn(fn: TransitionBuild): this;
 	transitionOut(fn: TransitionBuild): this;
 	slideTransition(opts?: {
 		duration?: number;
-		ease?: (t: number) => number;
+		ease?: (p: number) => number;
 		distance?: number;
 	}): this;
-	fadeTransition(opts?: { duration?: number; ease?: (t: number) => number }): this;
-	zoomTransition(opts?: { duration?: number; ease?: (t: number) => number; scale?: number }): this;
+	fadeTransition(opts?: { duration?: number; ease?: (p: number) => number }): this;
+	zoomTransition(opts?: { duration?: number; ease?: (p: number) => number; scale?: number }): this;
 	codeTo(
 		code: string,
 		duration?: number,
-		opts?: { language?: string; ease?: (t: number) => number }
+		opts?: { language?: string; ease?: (p: number) => number }
 	): this;
-	codeAppend(code: string, duration?: number, ease?: (t: number) => number): this;
-	codePrepend(code: string, duration?: number, ease?: (t: number) => number): this;
+	codeAppend(code: string, duration?: number, ease?: (p: number) => number): this;
+	codePrepend(code: string, duration?: number, ease?: (p: number) => number): this;
 	codeInsert(
 		range: CodeRange | CodeRange[] | RangeResolver,
 		code: string,
 		duration?: number,
-		ease?: (t: number) => number
+		ease?: (p: number) => number
 	): this;
 	codeReplace(
 		range: CodeRange | CodeRange[] | RangeResolver | string,
 		code: string,
 		duration?: number,
-		ease?: (t: number) => number
+		ease?: (p: number) => number
 	): this;
 	codeRemove(
 		range: CodeRange | CodeRange[] | RangeResolver | string,
 		duration?: number,
-		ease?: (t: number) => number
+		ease?: (p: number) => number
 	): this;
 	codeEdit(
 		duration?: number
@@ -80,7 +80,7 @@ export interface SceneBuilder<T> {
 type Scene<T> = T & SceneBuilder<T>;
 type Object = Record<string, unknown>;
 
-export function scene<T extends Object>(initial: T = {} as T) {
+export function createScene<T extends Object>(initial: T = {} as T) {
 	const rawInitial = initial as Record<string, unknown>;
 	const indent =
 		typeof rawInitial.indent === 'string' && rawInitial.indent.length > 0
@@ -109,7 +109,7 @@ export function scene<T extends Object>(initial: T = {} as T) {
 		key: string,
 		to: number,
 		duration = 0.5,
-		ease: (t: number) => number = easeInOut
+		ease: (p: number) => number = easeInOut
 	) {
 		steps.push(new TweenStep(state, key, to, duration, ease));
 		return this;
@@ -118,7 +118,7 @@ export function scene<T extends Object>(initial: T = {} as T) {
 	state.tick = function (
 		onTick: (frame: TickFrame) => void,
 		duration = 0.5,
-		ease: (t: number) => number = (t) => t
+		ease: (p: number) => number = (p) => p
 	) {
 		steps.push(new TickStep(onTick, duration, ease));
 		return this;
@@ -127,17 +127,17 @@ export function scene<T extends Object>(initial: T = {} as T) {
 	state.layout = function (
 		change: () => void,
 		duration = 0.5,
-		ease: (t: number) => number = easeInOut
+		ease: (p: number) => number = easeInOut
 	) {
 		steps.push(new LayoutStep(state, change, duration, ease));
 		return this;
 	};
 
-	state.all = function (...fns: ((t: Scene<T>) => void)[]) {
+	state.all = function (this: Scene<T>, fn: (scene: Scene<T>) => void) {
 		const saved = steps;
 		const parallelSteps: Step[] = [];
 		steps = parallelSteps;
-		for (const fn of fns) fn(this);
+		fn(this);
 		steps = saved;
 		steps.push(new ParallelStep(parallelSteps));
 		return this;
@@ -159,26 +159,26 @@ export function scene<T extends Object>(initial: T = {} as T) {
 
 	state.slideTransition = function (opts?: {
 		duration?: number;
-		ease?: (t: number) => number;
+		ease?: (p: number) => number;
 		distance?: number;
 	}) {
 		const duration = opts?.duration ?? 0.5;
 		const ease = opts?.ease ?? easeInOut;
 		const distance = opts?.distance ?? 100;
 
-		enterBuild = (t, d) => {
-			const sign = d === 'forward' ? 1 : -1;
-			t.set('x', sign * distance);
-			t.set('opacity', 0);
-			t.tween('x', 0, duration, ease);
-			t.tween('opacity', 1, duration, ease);
+		enterBuild = (builder, direction) => {
+			const sign = direction === 'forward' ? 1 : -1;
+			builder.set('x', sign * distance);
+			builder.set('opacity', 0);
+			builder.tween('x', 0, duration, ease);
+			builder.tween('opacity', 1, duration, ease);
 		};
 
-		exitBuild = (t, d) => {
-			const sign = d === 'forward' ? 1 : -1;
-			t.set('opacity', 1);
-			t.tween('x', -sign * distance, duration, ease);
-			t.tween('opacity', 0, duration, ease);
+		exitBuild = (builder, direction) => {
+			const sign = direction === 'forward' ? 1 : -1;
+			builder.set('opacity', 1);
+			builder.tween('x', -sign * distance, duration, ease);
+			builder.tween('opacity', 0, duration, ease);
 		};
 
 		if (enterBuild) {
@@ -189,18 +189,18 @@ export function scene<T extends Object>(initial: T = {} as T) {
 		return this;
 	};
 
-	state.fadeTransition = function (opts?: { duration?: number; ease?: (t: number) => number }) {
+	state.fadeTransition = function (opts?: { duration?: number; ease?: (p: number) => number }) {
 		const duration = opts?.duration ?? 0.5;
 		const ease = opts?.ease ?? easeInOut;
 
-		enterBuild = (t) => {
-			t.set('opacity', 0);
-			t.tween('opacity', 1, duration, ease);
+		enterBuild = (builder) => {
+			builder.set('opacity', 0);
+			builder.tween('opacity', 1, duration, ease);
 		};
 
-		exitBuild = (t) => {
-			t.set('opacity', 1);
-			t.tween('opacity', 0, duration, ease);
+		exitBuild = (builder) => {
+			builder.set('opacity', 1);
+			builder.tween('opacity', 0, duration, ease);
 		};
 
 		if (enterBuild) {
@@ -213,25 +213,25 @@ export function scene<T extends Object>(initial: T = {} as T) {
 
 	state.zoomTransition = function (opts?: {
 		duration?: number;
-		ease?: (t: number) => number;
+		ease?: (p: number) => number;
 		scale?: number;
 	}) {
 		const duration = opts?.duration ?? 0.5;
 		const ease = opts?.ease ?? easeInOut;
 		const scale = opts?.scale ?? 0.5;
 
-		enterBuild = (t) => {
-			t.set('opacity', 0);
-			t.set('scale', scale);
-			t.tween('opacity', 1, duration, ease);
-			t.tween('scale', 1, duration, ease);
+		enterBuild = (builder) => {
+			builder.set('opacity', 0);
+			builder.set('scale', scale);
+			builder.tween('opacity', 1, duration, ease);
+			builder.tween('scale', 1, duration, ease);
 		};
 
-		exitBuild = (t) => {
-			t.set('opacity', 1);
-			t.set('scale', 1);
-			t.tween('scale', scale, duration, ease);
-			t.tween('opacity', 0, duration, ease);
+		exitBuild = (builder) => {
+			builder.set('opacity', 1);
+			builder.set('scale', 1);
+			builder.tween('scale', scale, duration, ease);
+			builder.tween('opacity', 0, duration, ease);
 		};
 
 		if (enterBuild) {
@@ -246,9 +246,9 @@ export function scene<T extends Object>(initial: T = {} as T) {
 		this: Scene<T>,
 		code: string,
 		duration = 0.6,
-		opts?: { language?: string; ease?: (t: number) => number }
+		opts?: { language?: string; ease?: (p: number) => number }
 	) {
-		if (!codeState) throw new Error('codeTo: no code state. Pass initial `code` to scene().');
+		if (!codeState) throw new Error('codeTo: no code state. Pass initial `code` to createScene().');
 		const lang = opts?.language ?? codeState.language;
 		if (opts?.language) getParser(opts.language);
 		steps.push(
@@ -271,9 +271,9 @@ export function scene<T extends Object>(initial: T = {} as T) {
 		this: Scene<T>,
 		code: string,
 		duration = 0.6,
-		ease: (t: number) => number = easeInOut
+		ease: (p: number) => number = easeInOut
 	) {
-		if (!codeState) throw new Error('codeAppend: no code state. Pass initial `code` to scene().');
+		if (!codeState) throw new Error('codeAppend: no code state. Pass initial `code` to createScene().');
 		steps.push(
 			new CodeStep(
 				codeState,
@@ -296,9 +296,9 @@ export function scene<T extends Object>(initial: T = {} as T) {
 		this: Scene<T>,
 		code: string,
 		duration = 0.6,
-		ease: (t: number) => number = easeInOut
+		ease: (p: number) => number = easeInOut
 	) {
-		if (!codeState) throw new Error('codePrepend: no code state. Pass initial `code` to scene().');
+		if (!codeState) throw new Error('codePrepend: no code state. Pass initial `code` to createScene().');
 		steps.push(
 			new CodeStep(
 				codeState,
@@ -322,9 +322,9 @@ export function scene<T extends Object>(initial: T = {} as T) {
 		anchor: CodeRange | CodeRange[] | RangeResolver,
 		text: string,
 		duration = 0.6,
-		ease: (t: number) => number = easeInOut
+		ease: (p: number) => number = easeInOut
 	) {
-		if (!codeState) throw new Error('codeInsert: no code state. Pass initial `code` to scene().');
+		if (!codeState) throw new Error('codeInsert: no code state. Pass initial `code` to createScene().');
 		steps.push(
 			new CodeStep(
 				codeState,
@@ -351,9 +351,9 @@ export function scene<T extends Object>(initial: T = {} as T) {
 		target: CodeRange | CodeRange[] | RangeResolver,
 		text: string,
 		duration = 0.6,
-		ease: (t: number) => number = easeInOut
+		ease: (p: number) => number = easeInOut
 	) {
-		if (!codeState) throw new Error('codeReplace: no code state. Pass initial `code` to scene().');
+		if (!codeState) throw new Error('codeReplace: no code state. Pass initial `code` to createScene().');
 		steps.push(
 			new CodeStep(
 				codeState,
@@ -379,9 +379,9 @@ export function scene<T extends Object>(initial: T = {} as T) {
 		this: Scene<T>,
 		target: CodeRange | CodeRange[] | RangeResolver,
 		duration = 0.6,
-		ease: (t: number) => number = easeInOut
+		ease: (p: number) => number = easeInOut
 	) {
-		if (!codeState) throw new Error('codeRemove: no code state. Pass initial `code` to scene().');
+		if (!codeState) throw new Error('codeRemove: no code state. Pass initial `code` to createScene().');
 		steps.push(
 			new CodeStep(
 				codeState,
@@ -404,7 +404,7 @@ export function scene<T extends Object>(initial: T = {} as T) {
 	};
 
 	state.codeEdit = function (this: Scene<T>, duration = 0.6) {
-		if (!codeState) throw new Error('codeEdit: no code state. Pass initial `code` to scene().');
+		if (!codeState) throw new Error('codeEdit: no code state. Pass initial `code` to createScene().');
 		return (strings: TemplateStringsArray, ...tags: (string | RawCodeFragment)[]) => {
 			steps.push(
 				new CodeStep(
@@ -428,7 +428,7 @@ export function scene<T extends Object>(initial: T = {} as T) {
 		duration = 0.6
 	) {
 		if (!codeState)
-			throw new Error('codeSelection: no code state. Pass initial `code` to scene().');
+			throw new Error('codeSelection: no code state. Pass initial `code` to createScene().');
 		const resolvedRanges =
 			range === DEFAULT ? ALL_LINES : resolveRangeArray(range, codeState.resolved);
 		steps.push(new SelectionStep(codeState, resolvedRanges, duration));

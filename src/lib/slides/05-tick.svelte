@@ -1,10 +1,10 @@
 <script lang="ts">
-	import { easeInOut, scene } from '#lib/scene';
+	import { easeInOut, createScene } from '#lib/scene';
 
 	let fill = $state(0);
 	let seconds = $state(0);
 
-	scene()
+	createScene()
 		.slideTransition({ duration: 0.4 })
 		.tick(
 			({ progress, time }) => {
