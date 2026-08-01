@@ -58,7 +58,7 @@ The engine's code-highlighting styles ship as `@animotion/core/styles/code-theme
 
 ```sh
 pnpm install
-pnpm dev        # example deck
+pnpm dev        # example sequence
 pnpm check      # type-check
 pnpm test:unit  # unit tests
 pnpm package    # build the library into dist/

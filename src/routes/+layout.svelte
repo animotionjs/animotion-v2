@@ -38,7 +38,7 @@
 
 	if (typeof window !== 'undefined' && page.url.searchParams.get('render') === 'video') {
 		const scheduler = manager.enableRenderMode();
-		window.__deckRenderer = {
+		window.__sequenceRenderer = {
 			manager,
 			scheduler,
 			scenes: sequence.map((s) => s.id),

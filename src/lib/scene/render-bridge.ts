@@ -11,7 +11,7 @@ export interface RenderBridge {
 
 declare global {
 	interface Window {
-		__deckRenderer?: RenderBridge;
+		__sequenceRenderer?: RenderBridge;
 	}
 }
 

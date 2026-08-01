@@ -8,7 +8,7 @@ import type { RenderBridge } from '../lib/scene/render-bridge.js';
 
 declare global {
 	interface Window {
-		__deckRenderer?: RenderBridge;
+		__sequenceRenderer?: RenderBridge;
 	}
 }
 
@@ -95,8 +95,8 @@ Options:
 		isCrashed = true;
 	});
 	await tempPage.goto(`http://127.0.0.1:4173/?${renderQs}`, { waitUntil: 'domcontentloaded' });
-	await tempPage.waitForFunction(() => window.__deckRenderer !== undefined);
-	const scenes: string[] = await tempPage.evaluate(() => window.__deckRenderer!.scenes);
+	await tempPage.waitForFunction(() => window.__sequenceRenderer !== undefined);
+	const scenes: string[] = await tempPage.evaluate(() => window.__sequenceRenderer!.scenes);
 	await tempPage.close();
 
 	console.log(`Rendering ${scenes.length} scenes with ${args.jobs} workers...`);
@@ -200,7 +200,7 @@ async function runWorker(
 				waitUntil: 'domcontentloaded',
 				timeout: 10000
 			});
-			await page.waitForFunction(() => window.__deckRenderer !== undefined);
+			await page.waitForFunction(() => window.__sequenceRenderer !== undefined);
 
 			progress[sceneIndex].startMs = performance.now();
 			const frames = await captureScene(page, id, isLast, args, sceneIndex);
@@ -242,7 +242,7 @@ async function captureScene(
 		if (isCrashed) throw new Error(`Page crashed during enter of ${id}`);
 		if (++guard > maxFrames) throw new Error(`Enter hang on ${id}: >${maxFrames} frames`);
 		const { done } = await page.evaluate(
-			(delta: number) => window.__deckRenderer!.advanceFrame(delta),
+			(delta: number) => window.__sequenceRenderer!.advanceFrame(delta),
 			1 / args.fps
 		);
 		await writeFrame(await safeScreenshot(page));
@@ -253,13 +253,13 @@ async function captureScene(
 	guard = 0;
 	while (true) {
 		if (isCrashed) throw new Error(`Page crashed during steps of ${id}`);
-		const finished = await page.evaluate(() => window.__deckRenderer!.manager.finished);
+		const finished = await page.evaluate(() => window.__sequenceRenderer!.manager.finished);
 		if (finished) break;
 		if (++guard > 200) {
 			throw new Error(`Step loop hang on ${id}: too many step invocations`);
 		}
 
-		await page.evaluate(() => window.__deckRenderer!.manager.next());
+		await page.evaluate(() => window.__sequenceRenderer!.manager.next());
 		await writeFrame(await safeScreenshot(page));
 
 		let stepGuard = 0;
@@ -269,7 +269,7 @@ async function captureScene(
 				throw new Error(`Step animation hang on ${id}: >${maxFrames} frames`);
 			}
 			const { done } = await page.evaluate(
-				(delta: number) => window.__deckRenderer!.advanceFrame(delta),
+				(delta: number) => window.__sequenceRenderer!.advanceFrame(delta),
 				1 / args.fps
 			);
 			await writeFrame(await safeScreenshot(page));
@@ -282,7 +282,7 @@ async function captureScene(
 	// exit transition
 	guard = 0;
 	await page.evaluate(() => {
-		const d = window.__deckRenderer!;
+		const d = window.__sequenceRenderer!;
 		d.manager.setDirection('forward');
 		d.manager.playExit();
 	});
@@ -291,7 +291,7 @@ async function captureScene(
 		if (isCrashed) throw new Error(`Page crashed during exit of ${id}`);
 		if (++guard > maxFrames) throw new Error(`Exit hang on ${id}: >${maxFrames} frames`);
 		const { done } = await page.evaluate(
-			(delta: number) => window.__deckRenderer!.advanceFrame(delta),
+			(delta: number) => window.__sequenceRenderer!.advanceFrame(delta),
 			1 / args.fps
 		);
 		await writeFrame(await safeScreenshot(page));
