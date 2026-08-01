@@ -24,15 +24,7 @@
 			}
 		`
 		.codeSelection(code.word(2, 15, 6), 0.6)
-		.codeSelection()
-		.codeTo(
-			`fn main() {
-				let greeting = "Hello, world!";
-				println!("{greeting}");
-			}`,
-			0.8,
-			{ language: 'rust' }
-		);
+		.codeSelection();
 </script>
 
 <Code class="text-2xl" />

@@ -13,7 +13,7 @@ function createMockContext(): PluginContext {
 		})
 	} as unknown as PluginContext['manager'];
 
-	return { manager, deck: [], navigateTo, next, prev };
+	return { manager, sequence: [], navigateTo, next, prev };
 }
 
 describe('PluginManager', () => {
@@ -63,16 +63,16 @@ describe('PluginManager', () => {
 		expect(cleanup).toHaveBeenCalledOnce();
 	});
 
-	it('forwards onSlideChange to registered plugins', () => {
+	it('forwards onSceneChange to registered plugins', () => {
 		const ctx = createMockContext();
 		const pm = new PluginManager(ctx);
-		const onSlideChange = vi.fn();
+		const onSceneChange = vi.fn();
 
-		pm.register({ name: 'test', onSlideChange });
-		pm.emitSlideChange({ slug: 'intro', index: 0 });
+		pm.register({ name: 'test', onSceneChange });
+		pm.emitSceneChange({ id: 'intro', index: 0 });
 
-		expect(onSlideChange).toHaveBeenCalledOnce();
-		expect(onSlideChange).toHaveBeenCalledWith({ slug: 'intro', index: 0 });
+		expect(onSceneChange).toHaveBeenCalledOnce();
+		expect(onSceneChange).toHaveBeenCalledWith({ id: 'intro', index: 0 });
 	});
 
 	it('forwards onStepChange to registered plugins', () => {

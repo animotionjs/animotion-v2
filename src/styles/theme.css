@@ -5,7 +5,7 @@
 @import '@fontsource/atkinson-hyperlegible/700-italic.css';
 @import '@fontsource-variable/jetbrains-mono/wght.css';
 @import '@fontsource-variable/jetbrains-mono/wght-italic.css';
-@import './code-theme.css';
+@import '../lib/styles/code-theme.css';
 
 @theme {
 	--font-sans: 'Atkinson Hyperlegible', sans-serif;

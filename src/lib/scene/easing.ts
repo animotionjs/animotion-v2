@@ -18,7 +18,13 @@ export function easeOutCubic(p: number): number {
 	return 1 - Math.pow(1 - p, 3);
 }
 
-export function clampRemap(v: number, inMin: number, inMax: number, outMin: number, outMax: number): number {
+export function clampRemap(
+	v: number,
+	inMin: number,
+	inMax: number,
+	outMin: number,
+	outMax: number
+): number {
 	return outMin + (outMax - outMin) * clamp((v - inMin) / (inMax - inMin), 0, 1);
 }
 

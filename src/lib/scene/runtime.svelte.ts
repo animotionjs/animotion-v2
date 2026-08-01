@@ -1,5 +1,5 @@
 import { flushSync } from 'svelte';
-import { SvelteMap } from 'svelte/reactivity';
+import { SvelteMap, SvelteSet } from 'svelte/reactivity';
 import { TweenStep, ParallelStep, type Step } from './steps';
 import { RealTimeScheduler, RenderScheduler, type FrameScheduler } from './scheduler';
 import { easeInOut } from './easing';
@@ -55,7 +55,7 @@ export class SceneManager {
 	#exitBuild: TransitionBuild | null = null;
 	#exitBusy = false;
 
-	#stepChangeListeners = new Set<(step: number, total: number) => void>();
+	#stepChangeListeners = new SvelteSet<(step: number, total: number) => void>();
 
 	onStepChange(listener: (step: number, total: number) => void): () => void {
 		this.#stepChangeListeners.add(listener);
@@ -145,25 +145,25 @@ export class SceneManager {
 		};
 	}
 
-	saveState(slug: string) {
-		this.#savedStates.set(slug, {
+	saveState(id: string) {
+		this.#savedStates.set(id, {
 			stepIndex: this.#stepIndex,
 			stepCompleted: this.#stepCompleted
 		});
 	}
 
-	hasSavedState(slug: string): boolean {
-		return this.#savedStates.has(slug);
+	hasSavedState(id: string): boolean {
+		return this.#savedStates.has(id);
 	}
 
 	load({
 		steps,
-		slug,
+		id,
 		enterBuild,
 		exitBuild
 	}: {
 		steps: Step[];
-		slug?: string;
+		id?: string;
 		enterBuild?: TransitionBuild | null;
 		exitBuild?: TransitionBuild | null;
 	}) {
@@ -172,7 +172,7 @@ export class SceneManager {
 		if (enterBuild) this.#enterBuild = enterBuild;
 		if (exitBuild) this.#exitBuild = exitBuild;
 
-		const saved = slug ? this.#savedStates.get(slug) : undefined;
+		const saved = id ? this.#savedStates.get(id) : undefined;
 
 		this.#steps = steps;
 		this.#totalSteps = steps.length;

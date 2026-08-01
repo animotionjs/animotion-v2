@@ -3,8 +3,8 @@
 		computeMorphSpans,
 		computeSettledSpans,
 		type RenderSpan
-	} from '#lib/scene/code-render.svelte';
-	import { getCodeState } from '#lib/scene/code.svelte';
+	} from '../scene/code-render.svelte.js';
+	import { getCodeState } from '../scene/code.svelte.js';
 
 	interface Props {
 		class?: string;

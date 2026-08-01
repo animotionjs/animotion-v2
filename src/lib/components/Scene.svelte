@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { getSceneManager } from '#lib/scene';
+	import { getSceneManager } from '../scene/index.js';
 
 	let { children } = $props();
 	const manager = getSceneManager();

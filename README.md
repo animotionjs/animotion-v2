@@ -1,42 +1,65 @@
-# sv
+# @animotion/core
 
-Everything you need to build a Svelte project, powered by [`sv`](https://github.com/sveltejs/cli).
+A Svelte engine for building animated presentations. Scenes are Svelte components that animate themselves with a scene builder — tweens, layout changes, code morphing and more.
 
-## Creating a project
-
-If you're seeing this, you've probably already done this step. Congrats!
+## Install
 
 ```sh
-# create a new project
-npx sv create my-app
+pnpm add @animotion/core
 ```
 
-To recreate this project with the same configuration:
+Requires `svelte` (v5) and works inside a SvelteKit project with Tailwind CSS v4.
+
+## Usage
+
+A presentation is an ordered `sequence` of scenes. Each scene is a component that uses `createScene` to build its animation steps:
+
+```svelte
+<script lang="ts">
+	import { createScene } from '@animotion/core';
+
+	const scene = createScene({ opacity: 0, scale: 0, hidden: true })
+		.slideTransition({ duration: 0.4 })
+		.tween('opacity', 1, 0.6)
+		.all((s) => {
+			s.layout(() => (s.hidden = false), 0.6);
+			s.tween('scale', 1, 0.6);
+		});
+</script>
+
+<div>
+	<p style:opacity={scene.opacity}>Hello</p>
+	<div
+		class={['h-48 w-48 rounded-full bg-amber-400', { hidden: scene.hidden }]}
+		style:scale={scene.scale}
+	/>
+</div>
+```
+
+The library provides the player shell (`Scene`), the animation engine (`createScene`, `SceneManager`, step types), a code component (`Code`) that morphs between source states, and a plugin system (`PluginManager`, `fullscreenPlugin`).
+
+## Rendering a video
 
 ```sh
-# recreate this project
-pnpm dlx sv@0.16.3 create --template minimal --types ts --add prettier eslint vitest="usages:unit,component" playwright tailwindcss="plugins:none" experimental="versions:kit+features:async,remoteFunctions" --install pnpm .
+animotion render
+```
+
+The CLI records the presentation into a video using Playwright and ffmpeg. See `animotion render --help` for options.
+
+## Styling
+
+The engine's code-highlighting styles ship as `@animotion/core/styles/code-theme.css`; import it into your theme and override the `--code-*` tokens:
+
+```css
+@import '@animotion/core/styles/code-theme.css';
 ```
 
 ## Developing
 
-Once you've created a project and installed dependencies with `npm install` (or `pnpm install` or `yarn`), start a development server:
-
 ```sh
-npm run dev
-
-# or start the server and open the app in a new browser tab
-npm run dev -- --open
+pnpm install
+pnpm dev        # example deck
+pnpm check      # type-check
+pnpm test:unit  # unit tests
+pnpm package    # build the library into dist/
 ```
-
-## Building
-
-To create a production version of your app:
-
-```sh
-npm run build
-```
-
-You can preview the production build with `npm run preview`.
-
-> To deploy your app, you may need to install an [adapter](https://svelte.dev/docs/kit/adapters) for your target environment.

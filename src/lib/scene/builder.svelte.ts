@@ -1,6 +1,4 @@
 import { onMount } from 'svelte';
-import { page } from '$app/state';
-import { deck } from '#lib/slides/config';
 import {
 	TweenStep,
 	LayoutStep,
@@ -11,7 +9,7 @@ import {
 	type Step,
 	type TickFrame
 } from './steps';
-import { getSceneManager } from './context.svelte';
+import { getSceneManager, getSceneId } from './context.svelte';
 import { TransitionBuilder, type TransitionBuild } from './runtime.svelte';
 import { easeInOut } from './easing';
 import { getParser } from './lezer';
@@ -273,7 +271,8 @@ export function createScene<T extends Object>(initial: T = {} as T) {
 		duration = 0.6,
 		ease: (p: number) => number = easeInOut
 	) {
-		if (!codeState) throw new Error('codeAppend: no code state. Pass initial `code` to createScene().');
+		if (!codeState)
+			throw new Error('codeAppend: no code state. Pass initial `code` to createScene().');
 		steps.push(
 			new CodeStep(
 				codeState,
@@ -298,7 +297,8 @@ export function createScene<T extends Object>(initial: T = {} as T) {
 		duration = 0.6,
 		ease: (p: number) => number = easeInOut
 	) {
-		if (!codeState) throw new Error('codePrepend: no code state. Pass initial `code` to createScene().');
+		if (!codeState)
+			throw new Error('codePrepend: no code state. Pass initial `code` to createScene().');
 		steps.push(
 			new CodeStep(
 				codeState,
@@ -324,7 +324,8 @@ export function createScene<T extends Object>(initial: T = {} as T) {
 		duration = 0.6,
 		ease: (p: number) => number = easeInOut
 	) {
-		if (!codeState) throw new Error('codeInsert: no code state. Pass initial `code` to createScene().');
+		if (!codeState)
+			throw new Error('codeInsert: no code state. Pass initial `code` to createScene().');
 		steps.push(
 			new CodeStep(
 				codeState,
@@ -353,7 +354,8 @@ export function createScene<T extends Object>(initial: T = {} as T) {
 		duration = 0.6,
 		ease: (p: number) => number = easeInOut
 	) {
-		if (!codeState) throw new Error('codeReplace: no code state. Pass initial `code` to createScene().');
+		if (!codeState)
+			throw new Error('codeReplace: no code state. Pass initial `code` to createScene().');
 		steps.push(
 			new CodeStep(
 				codeState,
@@ -381,7 +383,8 @@ export function createScene<T extends Object>(initial: T = {} as T) {
 		duration = 0.6,
 		ease: (p: number) => number = easeInOut
 	) {
-		if (!codeState) throw new Error('codeRemove: no code state. Pass initial `code` to createScene().');
+		if (!codeState)
+			throw new Error('codeRemove: no code state. Pass initial `code` to createScene().');
 		steps.push(
 			new CodeStep(
 				codeState,
@@ -404,7 +407,8 @@ export function createScene<T extends Object>(initial: T = {} as T) {
 	};
 
 	state.codeEdit = function (this: Scene<T>, duration = 0.6) {
-		if (!codeState) throw new Error('codeEdit: no code state. Pass initial `code` to createScene().');
+		if (!codeState)
+			throw new Error('codeEdit: no code state. Pass initial `code` to createScene().');
 		return (strings: TemplateStringsArray, ...tags: (string | RawCodeFragment)[]) => {
 			steps.push(
 				new CodeStep(
@@ -436,7 +440,7 @@ export function createScene<T extends Object>(initial: T = {} as T) {
 	};
 
 	onMount(() => {
-		manager.load({ steps, enterBuild, exitBuild, slug: page.params.slug ?? deck[0].slug });
+		manager.load({ steps, enterBuild, exitBuild, id: getSceneId()?.() });
 	});
 
 	return state;

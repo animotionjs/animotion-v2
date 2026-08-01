@@ -4,8 +4,8 @@ import type { RenderScheduler } from './scheduler';
 export interface RenderBridge {
 	manager: SceneManager;
 	scheduler: RenderScheduler;
-	slides: string[];
-	navigateTo: (slug: string) => unknown;
+	scenes: string[];
+	navigateTo: (id: string) => unknown;
 	advanceFrame: (deltaSeconds: number) => { done: boolean };
 }
 

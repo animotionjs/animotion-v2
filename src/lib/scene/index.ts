@@ -7,8 +7,9 @@ export {
 	clampRemap,
 	easeInOutSine
 } from './easing.js';
-export { getSceneManager, setSceneManager } from './context.svelte.js';
+export { getSceneManager, setSceneManager, getSceneId, setSceneId } from './context.svelte.js';
 export { SceneManager } from './runtime.svelte.js';
+export type { SceneEntry, Sequence } from './sequence.js';
 export { TickStep, type TickFrame } from './steps.js';
 export { createScene } from './builder.svelte.js';
 export { registerLanguage, registerLanguages, getParser } from './lezer.js';

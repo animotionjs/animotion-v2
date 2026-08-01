@@ -1,10 +1,10 @@
-import type { SceneManager } from '#lib/scene/runtime.svelte';
-import type { deck } from '#lib/slides/config';
+import type { SceneManager } from '../scene/runtime.svelte';
+import type { SceneEntry } from '../scene/sequence';
 
 export interface PluginContext {
 	manager: SceneManager;
-	deck: typeof deck;
-	navigateTo(slug: string): Promise<void>;
+	sequence: SceneEntry[];
+	navigateTo(id: string): Promise<void>;
 	next(): void;
 	prev(): void;
 }
@@ -14,7 +14,7 @@ export interface Plugin {
 	init?(ctx: PluginContext): void;
 	setup?(): void;
 	cleanup?(): void;
-	onSlideChange?(slide: { slug: string; index: number }): void;
+	onSceneChange?(scene: { id: string; index: number }): void;
 	onStepChange?(step: number, total: number): void;
 	onKeydown?(event: KeyboardEvent): boolean | void;
 }

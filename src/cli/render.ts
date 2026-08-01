@@ -1,8 +1,16 @@
+#!/usr/bin/env node
 import { spawn, type ChildProcess, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { dirname, join, resolve } from 'node:path';
 import { mkdir, rm, writeFile } from 'node:fs/promises';
 import { chromium, type Browser, type Page } from 'playwright';
 import ffmpeg from 'ffmpeg-static';
+import type { RenderBridge } from '../lib/scene/render-bridge.js';
+
+declare global {
+	interface Window {
+		__deckRenderer?: RenderBridge;
+	}
+}
 
 type RenderArgs = {
 	out: string;
@@ -15,35 +23,14 @@ type RenderArgs = {
 	progressBar: boolean;
 };
 
-type RenderBridge = {
-	manager: {
-		finished: boolean;
-		next(): void;
-		setDirection(d: string): void;
-		playExit(): Promise<void>;
-	};
-	scheduler: {
-		tick(delta: number): number;
-	};
-	slides: string[];
-	navigateTo: (slug: string) => unknown;
-	advanceFrame: (delta: number) => { done: boolean };
-};
-
-declare global {
-	interface Window {
-		__deckRenderer?: RenderBridge;
-	}
-}
-
 const args = parseArgs(process.argv.slice(2));
 let server: ChildProcess | null = null;
 let browser: Browser | null = null;
 let isCrashed = false;
 const pageErrors: string[] = [];
-const slideStats: { slug: string; frames: number; ms: number }[] = [];
+const sceneStats: { id: string; frames: number; ms: number }[] = [];
 const progress: {
-	slug: string;
+	id: string;
 	frames: number;
 	done: boolean;
 	startMs: number;
@@ -52,6 +39,24 @@ const progress: {
 let statusTimer: ReturnType<typeof setInterval> | null = null;
 
 async function main() {
+	if (process.argv.includes('--help') || process.argv.includes('-h')) {
+		console.log(`animotion render
+
+Record a presentation into a video.
+
+Options:
+  --out <path>       output video file (default: rendered/video.mp4)
+  --fps <number>     frames per second (default: 60)
+  --width <number>   video width (default: 1920)
+  --height <number>  video height (default: 1080)
+  --jobs <number>    parallel render workers (default: 4)
+  --frames-only      save frames without encoding video
+  --keep-frames      keep rendered frames after encoding
+  --progress-bar     show a progress bar
+`);
+		process.exit(0);
+	}
+
 	const renderStart = performance.now();
 	const renderQs = args.progressBar ? 'render=video&progress=1' : 'render=video';
 	console.log('Starting dev server...');
@@ -91,29 +96,28 @@ async function main() {
 	});
 	await tempPage.goto(`http://127.0.0.1:4173/?${renderQs}`, { waitUntil: 'domcontentloaded' });
 	await tempPage.waitForFunction(() => window.__deckRenderer !== undefined);
-	const slides: string[] = await tempPage.evaluate(() => window.__deckRenderer!.slides);
+	const scenes: string[] = await tempPage.evaluate(() => window.__deckRenderer!.scenes);
 	await tempPage.close();
 
-	console.log(`Rendering ${slides.length} slides with ${args.jobs} workers...`);
+	console.log(`Rendering ${scenes.length} scenes with ${args.jobs} workers...`);
 
 	progress.length = 0;
-	for (const slug of slides)
-		progress.push({ slug, frames: 0, done: false, startMs: 0, finalMs: 0 });
+	for (const id of scenes) progress.push({ id, frames: 0, done: false, startMs: 0, finalMs: 0 });
 
 	let nextIndex = 0;
-	function popSlide(): string | null {
+	function popScene(): string | null {
 		const i = nextIndex;
-		if (i >= slides.length) return null;
+		if (i >= scenes.length) return null;
 		nextIndex = i + 1;
-		return slides[i];
+		return scenes[i];
 	}
 
-	for (let i = 0; i < slides.length; i++) process.stdout.write('\n');
+	for (let i = 0; i < scenes.length; i++) process.stdout.write('\n');
 	statusTimer = setInterval(printStatus, 200);
 
 	const workers: Promise<void>[] = [];
 	for (let w = 0; w < args.jobs; w++) {
-		workers.push(runWorker(browser!, args, slides, popSlide, renderQs));
+		workers.push(runWorker(browser!, args, scenes, popScene, renderQs));
 	}
 	await Promise.all(workers);
 
@@ -128,17 +132,17 @@ async function main() {
 		process.exit(1);
 	}
 
-	const totalFrames = slideStats.reduce((s, x) => s + x.frames, 0);
+	const totalFrames = sceneStats.reduce((s, x) => s + x.frames, 0);
 	const captureElapsed = (performance.now() - renderStart) / 1000;
 	console.log(
-		`Captured ${slides.length} slides, ${totalFrames} frames in ${captureElapsed.toFixed(2)}s`
+		`Captured ${scenes.length} scenes, ${totalFrames} frames in ${captureElapsed.toFixed(2)}s`
 	);
 
 	if (!args.framesOnly) {
 		console.log('Encoding final video...');
 		await mkdir(resolve(dirname(args.out)), { recursive: true });
 		const encodeStart = performance.now();
-		await encodeFinalVideo(slides, args);
+		await encodeFinalVideo(scenes, args);
 		const encodeElapsed = (performance.now() - encodeStart) / 1000;
 		console.log('Done. Output:', resolve(args.out));
 		const totalElapsed = (performance.now() - renderStart) / 1000;
@@ -156,7 +160,7 @@ function printStatus() {
 	for (let i = 0; i < progress.length; i++) {
 		const p = progress[i];
 		const elapsed = p.done ? p.finalMs : p.startMs ? now - p.startMs : 0;
-		const line = `  [${i + 1}/${progress.length}] ${p.slug.padEnd(12)} ${p.frames} frames  ${(elapsed / 1000).toFixed(2)}s`;
+		const line = `  [${i + 1}/${progress.length}] ${p.id.padEnd(12)} ${p.frames} frames  ${(elapsed / 1000).toFixed(2)}s`;
 		process.stdout.write('\r\x1b[K' + line + '\n');
 	}
 }
@@ -164,8 +168,8 @@ function printStatus() {
 async function runWorker(
 	b: Browser,
 	args: RenderArgs,
-	slides: string[],
-	popSlide: () => string | null,
+	scenes: string[],
+	popScene: () => string | null,
 	renderQs: string
 ): Promise<void> {
 	const page = await b.newPage({
@@ -186,44 +190,44 @@ async function runWorker(
 	try {
 		while (true) {
 			if (isCrashed) break;
-			const slug = popSlide();
-			if (!slug) break;
+			const id = popScene();
+			if (!id) break;
 
-			const slideIndex = slides.indexOf(slug);
-			const isLast = slug === slides[slides.length - 1];
+			const sceneIndex = scenes.indexOf(id);
+			const isLast = id === scenes[scenes.length - 1];
 
-			await page.goto(`http://127.0.0.1:4173/${slug}?${renderQs}`, {
+			await page.goto(`http://127.0.0.1:4173/${id}?${renderQs}`, {
 				waitUntil: 'domcontentloaded',
 				timeout: 10000
 			});
 			await page.waitForFunction(() => window.__deckRenderer !== undefined);
 
-			progress[slideIndex].startMs = performance.now();
-			const frames = await captureSlide(page, slug, isLast, args, slideIndex);
-			const ms = performance.now() - progress[slideIndex].startMs;
-			progress[slideIndex].done = true;
-			progress[slideIndex].finalMs = ms;
-			slideStats.push({ slug, frames, ms });
+			progress[sceneIndex].startMs = performance.now();
+			const frames = await captureScene(page, id, isLast, args, sceneIndex);
+			const ms = performance.now() - progress[sceneIndex].startMs;
+			progress[sceneIndex].done = true;
+			progress[sceneIndex].finalMs = ms;
+			sceneStats.push({ id, frames, ms });
 		}
 	} finally {
 		await page.close().catch(() => {});
 	}
 }
 
-async function captureSlide(
+async function captureScene(
 	page: Page,
-	slug: string,
+	id: string,
 	isLast: boolean,
 	args: RenderArgs,
-	slideIndex: number
+	sceneIndex: number
 ): Promise<number> {
-	const frameDir = resolve('rendered/frames', slug);
+	const frameDir = resolve('rendered/frames', id);
 	await mkdir(frameDir, { recursive: true });
 
 	let frameIndex = 1;
 	const writeFrame = async (buf: Buffer) => {
 		const path = join(frameDir, `frame_${String(frameIndex).padStart(6, '0')}.png`);
-		progress[slideIndex].frames = frameIndex;
+		progress[sceneIndex].frames = frameIndex;
 		await writeFile(path, buf);
 		frameIndex++;
 	};
@@ -235,8 +239,8 @@ async function captureSlide(
 
 	// enter transition + initial step animation
 	while (true) {
-		if (isCrashed) throw new Error(`Page crashed during enter of ${slug}`);
-		if (++guard > maxFrames) throw new Error(`Enter hang on ${slug}: >${maxFrames} frames`);
+		if (isCrashed) throw new Error(`Page crashed during enter of ${id}`);
+		if (++guard > maxFrames) throw new Error(`Enter hang on ${id}: >${maxFrames} frames`);
 		const { done } = await page.evaluate(
 			(delta: number) => window.__deckRenderer!.advanceFrame(delta),
 			1 / args.fps
@@ -248,11 +252,11 @@ async function captureSlide(
 	// steps
 	guard = 0;
 	while (true) {
-		if (isCrashed) throw new Error(`Page crashed during steps of ${slug}`);
+		if (isCrashed) throw new Error(`Page crashed during steps of ${id}`);
 		const finished = await page.evaluate(() => window.__deckRenderer!.manager.finished);
 		if (finished) break;
 		if (++guard > 200) {
-			throw new Error(`Step loop hang on ${slug}: too many step invocations`);
+			throw new Error(`Step loop hang on ${id}: too many step invocations`);
 		}
 
 		await page.evaluate(() => window.__deckRenderer!.manager.next());
@@ -260,9 +264,9 @@ async function captureSlide(
 
 		let stepGuard = 0;
 		while (true) {
-			if (isCrashed) throw new Error(`Page crashed during step animation of ${slug}`);
+			if (isCrashed) throw new Error(`Page crashed during step animation of ${id}`);
 			if (++stepGuard > maxFrames) {
-				throw new Error(`Step animation hang on ${slug}: >${maxFrames} frames`);
+				throw new Error(`Step animation hang on ${id}: >${maxFrames} frames`);
 			}
 			const { done } = await page.evaluate(
 				(delta: number) => window.__deckRenderer!.advanceFrame(delta),
@@ -284,8 +288,8 @@ async function captureSlide(
 	});
 	await writeFrame(await safeScreenshot(page));
 	while (true) {
-		if (isCrashed) throw new Error(`Page crashed during exit of ${slug}`);
-		if (++guard > maxFrames) throw new Error(`Exit hang on ${slug}: >${maxFrames} frames`);
+		if (isCrashed) throw new Error(`Page crashed during exit of ${id}`);
+		if (++guard > maxFrames) throw new Error(`Exit hang on ${id}: >${maxFrames} frames`);
 		const { done } = await page.evaluate(
 			(delta: number) => window.__deckRenderer!.advanceFrame(delta),
 			1 / args.fps
@@ -298,12 +302,12 @@ async function captureSlide(
 
 async function encodeFinalVideo(slugs: string[], args: RenderArgs) {
 	const inputs: string[] = [];
-	for (const slug of slugs) {
+	for (const id of slugs) {
 		inputs.push(
 			'-framerate',
 			String(args.fps),
 			'-i',
-			join('rendered/frames', slug, 'frame_%06d.png')
+			join('rendered/frames', id, 'frame_%06d.png')
 		);
 	}
 
@@ -341,8 +345,8 @@ async function encodeFinalVideo(slugs: string[], args: RenderArgs) {
 	});
 
 	if (!args.keepFrames) {
-		for (const slug of slugs) {
-			await rm(resolve('rendered/frames', slug), { recursive: true, force: true });
+		for (const id of slugs) {
+			await rm(resolve('rendered/frames', id), { recursive: true, force: true });
 		}
 		await rm(resolve('rendered', 'frames'), { recursive: true, force: true });
 	}

@@ -43,9 +43,9 @@ export class PluginManager {
 		this.#plugins = [];
 	}
 
-	emitSlideChange(slide: { slug: string; index: number }) {
+	emitSceneChange(scene: { id: string; index: number }) {
 		for (const plugin of this.#plugins) {
-			plugin.onSlideChange?.(slide);
+			plugin.onSceneChange?.(scene);
 		}
 	}
 
