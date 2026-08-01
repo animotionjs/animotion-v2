@@ -359,10 +359,13 @@ export class ParallelStep implements Step {
 		const progress = clamp(p, 0, 1);
 		for (let i = 0; i < this.#steps.length; i++) {
 			if (this.#done[i]) continue;
-			this.#steps[i].setProgress(progress);
-			if (progress >= 1) {
+			const step = this.#steps[i];
+			const stepProgress =
+				step.duration > 0 ? clamp(progress * (this.duration / step.duration), 0, 1) : progress;
+			step.setProgress(stepProgress);
+			if (stepProgress >= 1) {
 				this.#done[i] = true;
-				this.#steps[i].end();
+				step.end();
 			}
 		}
 	}

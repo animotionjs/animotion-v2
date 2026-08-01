@@ -1,7 +1,15 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { createCodeState } from './code.svelte';
-import { CodeStep, TickStep, type TickFrame } from './steps';
+import { CodeStep, ParallelStep, TickStep, type Step, type TickFrame } from './steps';
 import { easeInOut } from './easing';
+
+function stubStep(duration: number) {
+	const setProgress = vi.fn();
+	return {
+		step: { duration, setProgress, start: vi.fn(), end: vi.fn(), revert: vi.fn() } as unknown as Step,
+		setProgress
+	};
+}
 
 describe('TickStep', () => {
 	it('reports eased progress and linear time', () => {
@@ -45,6 +53,44 @@ describe('TickStep', () => {
 		step.revert();
 
 		expect(frames.at(-1)).toEqual({ progress: 0, time: 0, deltaTime: 0, frame: 0 });
+	});
+});
+
+describe('ParallelStep', () => {
+	it('scales each child progress by its own duration', () => {
+		const long = stubStep(10);
+		const short = stubStep(0.3);
+		const parallel = new ParallelStep([long.step, short.step]);
+
+		expect(parallel.duration).toBe(10);
+
+		parallel.start();
+		parallel.setProgress(0.03);
+
+		expect(short.setProgress).toHaveBeenLastCalledWith(1);
+		expect(short.step.end).toHaveBeenCalled();
+		expect(long.setProgress).toHaveBeenLastCalledWith(0.03);
+		expect(long.step.end).not.toHaveBeenCalled();
+
+		parallel.setProgress(0.5);
+
+		expect(short.setProgress).toHaveBeenCalledTimes(1);
+		expect(long.setProgress).toHaveBeenLastCalledWith(0.5);
+	});
+
+	it('passes the global progress through to a single child', () => {
+		const child = stubStep(2);
+		const parallel = new ParallelStep([child.step]);
+
+		parallel.start();
+		parallel.setProgress(0.25);
+
+		expect(child.setProgress).toHaveBeenLastCalledWith(0.25);
+
+		parallel.setProgress(1);
+
+		expect(child.setProgress).toHaveBeenLastCalledWith(1);
+		expect(child.step.end).toHaveBeenCalled();
 	});
 });
 
