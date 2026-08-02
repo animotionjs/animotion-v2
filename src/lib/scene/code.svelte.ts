@@ -144,13 +144,18 @@ export function makeCodeTree(code: string): string {
 /**
  * Re-indents `code` based on `{`, `(`, `[` nesting.
  *
- * Leading whitespace on every line is replaced by `unit` repeated `depth`
- * times, where `depth` is the number of unclosed opening brackets seen on
- * previous lines (minus one if the line starts with a closing bracket).
- * Consecutive opening brackets on the same line count as a single level,
- * so `foo({` indents its body one unit, not two.
- * Lines continuing a chained method call (starting with `.` or `?.`) are
- * indented one unit beyond the statement they belong to.
+ * Leading whitespace on every line is replaced by `unit` repeated `level`
+ * times. Nesting is tracked with a stack of open blocks, each entry storing
+ * the indent level of the line that opened it plus the statement base in
+ * effect at that point:
+ *   - a plain line sits one level below the innermost open block (`top.level + 1`);
+ *   - a line starting with a closing bracket aligns with the block it closes
+ *     (`top.level`);
+ *   - a line continuing a chained method call (starting with `.` or `?.`) sits
+ *     one level beyond the statement it belongs to (`base + 1`).
+ * Every opening bracket pushes an entry (even when several appear on the same
+ * line, e.g. `foo({`), and every closing bracket pops one, so the two stay
+ * balanced and no special-casing is needed.
  * Braces inside strings, templates and comments are ignored, and lines that
  * continue inside a multi-line string/template/comment are left untouched.
  * Leading and trailing blank lines are dropped. Idempotent.
@@ -160,8 +165,8 @@ const CHAIN_START = /^(\?\.|\.\s*[$A-Z_a-z(])/;
 export function smartIndent(code: string, unit = '  '): string {
 	const lines = code.split('\n');
 	const out: string[] = [];
-	let depth = 0;
-	let statementLevel = 0;
+	const stack: { level: number; base: number }[] = [];
+	let base = 0;
 	let inBlockComment = false;
 	let inTemplate = false;
 	let inString: "'" | '"' | null = null;
@@ -170,20 +175,29 @@ export function smartIndent(code: string, unit = '  '): string {
 	for (const raw of lines) {
 		const insideContinuation = inBlockComment || inTemplate || inString !== null;
 		const trimmed = raw.trim();
+		let level = 0;
 
 		if (trimmed.length === 0) {
 			out.push(insideContinuation ? raw : '');
 		} else if (insideContinuation) {
 			out.push(raw);
 		} else {
+			const top = stack[stack.length - 1];
 			const closes = trimmed[0] === '}' || trimmed[0] === ')' || trimmed[0] === ']';
 			const chain = !closes && CHAIN_START.test(trimmed);
-			const level = chain ? statementLevel + 1 : Math.max(0, depth - (closes ? 1 : 0));
+
+			if (chain) {
+				level = base + 1;
+			} else if (closes) {
+				level = top ? top.level : 0;
+			} else {
+				level = top ? top.level + 1 : 0;
+			}
+
 			out.push(unit.repeat(level) + trimmed);
-			if (!chain) statementLevel = level;
+			if (!chain && !closes) base = level;
 		}
 
-		let lastOpen = false;
 		for (let i = 0; i < raw.length; i++) {
 			const ch = raw[i];
 			if (escaped) {
@@ -222,13 +236,10 @@ export function smartIndent(code: string, unit = '  '): string {
 				continue;
 			}
 			if (ch === '{' || ch === '(' || ch === '[') {
-				if (!lastOpen) depth++;
-				lastOpen = true;
+				stack.push({ level, base });
 			} else if (ch === '}' || ch === ')' || ch === ']') {
-				depth = Math.max(0, depth - 1);
-				lastOpen = false;
-			} else if (ch !== ' ' && ch !== '\t') {
-				lastOpen = false;
+				const popped = stack.pop();
+				if (popped) base = popped.base;
 			}
 		}
 	}

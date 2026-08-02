@@ -39,10 +39,24 @@ describe('smartIndent', () => {
 		expect(smartIndent(input)).toBe(`function f() {\n  const o = {\n    a: 1,\n    b: 2,\n  };\n}`);
 	});
 
-	it('collapses consecutive opening brackets on the same line', () => {
+	it('keeps a call inline object argument at one level', () => {
 		const input = `const scene = createScene({\ncode: \`...\`,\nexample: false,\nradius: 200\n});\n\nscene\n.layout(() => scene.example = true, 0.6)\n.tween('radius', 200, 1.4);`;
 		expect(smartIndent(input)).toBe(
 			`const scene = createScene({\n  code: \`...\`,\n  example: false,\n  radius: 200\n});\n\nscene\n  .layout(() => scene.example = true, 0.6)\n  .tween('radius', 200, 1.4);`
+		);
+	});
+
+	it('nests a callback block one level beyond its chained call', () => {
+		const input = `const scene = createScene({	code: \`...\`, view: 'code', radius: 200 })\n.layout(() => scene.view = 'example', 0.6)\n.tween('radius', 200, 1.4)\n.all((s) => {\ns.codeSelection(code.lines(8), 0.4);\ns.tween('radius', 300, 1.4);\n});`;
+		expect(smartIndent(input)).toBe(
+			`const scene = createScene({	code: \`...\`, view: 'code', radius: 200 })\n  .layout(() => scene.view = 'example', 0.6)\n  .tween('radius', 200, 1.4)\n  .all((s) => {\n    s.codeSelection(code.lines(8), 0.4);\n    s.tween('radius', 300, 1.4);\n  });`
+		);
+	});
+
+	it('continues a chain at the statement level after a block closes', () => {
+		const input = `scene\n.all((s) => {\ns.tween('x', 1);\n})\n.then(() => {});`;
+		expect(smartIndent(input)).toBe(
+			`scene\n  .all((s) => {\n    s.tween('x', 1);\n  })\n  .then(() => {});`
 		);
 	});
 
