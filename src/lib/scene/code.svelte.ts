@@ -147,6 +147,8 @@ export function makeCodeTree(code: string): string {
  * Leading whitespace on every line is replaced by `unit` repeated `depth`
  * times, where `depth` is the number of unclosed opening brackets seen on
  * previous lines (minus one if the line starts with a closing bracket).
+ * Consecutive opening brackets on the same line count as a single level,
+ * so `foo({` indents its body one unit, not two.
  * Lines continuing a chained method call (starting with `.` or `?.`) are
  * indented one unit beyond the statement they belong to.
  * Braces inside strings, templates and comments are ignored, and lines that
@@ -181,6 +183,7 @@ export function smartIndent(code: string, unit = '  '): string {
 			if (!chain) statementLevel = level;
 		}
 
+		let lastOpen = false;
 		for (let i = 0; i < raw.length; i++) {
 			const ch = raw[i];
 			if (escaped) {
@@ -219,9 +222,13 @@ export function smartIndent(code: string, unit = '  '): string {
 				continue;
 			}
 			if (ch === '{' || ch === '(' || ch === '[') {
-				depth++;
+				if (!lastOpen) depth++;
+				lastOpen = true;
 			} else if (ch === '}' || ch === ')' || ch === ']') {
 				depth = Math.max(0, depth - 1);
+				lastOpen = false;
+			} else if (ch !== ' ' && ch !== '\t') {
+				lastOpen = false;
 			}
 		}
 	}
