@@ -1,9 +1,10 @@
 #!/usr/bin/env node
 import { spawn, type ChildProcess, type ChildProcessWithoutNullStreams } from 'node:child_process';
-import { dirname, join, resolve } from 'node:path';
 import { mkdir, rm, writeFile } from 'node:fs/promises';
-import { chromium, type Browser, type Page } from 'playwright';
+import { dirname, join, resolve } from 'node:path';
 import ffmpeg from 'ffmpeg-static';
+import { chromium, type Browser, type Page } from 'playwright';
+import { resolveScenes } from './scenes.ts';
 import type { RenderBridge } from '../lib/scene/render-bridge.js';
 
 declare global {
@@ -14,6 +15,7 @@ declare global {
 
 type RenderArgs = {
 	out: string;
+	outSet: boolean;
 	fps: number;
 	width: number;
 	height: number;
@@ -21,6 +23,7 @@ type RenderArgs = {
 	framesOnly: boolean;
 	keepFrames: boolean;
 	progressBar: boolean;
+	scenes: string[];
 };
 
 const args = parseArgs(process.argv.slice(2));
@@ -40,9 +43,12 @@ let statusTimer: ReturnType<typeof setInterval> | null = null;
 
 async function main() {
 	if (process.argv.includes('--help') || process.argv.includes('-h')) {
-		console.log(`animotion render
+		console.log(`animotion render [scenes...]
 
 Record a presentation into a video.
+
+Arguments:
+  scenes             scene ids to render individually (default: all scenes)
 
 Options:
   --out <path>       output video file (default: rendered/video.mp4)
@@ -53,6 +59,11 @@ Options:
   --frames-only      save frames without encoding video
   --keep-frames      keep rendered frames after encoding
   --progress-bar     show a progress bar
+
+Examples:
+  animotion render
+  animotion render first second
+  animotion render 01-first 02-second --fps 30
 `);
 		process.exit(0);
 	}
@@ -62,7 +73,7 @@ Options:
 	console.log('Starting dev server...');
 	server = spawn(
 		resolve('node_modules/.bin/vite'),
-		['dev', '--port', '4173', '--host', '127.0.0.1'],
+		['dev', '--port', '4173', '--host', '127.0.0.1', '--strictPort'],
 		{
 			stdio: ['ignore', 'ignore', 'inherit']
 		}
@@ -70,6 +81,12 @@ Options:
 	server.on('error', (err) => {
 		console.error('Failed to start vite:', err.message);
 		process.exit(1);
+	});
+	server.on('exit', (code) => {
+		if (code !== null && code !== 0) {
+			console.error(`Vite exited unexpectedly (code ${code}). Is port 4173 already in use?`);
+			process.exit(1);
+		}
 	});
 
 	try {
@@ -99,25 +116,37 @@ Options:
 	const scenes: string[] = await tempPage.evaluate(() => window.__sequenceRenderer!.scenes);
 	await tempPage.close();
 
-	console.log(`Rendering ${scenes.length} scenes with ${args.jobs} workers...`);
+	const perScene = args.scenes.length > 0;
+	const targets = perScene ? resolveScenes(args.scenes, scenes) : scenes;
+
+	if (perScene && args.outSet && targets.length > 1) {
+		console.error('--out can only be used when rendering a single scene');
+		process.exit(1);
+	}
+
+	const workerCount = Math.min(args.jobs, targets.length);
+
+	console.log(
+		`Rendering ${targets.length} scene${targets.length === 1 ? '' : 's'} with ${workerCount} ${workerCount === 1 ? 'worker' : 'workers'}...`
+	);
 
 	progress.length = 0;
-	for (const id of scenes) progress.push({ id, frames: 0, done: false, startMs: 0, finalMs: 0 });
+	for (const id of targets) progress.push({ id, frames: 0, done: false, startMs: 0, finalMs: 0 });
 
 	let nextIndex = 0;
 	function popScene(): string | null {
 		const i = nextIndex;
-		if (i >= scenes.length) return null;
+		if (i >= targets.length) return null;
 		nextIndex = i + 1;
-		return scenes[i];
+		return targets[i];
 	}
 
-	for (let i = 0; i < scenes.length; i++) process.stdout.write('\n');
+	for (let i = 0; i < targets.length; i++) process.stdout.write('\n');
 	statusTimer = setInterval(printStatus, 200);
 
 	const workers: Promise<void>[] = [];
-	for (let w = 0; w < args.jobs; w++) {
-		workers.push(runWorker(browser!, args, scenes, popScene, renderQs));
+	for (let w = 0; w < workerCount; w++) {
+		workers.push(runWorker(browser!, args, targets, popScene, renderQs));
 	}
 	await Promise.all(workers);
 
@@ -135,16 +164,35 @@ Options:
 	const totalFrames = sceneStats.reduce((s, x) => s + x.frames, 0);
 	const captureElapsed = (performance.now() - renderStart) / 1000;
 	console.log(
-		`Captured ${scenes.length} scenes, ${totalFrames} frames in ${captureElapsed.toFixed(2)}s`
+		`Captured ${targets.length} scenes, ${totalFrames} frames in ${captureElapsed.toFixed(2)}s`
 	);
 
 	if (!args.framesOnly) {
-		console.log('Encoding final video...');
 		await mkdir(resolve(dirname(args.out)), { recursive: true });
 		const encodeStart = performance.now();
-		await encodeFinalVideo(scenes, args);
+
+		if (perScene) {
+			for (const id of targets) {
+				console.log(`Encoding ${id}...`);
+				const sceneStart = performance.now();
+				await encodeSceneVideo(id, args);
+				console.log(
+					`Done. Output: ${resolve(sceneOutput(id, args))} (${((performance.now() - sceneStart) / 1000).toFixed(2)}s)`
+				);
+			}
+			if (!args.keepFrames) {
+				for (const id of targets) {
+					await rm(resolve('rendered/frames', id), { recursive: true, force: true });
+				}
+				await rm(resolve('rendered', 'frames'), { recursive: true, force: true });
+			}
+		} else {
+			console.log('Encoding final video...');
+			await encodeFinalVideo(scenes, args);
+			console.log('Done. Output:', resolve(args.out));
+		}
+
 		const encodeElapsed = (performance.now() - encodeStart) / 1000;
-		console.log('Done. Output:', resolve(args.out));
 		const totalElapsed = (performance.now() - renderStart) / 1000;
 		console.log(
 			`Total: ${totalElapsed.toFixed(2)}s (capture ${captureElapsed.toFixed(2)}s, encode ${encodeElapsed.toFixed(2)}s)`
@@ -168,7 +216,7 @@ function printStatus() {
 async function runWorker(
 	b: Browser,
 	args: RenderArgs,
-	scenes: string[],
+	targets: string[],
 	popScene: () => string | null,
 	renderQs: string
 ): Promise<void> {
@@ -193,14 +241,19 @@ async function runWorker(
 			const id = popScene();
 			if (!id) break;
 
-			const sceneIndex = scenes.indexOf(id);
-			const isLast = id === scenes[scenes.length - 1];
+			const sceneIndex = targets.indexOf(id);
+			const isLast = id === targets[targets.length - 1];
 
 			await page.goto(`http://127.0.0.1:4173/${id}?${renderQs}`, {
 				waitUntil: 'domcontentloaded',
 				timeout: 10000
 			});
-			await page.waitForFunction(() => window.__sequenceRenderer !== undefined);
+			await page.waitForFunction(() => {
+				const r = window.__sequenceRenderer;
+				if (!r) return false;
+				const m = r.manager;
+				return m.totalSteps > 0 || m.phase !== 'finished' || m.transitionActive;
+			});
 
 			progress[sceneIndex].startMs = performance.now();
 			const frames = await captureScene(page, id, isLast, args, sceneIndex);
@@ -313,28 +366,58 @@ async function encodeFinalVideo(slugs: string[], args: RenderArgs) {
 
 	const filter = `concat=n=${slugs.length}:v=1:a=0[outv]`;
 
+	await runFfmpeg([
+		'-y',
+		'-loglevel',
+		'error',
+		...inputs,
+		'-filter_complex',
+		filter,
+		'-map',
+		'[outv]',
+		...encodeFlags(args.out)
+	]);
+
+	if (!args.keepFrames) await cleanupFrames(slugs);
+}
+
+async function encodeSceneVideo(id: string, args: RenderArgs) {
+	await runFfmpeg([
+		'-y',
+		'-loglevel',
+		'error',
+		'-framerate',
+		String(args.fps),
+		'-i',
+		join('rendered/frames', id, 'frame_%06d.png'),
+		...encodeFlags(sceneOutput(id, args))
+	]);
+}
+
+function sceneOutput(id: string, args: RenderArgs): string {
+	if (args.outSet && args.scenes.length === 1) return args.out;
+	return resolve('rendered', `${id}.mp4`);
+}
+
+function encodeFlags(out: string): string[] {
+	return [
+		'-c:v',
+		'libx264',
+		'-pix_fmt',
+		'yuv420p',
+		'-crf',
+		'18',
+		'-fps_mode',
+		'cfr',
+		'-movflags',
+		'+faststart',
+		out
+	];
+}
+
+async function runFfmpeg(argv: string[]) {
 	await new Promise<void>((resolve, reject) => {
-		const ff = spawn(ffmpeg!, [
-			'-y',
-			'-loglevel',
-			'error',
-			...inputs,
-			'-filter_complex',
-			filter,
-			'-map',
-			'[outv]',
-			'-c:v',
-			'libx264',
-			'-pix_fmt',
-			'yuv420p',
-			'-crf',
-			'18',
-			'-fps_mode',
-			'cfr',
-			'-movflags',
-			'+faststart',
-			args.out
-		]) as ChildProcessWithoutNullStreams;
+		const ff = spawn(ffmpeg!, argv) as ChildProcessWithoutNullStreams;
 		ff.stderr.on('data', (d: Buffer) => process.stderr.write(d));
 
 		ff.on('error', (err) => reject(new Error(`ffmpeg error: ${err.message}`)));
@@ -343,13 +426,13 @@ async function encodeFinalVideo(slugs: string[], args: RenderArgs) {
 			else reject(new Error(`ffmpeg exited with code ${code}`));
 		});
 	});
+}
 
-	if (!args.keepFrames) {
-		for (const id of slugs) {
-			await rm(resolve('rendered/frames', id), { recursive: true, force: true });
-		}
-		await rm(resolve('rendered', 'frames'), { recursive: true, force: true });
+async function cleanupFrames(ids: string[]) {
+	for (const id of ids) {
+		await rm(resolve('rendered/frames', id), { recursive: true, force: true });
 	}
+	await rm(resolve('rendered', 'frames'), { recursive: true, force: true });
 }
 
 function cleanup() {
@@ -374,19 +457,22 @@ async function safeScreenshot(page: Page, retries = 3): Promise<Buffer> {
 function parseArgs(argv: string[]): RenderArgs {
 	const args: RenderArgs = {
 		out: 'rendered/video.mp4',
+		outSet: false,
 		fps: 60,
 		width: 1920,
 		height: 1080,
 		jobs: 4,
 		framesOnly: false,
 		keepFrames: false,
-		progressBar: false
+		progressBar: false,
+		scenes: []
 	};
 
 	for (let i = 0; i < argv.length; i++) {
 		switch (argv[i]) {
 			case '--out':
 				args.out = argv[++i];
+				args.outSet = true;
 				break;
 			case '--fps': {
 				const val = parseInt(argv[++i], 10);
@@ -433,6 +519,8 @@ function parseArgs(argv: string[]): RenderArgs {
 			case '--progress-bar':
 				args.progressBar = true;
 				break;
+			default:
+				args.scenes.push(argv[i]);
 		}
 	}
 	return args;

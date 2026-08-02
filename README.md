@@ -48,6 +48,17 @@ animotion render
 
 The CLI records the presentation into a video using Playwright and ffmpeg. See `animotion render --help` for options.
 
+### Rendering individual scenes
+
+Pass one or more scene ids to render only those scenes, each written to its own video (`rendered/<id>.mp4`):
+
+```sh
+animotion render intro          # renders the intro scene
+animotion render 01-intro 05-tick
+```
+
+Scenes are matched by their id (the filename without the number prefix and `.svelte`), so `01-intro` and `intro` are equivalent. Use `--out` to name the output when rendering a single scene, e.g. `animotion render intro --out rendered/intro.mp4`.
+
 ## Styling
 
 The engine's code-highlighting styles ship as `@animotion/core/styles/code-theme.css`; import it into your theme and override the `--code-*` tokens:
