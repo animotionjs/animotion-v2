@@ -40,6 +40,7 @@ export class SceneManager {
 	#steps: Step[] = [];
 	#elapsed = 0;
 	#stepCompleted = $state(false);
+	#needsStart = false;
 	#rafId: number | null = null;
 	#transitionRafId: number | null = null;
 	#lastFrame = 0;
@@ -225,6 +226,7 @@ export class SceneManager {
 		this.#totalSteps = 0;
 		this.#elapsed = 0;
 		this.#stepCompleted = false;
+		this.#needsStart = false;
 	}
 
 	clear() {
@@ -330,6 +332,10 @@ export class SceneManager {
 			this.#advance();
 			this.#playCurrent();
 		} else {
+			if (this.#needsStart) {
+				this.#needsStart = false;
+				this.#enterStep(this.#stepIndex);
+			}
 			this.#phase = 'tweening';
 			this.#startLoop();
 		}
@@ -337,6 +343,7 @@ export class SceneManager {
 
 	prev() {
 		this.#stopLoop();
+		this.#needsStart = true;
 
 		if (this.#stepIndex >= this.#steps.length) {
 			this.#stepIndex = this.#steps.length - 1;
@@ -376,6 +383,7 @@ export class SceneManager {
 	#enterStep(index: number) {
 		const step = this.#steps[index];
 		if (!step) return;
+		this.#needsStart = false;
 
 		step.start();
 		this.#elapsed = 0;
@@ -389,6 +397,7 @@ export class SceneManager {
 		this.#stepCompleted = false;
 
 		if (this.#stepIndex >= this.#steps.length) {
+			this.#needsStart = false;
 			this.#phase = 'finished';
 			this.#emitStepChange();
 			return;

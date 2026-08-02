@@ -1,6 +1,25 @@
 import { describe, expect, it } from 'vitest';
 import { SceneManager } from './runtime.svelte';
-import { TickStep, type TickFrame } from './steps';
+import { TickStep, type Step, type TickFrame } from './steps';
+
+class SpyStep implements Step {
+	starts = 0;
+	reverts = 0;
+	ends = 0;
+	duration = 1;
+	start() {
+		this.starts++;
+	}
+	setProgress(p: number) {
+		void p;
+	}
+	end() {
+		this.ends++;
+	}
+	revert() {
+		this.reverts++;
+	}
+}
 
 describe('SceneManager + TickStep (render mode)', () => {
 	it('plays a tick step deterministically via advanceFrame', () => {
@@ -21,5 +40,28 @@ describe('SceneManager + TickStep (render mode)', () => {
 		expect(frames.at(-1)!.time).toBe(1);
 		expect(frames.at(-1)!.progress).toBe(1);
 		expect(manager.step).toBe(0);
+	});
+});
+
+describe('SceneManager resume after prev', () => {
+	it('restarts the current step when resuming after prev', () => {
+		const manager = new SceneManager();
+		manager.enableRenderMode();
+
+		const step = new SpyStep();
+		manager.load({ steps: [step] });
+
+		expect(step.starts).toBe(1);
+		expect(step.reverts).toBe(0);
+
+		manager.next();
+		manager.advanceFrame(0.5);
+		expect(step.starts).toBe(1);
+
+		manager.prev();
+		expect(step.reverts).toBe(1);
+
+		manager.next();
+		expect(step.starts).toBe(2);
 	});
 });
