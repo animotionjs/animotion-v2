@@ -146,6 +146,19 @@ Scenes can morph source code between states. Pass initial `code` (and optional `
 
 Ranges target `[line, col]` positions: `code.position(line, col)`, `code.word(line, col, length)`, `code.lines(from, to)`, `code.range(sl, sc, el, ec)`. Text resolvers find occurrences by string or regex: `code.FIRST(pattern)`, `code.ALL(pattern)`, `code.LAST(pattern)`.
 
+### Code options
+
+The `<Code />` component accepts a few props:
+
+- `class`: size and typography classes (default `text-2xl`).
+- `lineHeight`: line height in `em` (default `1.5`).
+- `unselectedOpacity`: opacity of code outside the current `codeSelection` (default `0.32`).
+- `lineNumbers`: show a line-number gutter on the left (default `false`).
+
+```svelte
+<Code class="text-2xl" lineNumbers />
+```
+
 ## Other steps
 
 - `tick(onTick, duration, ease)`: runs `onTick` every frame while the step plays, so you can drive arbitrary state from the step's progress (e.g. a progress bar, a counter, a canvas or third-party animation). The callback receives `{ progress, time, deltaTime, frame }`, where `progress` is the eased 0..1 progress and `time` the elapsed seconds:
