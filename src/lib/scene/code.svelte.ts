@@ -147,30 +147,109 @@ export function makeCodeTree(code: string): string {
 }
 
 /**
- * Re-indents `code` based on `{`, `(`, `[` nesting.
+ * Re-indents `code` based on `{`, `(`, `[` nesting plus HTML tag nesting.
  *
  * Leading whitespace on every line is replaced by `unit` repeated `level`
  * times. Nesting is tracked with a stack of open blocks, each entry storing
  * the indent level of the line that opened it plus the statement base in
  * effect at that point:
  *   - a plain line sits one level below the innermost open block (`top.level + 1`);
- *   - a line starting with a closing bracket aligns with the block it closes
- *     (`top.level`);
+ *   - a line starting with a closing bracket or closing tag aligns with the
+ *     block it closes (`top.level`);
  *   - a line continuing a chained method call (starting with `.` or `?.`) sits
  *     one level beyond the statement it belongs to (`base + 1`).
- * Every opening bracket pushes an entry (even when several appear on the same
- * line, e.g. `foo({`), and every closing bracket pops one, so the two stay
- * balanced and no special-casing is needed.
- * Braces inside strings, templates and comments are ignored, and lines that
- * continue inside a multi-line string/template/comment are left untouched.
+ * Every opening bracket or tag pushes an entry (even when several appear on
+ * the same line, e.g. `foo({` or `<button onclick={...}>`), and every closing
+ * bracket or tag pops its own kind, so braces and tags stay balanced.
+ * Self-closing tags and void elements (`<br>`, `<img>`, ...) never push.
+ * Braces inside strings, templates, comments and tag attributes are ignored,
+ * and lines that continue inside a multi-line string/template/comment are left
+ * untouched. A `<` is only treated as an opening tag when followed by a letter
+ * and at the start of the line or preceded by whitespace or `>`; closing tags
+ * (`</`) are always recognised. TS generics (`foo<number>`) and comparisons
+ * (`a < b`) are therefore not misread as tags.
  * Leading and trailing blank lines are dropped. Idempotent.
  */
 const CHAIN_START = /^(\?\.|\.\s*[$A-Z_a-z(])/;
 
+const VOID_ELEMENTS = new Set([
+	'area',
+	'base',
+	'br',
+	'col',
+	'embed',
+	'hr',
+	'img',
+	'input',
+	'link',
+	'meta',
+	'param',
+	'source',
+	'track',
+	'wbr'
+]);
+
+type BlockKind = 'brace' | 'tag';
+
+interface IndentBlock {
+	kind: BlockKind;
+	level: number;
+	base: number;
+	name?: string;
+}
+
+function popKind(stack: IndentBlock[], kind: BlockKind): IndentBlock | undefined {
+	for (let i = stack.length - 1; i >= 0; i--) {
+		if (stack[i].kind === kind) return stack.splice(i, 1)[0];
+	}
+	return undefined;
+}
+
+function popTag(stack: IndentBlock[], name: string): IndentBlock | undefined {
+	for (let i = stack.length - 1; i >= 0; i--) {
+		if (stack[i].kind === 'tag' && stack[i].name === name) return stack.splice(i, 1)[0];
+	}
+	return undefined;
+}
+
+function scanTag(
+	raw: string,
+	start: number
+): { closing: boolean; selfClosing: boolean; name: string; end: number } | null {
+	let i = start + 1;
+	let closing = false;
+	if (raw[i] === '/') {
+		closing = true;
+		i++;
+	}
+	if (raw[i] === '!' || raw[i] === '?') return null;
+	if (!/[A-Za-z]/.test(raw[i] ?? '')) return null;
+	const nameStart = i;
+	while (i < raw.length && /[A-Za-z0-9-]/.test(raw[i])) i++;
+	const name = raw.slice(nameStart, i);
+	let quote: string | null = null;
+	let selfClosing = false;
+	while (i < raw.length) {
+		const c = raw[i];
+		if (quote) {
+			if (c === quote) quote = null;
+		} else if (c === '"' || c === "'") {
+			quote = c;
+		} else if (c === '/' && raw[i + 1] === '>') {
+			selfClosing = true;
+		} else if (c === '>') {
+			break;
+		}
+		i++;
+	}
+	if (i >= raw.length) return null;
+	return { closing, selfClosing, name, end: i };
+}
+
 export function smartIndent(code: string, unit = '  '): string {
 	const lines = code.split('\n');
 	const out: string[] = [];
-	const stack: { level: number; base: number }[] = [];
+	const stack: IndentBlock[] = [];
 	let base = 0;
 	let inBlockComment = false;
 	let inTemplate = false;
@@ -188,7 +267,9 @@ export function smartIndent(code: string, unit = '  '): string {
 			out.push(raw);
 		} else {
 			const top = stack[stack.length - 1];
-			const closes = trimmed[0] === '}' || trimmed[0] === ')' || trimmed[0] === ']';
+			const closesBracket = trimmed[0] === '}' || trimmed[0] === ')' || trimmed[0] === ']';
+			const closesTag = trimmed[0] === '<' && trimmed[1] === '/';
+			const closes = closesBracket || closesTag;
 			const chain = !closes && CHAIN_START.test(trimmed);
 
 			if (chain) {
@@ -240,10 +321,26 @@ export function smartIndent(code: string, unit = '  '): string {
 				inTemplate = true;
 				continue;
 			}
+			if (
+				ch === '<' &&
+				(raw[i + 1] === '/' || i === 0 || /\s/.test(raw[i - 1] ?? '') || raw[i - 1] === '>')
+			) {
+				const tag = scanTag(raw, i);
+				if (tag) {
+					if (tag.closing) {
+						const popped = popTag(stack, tag.name);
+						if (popped) base = popped.base;
+					} else if (!tag.selfClosing && !VOID_ELEMENTS.has(tag.name)) {
+						stack.push({ kind: 'tag', level, base, name: tag.name });
+					}
+					i = tag.end - 1;
+					continue;
+				}
+			}
 			if (ch === '{' || ch === '(' || ch === '[') {
-				stack.push({ level, base });
+				stack.push({ kind: 'brace', level, base });
 			} else if (ch === '}' || ch === ')' || ch === ']') {
-				const popped = stack.pop();
+				const popped = popKind(stack, 'brace');
 				if (popped) base = popped.base;
 			}
 		}

@@ -126,4 +126,54 @@ describe('smartIndent', () => {
 		expect(smartIndent('a')).toBe('a');
 		expect(smartIndent('a\n')).toBe('a');
 	});
+
+	it('indents content inside HTML tags', () => {
+		const input = `<script>
+let count = $state(0);
+
+function increment() {
+count += 1;
+}
+</script>
+
+<button onclick={increment}>
+count is {count}
+</button>`;
+		expect(smartIndent(input)).toBe(`<script>
+  let count = $state(0);
+
+  function increment() {
+    count += 1;
+  }
+</script>
+
+<button onclick={increment}>
+  count is {count}
+</button>`);
+	});
+
+	it('keeps void and self-closing tags from opening a block', () => {
+		const input = `<img src="x" />\n<p>\nHello\n</p>\n<br>\n<div>\nText\n</div>`;
+		expect(smartIndent(input)).toBe(
+			`<img src="x" />\n<p>\n  Hello\n</p>\n<br>\n<div>\n  Text\n</div>`
+		);
+	});
+
+	it('does not treat generic or comparison angle brackets as tags', () => {
+		const input = `const list = new Set<string>();\nif (a < b && c > d) {\nx();\n}`;
+		expect(smartIndent(input)).toBe(
+			`const list = new Set<string>();\nif (a < b && c > d) {\n  x();\n}`
+		);
+	});
+
+	it('balances inline tags on a single line', () => {
+		const input = `<div class="a"><span>Hi</span></div>\n<p>\nText\n</p>`;
+		expect(smartIndent(input)).toBe(`<div class="a"><span>Hi</span></div>\n<p>\n  Text\n</p>`);
+	});
+
+	it('is idempotent with HTML content', () => {
+		const input = `<div>\n<p>\nText\n</p>\n</div>`;
+		const once = smartIndent(input);
+		expect(smartIndent(once)).toBe(once);
+	});
 });
