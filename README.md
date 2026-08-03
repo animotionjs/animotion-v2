@@ -1,14 +1,6 @@
-# @animotion/core
+# Animotion
 
 A Svelte engine for building animated presentations. Scenes are Svelte components that animate themselves with a scene builder — tweens, layout changes, code morphing and more.
-
-## Install
-
-```sh
-pnpm add @animotion/core
-```
-
-Requires `svelte` (v5) and works inside a SvelteKit project with Tailwind CSS v4.
 
 ## Usage
 
@@ -16,7 +8,7 @@ A presentation is an ordered `sequence` of scenes. Each scene is a component tha
 
 ```svelte
 <script lang="ts">
-	import { createScene } from '@animotion/core';
+	import { createScene } from '#lib/scene';
 
 	const scene = createScene({ opacity: 0, scale: 0, hidden: true })
 		.slideTransition({ duration: 0.4 })
@@ -40,6 +32,38 @@ The library provides the player shell (`Scene`), the animation engine (`createSc
 
 `layout()` accepts optional enter/exit transition presets: `layout(change, duration, ease, { enter: 'clip', exit: 'fade' })` — `fade` (default), `scale`, `clip` (circle reveal), `wipe` (left-to-right), or `none`. New elements animate in with `enter`; elements removed from the DOM (including `{#if}` and `{#each}` items) animate out via a pinned ghost with `exit`.
 
+## Configuration
+
+The `src/lib/config/` directory holds the presentation settings.
+
+### Highlighter
+
+`src/lib/config/configure.ts` configures the code highlighter:
+
+```ts
+import { configure } from '#lib/scene';
+
+configure({ theme: 'poimandres', languages: ['svelte'] });
+```
+
+- `theme` is a shiki `BundledTheme` name (e.g. `'poimandres'`, `'github-dark'`, `'tokyo-night'`).
+- `languages` is a `BundledLanguage[]` of languages to register beyond the defaults (typescript, javascript, html, css, json, markdown).
+
+Both options are typed against shiki's bundles, so editor autocomplete suggests the valid names.
+
+### Plugins
+
+`src/lib/config/plugins.ts` registers plugins that hook into the presentation shell:
+
+```ts
+import { fullscreenPlugin } from '#lib/plugins/fullscreen';
+import type { Plugin } from '#lib/plugins/types';
+
+export const plugins: Plugin[] = [fullscreenPlugin()];
+```
+
+`fullscreenPlugin()` toggles fullscreen with the `f` key.
+
 ## Rendering a video
 
 ```sh
@@ -53,19 +77,17 @@ The CLI records the presentation into a video using Playwright and ffmpeg. See `
 Pass one or more scene ids to render only those scenes, each written to its own video (`rendered/<id>.mp4`):
 
 ```sh
-animotion render intro          # renders the intro scene
-animotion render 01-intro 05-tick
+animotion render first # renders the first scene
+animotion render 01-first 02-second # renders individual scenes
 ```
 
 Scenes are matched by their id (the filename without the number prefix and `.svelte`), so `01-intro` and `intro` are equivalent. Use `--out` to name the output when rendering a single scene, e.g. `animotion render intro --out rendered/intro.mp4`.
 
 ## Styling
 
-The engine's code-highlighting styles ship as `@animotion/core/styles/code-theme.css`; import it into your theme and override the `--code-*` tokens:
+Global styles are defined with Tailwind CSS v4 `@theme` tokens in `src/styles/theme.css`, imported in `src/routes/+layout.svelte`. The default theme provides semantic color tokens — `--color-background`, `--color-foreground`, `--color-surface`, and `--color-accent` — used by scenes as `bg-background`, `text-foreground`, and so on. Spacing, radii, and typography scale with `cqi` so the layout resizes with the slide container.
 
-```css
-@import '@animotion/core/styles/code-theme.css';
-```
+Code-highlight colors are applied inline from the shiki theme set in `configure({ theme })` — there is no separate CSS file to import.
 
 ## Developing
 
