@@ -28,7 +28,7 @@ function alphaMorph(progress: number, morph: 'create' | 'delete' | 'retain'): nu
 	return 1;
 }
 
-function selectionOpacity(
+export function selectionOpacity(
 	line: number,
 	col: number,
 	length: number,
