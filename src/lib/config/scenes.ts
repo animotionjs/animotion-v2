@@ -1,6 +1,6 @@
 import type { Component } from 'svelte';
 import type { SceneEntry } from '#lib/scene';
-import './register';
+import './configure';
 
 const NAME_PATTERN = /^(\d+)-(.+)$/;
 

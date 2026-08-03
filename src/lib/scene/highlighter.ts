@@ -1,22 +1,42 @@
-import { createHighlighter, type Highlighter } from 'shiki';
+import {
+	createHighlighter,
+	type BundledLanguage,
+	type BundledTheme,
+	type Highlighter
+} from 'shiki';
 import { createJavaScriptRegexEngine } from 'shiki/engine/javascript';
 
-export const DEFAULT_THEME = 'poimandres';
+export const DEFAULT_THEME: BundledTheme = 'poimandres';
 
-const DEFAULT_LANGUAGES = ['typescript', 'javascript', 'html', 'css', 'json', 'markdown'];
+const DEFAULT_LANGUAGES: BundledLanguage[] = [
+	'typescript',
+	'javascript',
+	'html',
+	'css',
+	'json',
+	'markdown'
+];
 
 const jsEngine = createJavaScriptRegexEngine();
 
-let theme = DEFAULT_THEME;
+let theme: BundledTheme = DEFAULT_THEME;
 let ready: Highlighter | null = null;
 let initPromise: Promise<void> | null = null;
 let generation = 0;
+const pendingLanguages = new Set<string>();
 let refreshCallbacks: (() => void)[] = [];
 
 function runRefresh() {
 	const callbacks = refreshCallbacks;
 	refreshCallbacks = [];
 	for (const callback of callbacks) callback();
+}
+
+function loadLanguages() {
+	if (!ready) return Promise.resolve();
+	return Promise.all(
+		[...pendingLanguages].map((language) => ready!.loadLanguage(language as never))
+	);
 }
 
 function ensureInit(): Promise<void> {
@@ -31,6 +51,7 @@ function ensureInit(): Promise<void> {
 		if (gen === generation) {
 			ready = highlighter;
 			runRefresh();
+			void loadLanguages();
 		}
 	})();
 	return initPromise;
@@ -39,16 +60,22 @@ function ensureInit(): Promise<void> {
 ensureInit();
 
 export interface ConfigureOptions {
-	theme?: string;
+	theme?: BundledTheme;
+	languages?: BundledLanguage[];
 }
 
 export function configure(options: ConfigureOptions) {
+	if (options.languages) {
+		for (const language of options.languages) pendingLanguages.add(language);
+	}
 	if (options.theme && options.theme !== theme) {
 		theme = options.theme;
 		generation++;
 		ready = null;
 		initPromise = null;
 		ensureInit();
+	} else {
+		void loadLanguages();
 	}
 }
 
@@ -66,9 +93,9 @@ export function onHighlighterReady(callback: () => void) {
 }
 
 export async function registerLanguages(languages: string[]) {
+	for (const language of languages) pendingLanguages.add(language);
 	await ensureInit();
-	if (!ready) return;
-	await Promise.all(languages.map((language) => ready!.loadLanguage(language as never)));
+	await loadLanguages();
 }
 
 export interface Token {
@@ -91,7 +118,10 @@ export function highlight(code: string, language: string): PositionedToken[] {
 	const highlighter = ready;
 	if (!highlighter) return [];
 	try {
-		const { tokens, fg } = highlighter.codeToTokens(code, { lang: language as never, theme });
+		const { tokens, fg } = highlighter.codeToTokens(code, {
+			lang: language as BundledLanguage,
+			theme
+		});
 		const positioned: PositionedToken[] = [];
 		for (let line = 0; line < tokens.length; line++) {
 			let col = 0;

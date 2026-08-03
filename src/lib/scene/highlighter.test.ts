@@ -1,5 +1,5 @@
 import { beforeAll, describe, expect, it } from 'vitest';
-import { diffStrings, highlight, registerLanguages, whenReady } from './highlighter';
+import { configure, diffStrings, highlight, registerLanguages, whenReady } from './highlighter';
 
 beforeAll(async () => {
 	await whenReady();
@@ -34,6 +34,16 @@ describe('highlight', () => {
 
 	it('returns no tokens for unknown languages', () => {
 		expect(highlight('const x = 1;', 'nope')).toEqual([]);
+	});
+});
+
+describe('configure', () => {
+	it('loads languages passed via the languages option', async () => {
+		configure({ languages: ['go'] });
+		await registerLanguages(['go']);
+		const tokens = highlight('package main', 'go');
+		expect(tokens.length).toBeGreaterThan(0);
+		expect(tokens.some((t) => t.color.length > 0)).toBe(true);
 	});
 });
 
