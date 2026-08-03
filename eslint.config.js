@@ -31,6 +31,9 @@ export default defineConfig(
 				extraFileExtensions: ['.svelte'],
 				parser: ts.parser
 			}
+		},
+		rules: {
+			'no-useless-escape': 'off'
 		}
 	},
 	{
