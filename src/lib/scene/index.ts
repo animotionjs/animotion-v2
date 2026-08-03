@@ -13,7 +13,8 @@ export type { SceneEntry, Sequence } from './sequence.js';
 export { TickStep, type TickFrame } from './steps.js';
 export type { LayoutTransition, LayoutOptions } from './steps.js';
 export { createScene } from './builder.svelte.js';
-export { registerLanguage, registerLanguages, getParser } from './lezer.js';
+export { configure, registerLanguages, highlight, whenReady } from './highlighter.js';
+export type { Token, PositionedToken, MorphToken } from './highlighter.js';
 export {
 	insert,
 	remove,

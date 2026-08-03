@@ -60,7 +60,7 @@
 			leftCh: 0,
 			topEm: line,
 			alpha: 1,
-			classes: '',
+			color: '',
 			selected: 1
 		}));
 	}
@@ -76,7 +76,7 @@
 	style:overflow="hidden">
 	{#each spans as span (span.key)}
 		<span
-			class={span.classes || undefined}
+			style:color={span.color || undefined}
 			style:position="absolute"
 			style:left="{span.leftCh}ch"
 			style:top="{span.topEm * lineHeight}em"

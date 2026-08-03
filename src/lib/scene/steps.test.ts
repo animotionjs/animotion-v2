@@ -1,12 +1,23 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeAll, describe, expect, it, vi } from 'vitest';
 import { createCodeState } from './code.svelte';
 import { CodeStep, ParallelStep, TickStep, type Step, type TickFrame } from './steps';
 import { easeInOut } from './easing';
+import { whenReady } from './highlighter';
+
+beforeAll(async () => {
+	await whenReady();
+});
 
 function stubStep(duration: number) {
 	const setProgress = vi.fn();
 	return {
-		step: { duration, setProgress, start: vi.fn(), end: vi.fn(), revert: vi.fn() } as unknown as Step,
+		step: {
+			duration,
+			setProgress,
+			start: vi.fn(),
+			end: vi.fn(),
+			revert: vi.fn()
+		} as unknown as Step,
 		setProgress
 	};
 }

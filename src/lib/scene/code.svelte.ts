@@ -1,5 +1,10 @@
 import { createContext } from 'svelte';
-import { highlight, type MorphToken, type PositionedToken } from './lezer';
+import {
+	highlight,
+	onHighlighterReady,
+	type MorphToken,
+	type PositionedToken
+} from './highlighter';
 
 export type CodeRange = [[number, number], [number, number]];
 
@@ -305,6 +310,12 @@ export function createCodeState(language: string, initial: string): CodeState {
 		selection: ALL_LINES,
 		selectionProgress: null,
 		previousSelection: null
+	});
+
+	onHighlighterReady(() => {
+		if (state.tokens === null) {
+			state.settled = highlight(state.resolved, state.language);
+		}
 	});
 
 	return state;

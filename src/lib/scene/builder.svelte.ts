@@ -13,7 +13,7 @@ import {
 import { getSceneManager, getSceneId } from './context.svelte';
 import { TransitionBuilder, type TransitionBuild } from './runtime.svelte';
 import { easeInOut } from './easing';
-import { getParser } from './lezer';
+import { registerLanguages } from './highlighter';
 import {
 	setCodeState,
 	createCodeState,
@@ -100,6 +100,7 @@ export function createScene<T extends Object>(initial: T = {} as T) {
 	let codeState: CodeState | null = null;
 	const initialCode = rawInitial.code;
 	const initialLanguage = rawInitial.language as string | undefined;
+	if (initialLanguage) void registerLanguages([initialLanguage]);
 	if (typeof initialCode === 'string') {
 		codeState = createCodeState(initialLanguage ?? 'ts', smartIndent(initialCode, indent));
 		setCodeState(codeState);
@@ -255,7 +256,7 @@ export function createScene<T extends Object>(initial: T = {} as T) {
 	) {
 		if (!codeState) throw new Error('codeTo: no code state. Pass initial `code` to createScene().');
 		const lang = opts?.language ?? codeState.language;
-		if (opts?.language) getParser(opts.language);
+		if (opts?.language) void registerLanguages([opts.language]);
 		steps.push(
 			new CodeStep(
 				codeState,

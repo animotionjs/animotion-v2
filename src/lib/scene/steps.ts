@@ -1,7 +1,7 @@
 import { flushSync } from 'svelte';
 import { type CodeRange, type CodeState } from './code.svelte';
 import { clamp, easeInOut, lerp } from './easing';
-import { diffStrings, highlight, type MorphToken, type PositionedToken } from './lezer';
+import { diffStrings, highlight, type MorphToken, type PositionedToken } from './highlighter';
 
 export interface Step {
 	readonly duration: number;
@@ -437,14 +437,14 @@ export class CodeStep implements Step {
 			this.#codeState.language = this.#language!;
 			const deletes: MorphToken[] = this.#codeState.settled.map((t) => ({
 				code: t.code,
-				classes: t.classes,
+				color: t.color,
 				morph: 'delete',
 				from: [t.col, t.line],
 				to: null
 			}));
 			const creates: MorphToken[] = highlight(to, this.#codeState.language).map((t) => ({
 				code: t.code,
-				classes: t.classes,
+				color: t.color,
 				morph: 'create',
 				from: null,
 				to: [t.col, t.line]

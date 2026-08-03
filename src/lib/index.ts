@@ -4,10 +4,11 @@ export type { TickFrame } from './scene/steps.js';
 export type { Plugin, PluginContext } from './plugins/types.js';
 export type { RenderBridge } from './scene/render-bridge.js';
 
+export { configure, registerLanguages, highlight, whenReady } from './scene/highlighter.js';
+export type { Token, PositionedToken, MorphToken } from './scene/highlighter.js';
 export { TransitionBuilder, SceneManager } from './scene/runtime.svelte.js';
 export { PluginManager } from './plugins/manager.svelte.js';
 export { fullscreenPlugin } from './plugins/fullscreen.js';
-export { registerLanguage, registerLanguages, getParser } from './scene/lezer.js';
 export {
 	getSceneManager,
 	setSceneManager,

@@ -1,6 +1,6 @@
 import { isInSelection, type CodeRange } from './code.svelte';
 import { clampRemap, easeInOutSine, lerp } from './easing';
-import type { MorphToken, PositionedToken } from './lezer';
+import type { MorphToken, PositionedToken } from './highlighter';
 
 export interface RenderSpan {
 	key: string;
@@ -8,7 +8,7 @@ export interface RenderSpan {
 	leftCh: number;
 	topEm: number;
 	alpha: number;
-	classes: string;
+	color: string;
 	selected: number;
 }
 
@@ -68,7 +68,7 @@ export function computeSettledSpans(
 			leftCh: token.col,
 			topEm: token.line,
 			alpha: 1,
-			classes: token.classes,
+			color: token.color,
 			selected
 		});
 	}
@@ -136,7 +136,7 @@ export function computeMorphSpans(
 				leftCh: baseX,
 				topEm: y,
 				alpha,
-				classes: token.classes,
+				color: token.color,
 				selected
 			});
 		}

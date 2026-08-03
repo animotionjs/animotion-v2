@@ -1,31 +1,79 @@
-import { classHighlighter, highlightCode } from '@lezer/highlight';
-import { parser as tsParser } from '@lezer/javascript';
-import type { LRParser } from '@lezer/lr';
+import { createHighlighter, type Highlighter } from 'shiki';
+import { createJavaScriptRegexEngine } from 'shiki/engine/javascript';
 
-const parsers = new Map<string, LRParser>();
+export const DEFAULT_THEME = 'poimandres';
 
-parsers.set('ts', tsParser.configure({ dialect: 'ts' }));
-parsers.set('js', tsParser);
+const DEFAULT_LANGUAGES = ['typescript', 'javascript', 'html', 'css', 'json', 'markdown'];
 
-export function registerLanguage(language: string, parser: LRParser) {
-	parsers.set(language, parser);
+const jsEngine = createJavaScriptRegexEngine();
+
+let theme = DEFAULT_THEME;
+let ready: Highlighter | null = null;
+let initPromise: Promise<void> | null = null;
+let generation = 0;
+let refreshCallbacks: (() => void)[] = [];
+
+function runRefresh() {
+	const callbacks = refreshCallbacks;
+	refreshCallbacks = [];
+	for (const callback of callbacks) callback();
 }
 
-export function registerLanguages(languages: Record<string, LRParser>) {
-	for (const [name, parser] of Object.entries(languages)) parsers.set(name, parser);
+function ensureInit(): Promise<void> {
+	if (initPromise) return initPromise;
+	const gen = generation;
+	initPromise = (async () => {
+		const highlighter = await createHighlighter({
+			themes: [theme],
+			langs: DEFAULT_LANGUAGES,
+			engine: jsEngine
+		});
+		if (gen === generation) {
+			ready = highlighter;
+			runRefresh();
+		}
+	})();
+	return initPromise;
 }
 
-export function getParser(language: string): LRParser {
-	const p = parsers.get(language);
-	if (p) return p;
-	throw new Error(`No Lezer parser for language: ${language}`);
+ensureInit();
+
+export interface ConfigureOptions {
+	theme?: string;
 }
 
-const highlighter = classHighlighter;
+export function configure(options: ConfigureOptions) {
+	if (options.theme && options.theme !== theme) {
+		theme = options.theme;
+		generation++;
+		ready = null;
+		initPromise = null;
+		ensureInit();
+	}
+}
+
+export function whenReady(): Promise<void> {
+	return ensureInit();
+}
+
+export function onHighlighterReady(callback: () => void) {
+	if (ready) {
+		callback();
+	} else {
+		refreshCallbacks.push(callback);
+		ensureInit();
+	}
+}
+
+export async function registerLanguages(languages: string[]) {
+	await ensureInit();
+	if (!ready) return;
+	await Promise.all(languages.map((language) => ready!.loadLanguage(language as never)));
+}
 
 export interface Token {
 	code: string;
-	classes: string;
+	color: string;
 }
 
 export interface PositionedToken extends Token {
@@ -39,6 +87,31 @@ export interface MorphToken extends Token {
 	to: [number, number] | null;
 }
 
+export function highlight(code: string, language: string): PositionedToken[] {
+	const highlighter = ready;
+	if (!highlighter) return [];
+	try {
+		const { tokens, fg } = highlighter.codeToTokens(code, { lang: language as never, theme });
+		const positioned: PositionedToken[] = [];
+		for (let line = 0; line < tokens.length; line++) {
+			let col = 0;
+			for (const token of tokens[line]) {
+				if (token.content.length === 0) continue;
+				positioned.push({
+					code: token.content,
+					color: token.color ?? fg ?? '',
+					line,
+					col
+				});
+				col += token.content.length;
+			}
+		}
+		return positioned;
+	} catch {
+		return [];
+	}
+}
+
 type Subsequence = {
 	aIndex: number;
 	bIndex: number;
@@ -46,35 +119,6 @@ type Subsequence = {
 };
 
 type DiffLine = { line: string; aIndex: number; bIndex: number; moved: boolean };
-
-export function highlight(code: string, language: string): PositionedToken[] {
-	const parser = getParser(language);
-	const tree = parser.parse(code);
-	const tokens: PositionedToken[] = [];
-	let line = 0;
-	let col = 0;
-
-	function flush(text: string, classes: string) {
-		if (text.length === 0) return;
-		tokens.push({ code: text, classes, line, col });
-		col += text.length;
-	}
-
-	highlightCode(
-		code,
-		tree,
-		highlighter,
-		(text, classes) => {
-			flush(text, classes ?? '');
-		},
-		() => {
-			line++;
-			col = 0;
-		}
-	);
-
-	return tokens;
-}
 
 function findUnique(
 	lines: string[],
@@ -223,7 +267,7 @@ export function diffStrings(from: string, to: string, language: string): MorphTo
 			const tt = toMap.get(line.bIndex)!;
 			morphTokens.push({
 				code: ft.code,
-				classes: tt.classes,
+				color: tt.color,
 				morph: 'retain',
 				from: [ft.col, ft.line],
 				to: [tt.col, tt.line]
@@ -232,7 +276,7 @@ export function diffStrings(from: string, to: string, language: string): MorphTo
 			const ft = fromMap.get(line.aIndex)!;
 			morphTokens.push({
 				code: ft.code,
-				classes: ft.classes,
+				color: ft.color,
 				morph: 'delete',
 				from: [ft.col, ft.line],
 				to: null
@@ -241,7 +285,7 @@ export function diffStrings(from: string, to: string, language: string): MorphTo
 			const tt = toMap.get(line.bIndex)!;
 			morphTokens.push({
 				code: tt.code,
-				classes: tt.classes,
+				color: tt.color,
 				morph: 'create',
 				from: null,
 				to: [tt.col, tt.line]
