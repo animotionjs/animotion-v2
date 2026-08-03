@@ -12,7 +12,7 @@ function parseName(path: string): string {
 
 function buildSequence(): SceneEntry[] {
 	const entries = Object.entries(
-		import.meta.glob(['../../scenes/*.svelte', '../../scenes/*/slide.svelte'])
+		import.meta.glob(['../../scenes/*.svelte', '../../scenes/*/scene.svelte'])
 	);
 
 	const scenes: SceneEntry[] = [];
