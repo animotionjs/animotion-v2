@@ -1,6 +1,6 @@
 import { flushSync } from 'svelte';
 import { type CodeRange, type CodeState } from './code.svelte';
-import { clamp, easeInOut, lerp } from './easing';
+import { clamp, easeInOut, lerp, type Easing } from './easing';
 import { diffStrings, highlight, type MorphToken, type PositionedToken } from './highlighter';
 
 export interface Step {
@@ -16,7 +16,7 @@ export class TweenStep implements Step {
 	#key: string;
 	#to: number;
 	#duration: number;
-	#ease: (p: number) => number;
+	#ease: Easing;
 	#from = 0;
 
 	constructor(
@@ -24,7 +24,7 @@ export class TweenStep implements Step {
 		key: string,
 		to: number,
 		duration: number,
-		ease: (p: number) => number = easeInOut
+		ease: Easing = easeInOut
 	) {
 		this.#state = state;
 		this.#key = key;
@@ -68,15 +68,11 @@ export interface TickFrame {
 export class TickStep implements Step {
 	#onTick: (frame: TickFrame) => void;
 	#duration: number;
-	#ease: (p: number) => number;
+	#ease: Easing;
 	#time = 0;
 	#frame = 0;
 
-	constructor(
-		onTick: (frame: TickFrame) => void,
-		duration: number,
-		ease: (p: number) => number = (p) => p
-	) {
+	constructor(onTick: (frame: TickFrame) => void, duration: number, ease: Easing = (p) => p) {
 		this.#onTick = onTick;
 		this.#duration = duration;
 		this.#ease = ease;
@@ -161,7 +157,7 @@ export class LayoutStep implements Step {
 	#state: Record<string, unknown>;
 	#change: () => void;
 	#duration: number;
-	#ease: (p: number) => number;
+	#ease: Easing;
 	#enter: LayoutTransition;
 	#exit: LayoutTransition;
 	#snapshot: Record<string, unknown> = {};
@@ -171,7 +167,7 @@ export class LayoutStep implements Step {
 		state: Record<string, unknown>,
 		change: () => void,
 		duration: number,
-		ease: (p: number) => number = easeInOut,
+		ease: Easing = easeInOut,
 		options: LayoutOptions = {}
 	) {
 		this.#state = state;
@@ -391,7 +387,7 @@ export class CodeStep implements Step {
 	#codeState: CodeState;
 	#build: () => { from: string; to: string; resolved: string };
 	#duration: number;
-	#ease: (p: number) => number;
+	#ease: Easing;
 	#language: string | null = null;
 	#snapshot: {
 		resolved: string;
@@ -407,7 +403,7 @@ export class CodeStep implements Step {
 		codeState: CodeState,
 		build: () => { from: string; to: string; resolved: string },
 		duration: number,
-		ease: (p: number) => number = easeInOut,
+		ease: Easing = easeInOut,
 		language?: string
 	) {
 		this.#codeState = codeState;

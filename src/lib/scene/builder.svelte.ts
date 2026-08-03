@@ -12,7 +12,7 @@ import {
 } from './steps';
 import { getSceneManager, getSceneId } from './context.svelte';
 import { TransitionBuilder, type TransitionBuild } from './runtime.svelte';
-import { easeInOut } from './easing';
+import { easeInOut, type Easing } from './easing';
 import { registerLanguages } from './highlighter';
 import {
 	setCodeState,
@@ -31,47 +31,34 @@ import {
 } from './code.svelte';
 
 export interface SceneBuilder<T> {
-	tween(key: keyof T, to: number, duration?: number, ease?: (p: number) => number): this;
-	tick(onTick: (frame: TickFrame) => void, duration?: number, ease?: (p: number) => number): this;
-	layout(
-		change: () => void,
-		duration?: number,
-		ease?: (p: number) => number,
-		options?: LayoutOptions
-	): this;
+	tween(key: keyof T, to: number, duration?: number, ease?: Easing): this;
+	tick(onTick: (frame: TickFrame) => void, duration?: number, ease?: Easing): this;
+	layout(change: () => void, duration?: number, ease?: Easing, options?: LayoutOptions): this;
 	all(fn: (scene: this) => void): this;
 	transitionIn(fn: TransitionBuild): this;
 	transitionOut(fn: TransitionBuild): this;
-	slideTransition(opts?: {
-		duration?: number;
-		ease?: (p: number) => number;
-		distance?: number;
-	}): this;
-	fadeTransition(opts?: { duration?: number; ease?: (p: number) => number }): this;
-	zoomTransition(opts?: { duration?: number; ease?: (p: number) => number; scale?: number }): this;
-	codeTo(
-		code: string,
-		duration?: number,
-		opts?: { language?: string; ease?: (p: number) => number }
-	): this;
-	codeAppend(code: string, duration?: number, ease?: (p: number) => number): this;
-	codePrepend(code: string, duration?: number, ease?: (p: number) => number): this;
+	slideTransition(opts?: { duration?: number; ease?: Easing; distance?: number }): this;
+	fadeTransition(opts?: { duration?: number; ease?: Easing }): this;
+	zoomTransition(opts?: { duration?: number; ease?: Easing; scale?: number }): this;
+	codeTo(code: string, duration?: number, opts?: { language?: string; ease?: Easing }): this;
+	codeAppend(code: string, duration?: number, ease?: Easing): this;
+	codePrepend(code: string, duration?: number, ease?: Easing): this;
 	codeInsert(
 		range: CodeRange | CodeRange[] | RangeResolver,
 		code: string,
 		duration?: number,
-		ease?: (p: number) => number
+		ease?: Easing
 	): this;
 	codeReplace(
 		range: CodeRange | CodeRange[] | RangeResolver | string,
 		code: string,
 		duration?: number,
-		ease?: (p: number) => number
+		ease?: Easing
 	): this;
 	codeRemove(
 		range: CodeRange | CodeRange[] | RangeResolver | string,
 		duration?: number,
-		ease?: (p: number) => number
+		ease?: Easing
 	): this;
 	codeEdit(
 		duration?: number
@@ -110,12 +97,7 @@ export function createScene<T extends Object>(initial: T = {} as T) {
 		return smartIndent(code, indent);
 	}
 
-	state.tween = function (
-		key: string,
-		to: number,
-		duration = 0.5,
-		ease: (p: number) => number = easeInOut
-	) {
+	state.tween = function (key: string, to: number, duration = 0.5, ease: Easing = easeInOut) {
 		steps.push(new TweenStep(state, key, to, duration, ease));
 		return this;
 	};
@@ -123,7 +105,7 @@ export function createScene<T extends Object>(initial: T = {} as T) {
 	state.tick = function (
 		onTick: (frame: TickFrame) => void,
 		duration = 0.5,
-		ease: (p: number) => number = (p) => p
+		ease: Easing = (p) => p
 	) {
 		steps.push(new TickStep(onTick, duration, ease));
 		return this;
@@ -132,7 +114,7 @@ export function createScene<T extends Object>(initial: T = {} as T) {
 	state.layout = function (
 		change: () => void,
 		duration = 0.5,
-		ease: (p: number) => number = easeInOut,
+		ease: Easing = easeInOut,
 		options?: LayoutOptions
 	) {
 		steps.push(new LayoutStep(state, change, duration, ease, options));
@@ -165,7 +147,7 @@ export function createScene<T extends Object>(initial: T = {} as T) {
 
 	state.slideTransition = function (opts?: {
 		duration?: number;
-		ease?: (p: number) => number;
+		ease?: Easing;
 		distance?: number;
 	}) {
 		const duration = opts?.duration ?? 0.5;
@@ -195,7 +177,7 @@ export function createScene<T extends Object>(initial: T = {} as T) {
 		return this;
 	};
 
-	state.fadeTransition = function (opts?: { duration?: number; ease?: (p: number) => number }) {
+	state.fadeTransition = function (opts?: { duration?: number; ease?: Easing }) {
 		const duration = opts?.duration ?? 0.5;
 		const ease = opts?.ease ?? easeInOut;
 
@@ -217,11 +199,7 @@ export function createScene<T extends Object>(initial: T = {} as T) {
 		return this;
 	};
 
-	state.zoomTransition = function (opts?: {
-		duration?: number;
-		ease?: (p: number) => number;
-		scale?: number;
-	}) {
+	state.zoomTransition = function (opts?: { duration?: number; ease?: Easing; scale?: number }) {
 		const duration = opts?.duration ?? 0.5;
 		const ease = opts?.ease ?? easeInOut;
 		const scale = opts?.scale ?? 0.5;
@@ -252,7 +230,7 @@ export function createScene<T extends Object>(initial: T = {} as T) {
 		this: Scene<T>,
 		code: string,
 		duration = 0.6,
-		opts?: { language?: string; ease?: (p: number) => number }
+		opts?: { language?: string; ease?: Easing }
 	) {
 		if (!codeState) throw new Error('codeTo: no code state. Pass initial `code` to createScene().');
 		const lang = opts?.language ?? codeState.language;
@@ -277,7 +255,7 @@ export function createScene<T extends Object>(initial: T = {} as T) {
 		this: Scene<T>,
 		code: string,
 		duration = 0.6,
-		ease: (p: number) => number = easeInOut
+		ease: Easing = easeInOut
 	) {
 		if (!codeState)
 			throw new Error('codeAppend: no code state. Pass initial `code` to createScene().');
@@ -303,7 +281,7 @@ export function createScene<T extends Object>(initial: T = {} as T) {
 		this: Scene<T>,
 		code: string,
 		duration = 0.6,
-		ease: (p: number) => number = easeInOut
+		ease: Easing = easeInOut
 	) {
 		if (!codeState)
 			throw new Error('codePrepend: no code state. Pass initial `code` to createScene().');
@@ -330,7 +308,7 @@ export function createScene<T extends Object>(initial: T = {} as T) {
 		anchor: CodeRange | CodeRange[] | RangeResolver,
 		text: string,
 		duration = 0.6,
-		ease: (p: number) => number = easeInOut
+		ease: Easing = easeInOut
 	) {
 		if (!codeState)
 			throw new Error('codeInsert: no code state. Pass initial `code` to createScene().');
@@ -360,7 +338,7 @@ export function createScene<T extends Object>(initial: T = {} as T) {
 		target: CodeRange | CodeRange[] | RangeResolver,
 		text: string,
 		duration = 0.6,
-		ease: (p: number) => number = easeInOut
+		ease: Easing = easeInOut
 	) {
 		if (!codeState)
 			throw new Error('codeReplace: no code state. Pass initial `code` to createScene().');
@@ -389,7 +367,7 @@ export function createScene<T extends Object>(initial: T = {} as T) {
 		this: Scene<T>,
 		target: CodeRange | CodeRange[] | RangeResolver,
 		duration = 0.6,
-		ease: (p: number) => number = easeInOut
+		ease: Easing = easeInOut
 	) {
 		if (!codeState)
 			throw new Error('codeRemove: no code state. Pass initial `code` to createScene().');

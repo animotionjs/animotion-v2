@@ -2,7 +2,7 @@ import { flushSync } from 'svelte';
 import { SvelteMap, SvelteSet } from 'svelte/reactivity';
 import { TweenStep, ParallelStep, type Step } from './steps';
 import { RealTimeScheduler, RenderScheduler, type FrameScheduler } from './scheduler';
-import { easeInOut } from './easing';
+import { easeInOut, type Easing } from './easing';
 
 type SavedState = {
 	stepIndex: number;
@@ -23,7 +23,7 @@ export class TransitionBuilder {
 		this.#state[key] = value;
 	}
 
-	tween(key: string, to: number, duration = 0.5, ease: (p: number) => number = easeInOut) {
+	tween(key: string, to: number, duration = 0.5, ease: Easing = easeInOut) {
 		this.#steps.push(new TweenStep(this.#state, key, to, duration, ease));
 		return this;
 	}

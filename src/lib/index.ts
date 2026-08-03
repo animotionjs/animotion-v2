@@ -17,14 +17,44 @@ export {
 } from './scene/context.svelte.js';
 export { TickStep } from './scene/steps.js';
 export { default as Scene } from './components/Scene.svelte';
+export type { Easing } from './scene/easing.js';
 export {
 	clamp,
 	lerp,
-	easeInOut,
-	easeOut,
-	easeOutCubic,
 	clampRemap,
-	easeInOutSine
+	linear,
+	easeInQuad,
+	easeOutQuad,
+	easeInOutQuad,
+	easeInCubic,
+	easeOutCubic,
+	easeInOutCubic,
+	easeInQuart,
+	easeOutQuart,
+	easeInOutQuart,
+	easeInQuint,
+	easeOutQuint,
+	easeInOutQuint,
+	easeInSine,
+	easeOutSine,
+	easeInOutSine,
+	easeInExpo,
+	easeOutExpo,
+	easeInOutExpo,
+	easeInCirc,
+	easeOutCirc,
+	easeInOutCirc,
+	easeInBack,
+	easeOutBack,
+	easeInOutBack,
+	easeInElastic,
+	easeOutElastic,
+	easeInOutElastic,
+	easeInBounce,
+	easeOutBounce,
+	easeInOutBounce,
+	easeInOut,
+	easeOut
 } from './scene/easing.js';
 export {
 	createScene,
