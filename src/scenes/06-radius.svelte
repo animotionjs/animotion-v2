@@ -33,7 +33,8 @@
 		.all((s) => {
 			s.codeSelection(code.lines(5, 8), 0.4);
 			s.tween('radius', 3, 1.4);
-		});
+		})
+		.codeSelection();
 </script>
 
 <div class="flex items-center gap-24">
