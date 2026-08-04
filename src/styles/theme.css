@@ -40,3 +40,9 @@
 	--text-8xl: 7cqi;
 	--text-9xl: 9cqi;
 }
+
+@layer base {
+	span[data-layout] {
+		display: inline-block;
+	}
+}

@@ -66,6 +66,8 @@ Every animated element must carry a unique `data-layout` key so the step can mat
 </ul>
 ```
 
+FLIP motion and the `scale` transition are driven by `transform`, which browsers ignore on `display: inline` elements. The theme stylesheet automatically makes `span[data-layout]` `inline-block`, so animated spans work out of the box; other inline elements (`a`, `em`, `code`, …) need the same rule or a block-level element. `fade`, `clip`, and `wipe` work on plain inline elements since they only rely on `opacity`/`clip-path`.
+
 `enter` and `exit` accept `fade` (default), `scale`, `clip` (circle reveal), `wipe` (left-to-right), or `none`.
 
 ## Scene transitions
