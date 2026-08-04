@@ -12,6 +12,53 @@ export interface RenderSpan {
 	selected: number;
 }
 
+export interface ContentBounds {
+	width: number;
+	height: number;
+}
+
+/**
+ * Bounds of the content visible on one side of a morph: the "from" side covers
+ * retain + delete tokens at their `from` positions, the "to" side covers
+ * retain + create tokens at their `to` positions.
+ */
+function sideBounds(tokens: MorphToken[], side: 'from' | 'to'): ContentBounds {
+	let width = 0;
+	let height = 0;
+	for (const token of tokens) {
+		if (side === 'from' && token.morph === 'create') continue;
+		if (side === 'to' && token.morph === 'delete') continue;
+		const pos = side === 'from' ? token.from : token.to;
+		if (!pos) continue;
+		const parts = token.code.split('\n');
+		for (let i = 0; i < parts.length; i++) {
+			const w = pos[0] + parts[i].length;
+			const h = pos[1] + i + 1;
+			if (w > width) width = w;
+			if (h > height) height = h;
+		}
+	}
+	return { width, height };
+}
+
+/**
+ * Container bounds during a morph, tweened between the "from" and "to"
+ * content using the normalized morph window, so the container resizes in
+ * lockstep with token movement instead of jumping.
+ */
+export function morphBounds(tokens: MorphToken[], progress: number): ContentBounds {
+	const from = sideBounds(tokens, 'from');
+	const to = sideBounds(tokens, 'to');
+	const t = easeInOutSine(progress);
+	return { width: lerp(from.width, to.width, t), height: lerp(from.height, to.height, t) };
+}
+
+export function morphDigitCount(tokens: MorphToken[]): number {
+	const from = Math.ceil(sideBounds(tokens, 'from').height);
+	const to = Math.ceil(sideBounds(tokens, 'to').height);
+	return Math.max(1, String(Math.max(from, to)).length);
+}
+
 let spanId = 0;
 function nextKey(): string {
 	return `cs-${spanId++}`;
@@ -79,6 +126,7 @@ export function computeSettledSpans(
 export function computeMorphSpans(
 	tokens: MorphToken[],
 	progress: number,
+	morphProgress: number,
 	selection: CodeRange[],
 	selectionProgress: number | null,
 	previousSelection: CodeRange[] | null,
@@ -100,8 +148,7 @@ export function computeMorphSpans(
 			const fromLine = token.from?.[1] ?? 0;
 			const toCol = token.to?.[0] ?? 0;
 			const toLine = token.to?.[1] ?? 0;
-			const remapped = clampRemap(progress, 0.2, 0.8, 0, 1);
-			const t = easeInOutSine(remapped);
+			const t = easeInOutSine(morphProgress);
 			baseX = lerp(fromCol, toCol, t);
 			baseY = lerp(fromLine, toLine, t);
 			targetX = toCol;

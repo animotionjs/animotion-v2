@@ -8,6 +8,27 @@ beforeAll(async () => {
 	await whenReady();
 });
 
+describe('CodeStep morph timing', () => {
+	it('opens the morph window at the timeline boundaries despite easing', () => {
+		const state = createCodeState('ts', 'const x = 1;');
+		const step = new CodeStep(
+			state,
+			() => ({ from: state.resolved, to: 'const x = 2;', resolved: 'const x = 2;' }),
+			0.6,
+			easeInOut
+		);
+
+		step.start();
+		step.setProgress(0.2);
+		expect(state.rawProgress).toBe(0.2);
+		expect(state.morphProgress).toBeCloseTo(0);
+
+		step.setProgress(0.8);
+		expect(state.rawProgress).toBe(0.8);
+		expect(state.morphProgress).toBeCloseTo(1);
+	});
+});
+
 function stubStep(duration: number) {
 	const setProgress = vi.fn();
 	return {

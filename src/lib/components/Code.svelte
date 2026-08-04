@@ -2,6 +2,8 @@
 	import {
 		computeMorphSpans,
 		computeSettledSpans,
+		morphBounds,
+		morphDigitCount,
 		selectionOpacity,
 		type RenderSpan
 	} from '../scene/code-render.svelte.js';
@@ -26,7 +28,8 @@
 		if (slot.tokens) {
 			return computeMorphSpans(
 				slot.tokens,
-				slot.progress,
+				slot.rawProgress,
+				slot.morphProgress,
 				slot.selection,
 				slot.selectionProgress,
 				slot.previousSelection,
@@ -46,6 +49,9 @@
 	});
 
 	const bounds = $derived.by(() => {
+		if (slot.tokens) {
+			return morphBounds(slot.tokens, slot.morphProgress);
+		}
 		let mx = 0;
 		let my = 0;
 		for (const span of spans) {
@@ -58,7 +64,7 @@
 	});
 
 	const lineCount = $derived(Math.max(0, Math.ceil(bounds.height)));
-	const digits = $derived(String(lineCount).length);
+	const digits = $derived(slot.tokens ? morphDigitCount(slot.tokens) : String(lineCount).length);
 	const gap = 1;
 	const gutter = $derived(lineNumbers ? digits + gap : 0);
 	const lineRows = $derived.by(() => {

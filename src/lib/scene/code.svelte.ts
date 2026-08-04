@@ -13,7 +13,9 @@ export interface CodeState {
 	resolved: string;
 	settled: PositionedToken[];
 	tokens: MorphToken[] | null;
+	rawProgress: number;
 	progress: number;
+	morphProgress: number;
 	selection: CodeRange[];
 	selectionProgress: number | null;
 	previousSelection: CodeRange[] | null;
@@ -403,7 +405,9 @@ export function createCodeState(language: string, initial: string): CodeState {
 		resolved: initial,
 		settled,
 		tokens: null,
+		rawProgress: 1,
 		progress: 1,
+		morphProgress: 1,
 		selection: ALL_LINES,
 		selectionProgress: null,
 		previousSelection: null

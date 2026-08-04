@@ -1,7 +1,7 @@
 import { flushSync } from 'svelte';
 import { type CodeRange, type CodeState } from './code.svelte';
-import { clamp, easeInOut, lerp, type Easing } from './easing';
 import { diffStrings, highlight, type MorphToken, type PositionedToken } from './highlighter';
+import { clamp, clampRemap, easeInOut, lerp, type Easing } from './easing';
 
 export interface Step {
 	readonly duration: number;
@@ -393,7 +393,9 @@ export class CodeStep implements Step {
 		resolved: string;
 		settled: PositionedToken[];
 		tokens: MorphToken[] | null;
+		rawProgress: number;
 		progress: number;
+		morphProgress: number;
 		language: string;
 	} | null = null;
 	#pendingResolved = '';
@@ -423,7 +425,9 @@ export class CodeStep implements Step {
 			resolved: this.#codeState.resolved,
 			settled: this.#codeState.settled,
 			tokens: this.#codeState.tokens,
+			rawProgress: this.#codeState.rawProgress,
 			progress: this.#codeState.progress,
+			morphProgress: this.#codeState.morphProgress,
 			language: this.#codeState.language
 		};
 		this.#pendingResolved = this.#codeState.resolved;
@@ -451,19 +455,27 @@ export class CodeStep implements Step {
 			this.#codeState.tokens = diffStrings(from, to, this.#codeState.language);
 			this.#pendingSettled = highlight(to, this.#codeState.language);
 		}
+		this.#codeState.rawProgress = 0;
 		this.#codeState.progress = 0;
+		this.#codeState.morphProgress = 0;
 		this.#pendingResolved = resolved;
 	}
 
 	setProgress(p: number) {
-		this.#codeState.progress = this.#ease(clamp(p, 0, 1));
+		const raw = clamp(p, 0, 1);
+		const eased = this.#ease(raw);
+		this.#codeState.rawProgress = raw;
+		this.#codeState.progress = eased;
+		this.#codeState.morphProgress = clampRemap(eased, this.#ease(0.2), this.#ease(0.8), 0, 1);
 	}
 
 	end() {
 		this.#codeState.resolved = this.#pendingResolved;
 		this.#codeState.settled = this.#pendingSettled;
 		this.#codeState.tokens = null;
+		this.#codeState.rawProgress = 1;
 		this.#codeState.progress = 1;
+		this.#codeState.morphProgress = 1;
 	}
 
 	revert() {
@@ -471,7 +483,9 @@ export class CodeStep implements Step {
 		this.#codeState.resolved = this.#snapshot.resolved;
 		this.#codeState.settled = this.#snapshot.settled;
 		this.#codeState.tokens = this.#snapshot.tokens;
+		this.#codeState.rawProgress = this.#snapshot.rawProgress;
 		this.#codeState.progress = this.#snapshot.progress;
+		this.#codeState.morphProgress = this.#snapshot.morphProgress;
 		this.#codeState.language = this.#snapshot.language;
 		this.#snapshot = null;
 	}
