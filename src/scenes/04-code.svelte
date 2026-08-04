@@ -13,9 +13,9 @@
 			}`,
 			0.6
 		)
-		.codeInsert(code.position(2, 0), 'return 7;\n', 0.6)
-		.codeReplace(code.word(1, 15, 3), 'Goodbye!', 0.6)
-		.codeRemove(code.lines(2), 0.6)
+		.codeInsert(code.position(3, 0), 'return 7;\n', 0.6)
+		.codeReplace(code.word(2, 15, 3), 'Goodbye!', 0.6)
+		.codeRemove(code.lines(3), 0.6)
 		.codeReplace('greet', 'sayHi', 0.6)
 		.codePrepend('// example\n', 0.4)
 		.codeEdit(0.6)`
@@ -23,7 +23,7 @@
 				${code.insert('// comment\n')}console.log("${code.replace('Goodbye!', 'Hello!')}");
 			}
 		`
-		.codeSelection(code.word(2, 15, 6), 0.6)
+		.codeSelection(code.word(3, 15, 6), 0.6)
 		.codeSelection();
 </script>
 

@@ -15,7 +15,7 @@
 				.layout(() => scene.view = 'example', 0.6)
 				.tween('radius', 3, 1.4)
 				.all((s) => {
-					s.codeSelection(code.lines(5,8), 0.4);
+					s.codeSelection(code.lines(6,9), 0.4);
 					s.tween('radius', 3, 1.4);
 				});
 		`,
@@ -23,15 +23,15 @@
 		radius: 3
 	})
 		.slideTransition({ duration: 0.4 })
-		.codeSelection(code.lines(0, 2), 0.4)
-		.codeSelection(code.lines(3), 0.4)
+		.codeSelection(code.lines(1, 3), 0.4)
+		.codeSelection(code.lines(4), 0.4)
 		.layout(() => (scene.view = 'example'), 0.6)
 		.all((s) => {
-			s.codeSelection(code.lines(4), 0.4);
+			s.codeSelection(code.lines(5), 0.4);
 			s.tween('radius', 4, 1.4);
 		})
 		.all((s) => {
-			s.codeSelection(code.lines(5, 8), 0.4);
+			s.codeSelection(code.lines(6, 9), 0.4);
 			s.tween('radius', 3, 1.4);
 		})
 		.codeSelection();
