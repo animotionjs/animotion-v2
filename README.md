@@ -124,12 +124,12 @@ Scenes can morph source code between states. Pass initial `code` (and optional `
 			}`,
 			0.6
 		)
-		.codeInsert(code.position(2, 0), 'return 7;\n', 0.6)
-		.codeReplace(code.word(1, 15, 3), 'Goodbye!', 0.6)
-		.codeRemove(code.lines(2), 0.6)
+		.codeInsert(code.position(3, 0), 'return 7;\n', 0.6)
+		.codeReplace(code.word(2, 15, 3), 'Goodbye!', 0.6)
+		.codeRemove(code.lines(3), 0.6)
 		.codeReplace('greet', 'sayHi', 0.6)
 		.codePrepend('// example\n', 0.4)
-		.codeSelection(code.word(2, 15, 6), 0.6)
+		.codeSelection(code.word(3, 15, 6), 0.6)
 		.codeSelection();
 </script>
 
@@ -144,7 +144,7 @@ Scenes can morph source code between states. Pass initial `code` (and optional `
 - `codeEdit(duration)`: a tagged template where edits are marked inline with `code.insert(...)` and `code.remove(...)`.
 - `codeSelection(range?)`: dim everything except a range; with no argument, selects everything.
 
-Ranges target `[line, col]` positions: `code.position(line, col)`, `code.word(line, col, length)`, `code.lines(from, to)`, `code.range(sl, sc, el, ec)`. Text resolvers find occurrences by string or regex: `code.FIRST(pattern)`, `code.ALL(pattern)`, `code.LAST(pattern)`.
+Ranges target `[line, col]` positions with **1-indexed lines and 0-indexed columns**: `code.position(line, col)`, `code.word(line, col, length)`, `code.lines(from, to)`, `code.range(sl, sc, el, ec)`. Text resolvers find occurrences by string or regex: `code.FIRST(pattern)`, `code.ALL(pattern)`, `code.LAST(pattern)`.
 
 ### Code options
 
