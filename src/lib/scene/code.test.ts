@@ -1,5 +1,46 @@
 import { describe, expect, it } from 'vitest';
-import { resolveRangeArray, resolveSingleRange, smartIndent } from './code.svelte';
+import { lines, position, range, resolveRangeArray, resolveSingleRange, smartIndent, word } from './code.svelte';
+
+describe('range helpers', () => {
+	it('interprets line numbers as 1-indexed', () => {
+		expect(lines(1, 2)).toEqual([
+			[
+				[0, 0],
+				[1, Infinity]
+			]
+		]);
+		expect(lines(1)).toEqual([
+			[
+				[0, 0],
+				[0, Infinity]
+			]
+		]);
+		expect(word(2, 15)).toEqual([
+			[1, 15],
+			[1, Infinity]
+		]);
+		expect(word(1, 5, 3)).toEqual([
+			[0, 5],
+			[0, 8]
+		]);
+		expect(position(3, 0)).toEqual([
+			[2, 0],
+			[2, 0]
+		]);
+		expect(range(1, 0, 2, 4)).toEqual([
+			[0, 0],
+			[1, 4]
+		]);
+	});
+
+	it('throws with a helpful message on 0 or negative lines', () => {
+		expect(() => lines(0)).toThrow(/Lines are 1-indexed/);
+		expect(() => lines(1, 0)).toThrow(/Lines are 1-indexed/);
+		expect(() => word(0, 1)).toThrow(/Lines are 1-indexed/);
+		expect(() => position(-1, 0)).toThrow(/Lines are 1-indexed/);
+		expect(() => range(1, 0, 0, 0)).toThrow(/Lines are 1-indexed/);
+	});
+});
 
 describe('range resolution', () => {
 	const code = `function greet() {\n  console.log('Hi!');\n}`;

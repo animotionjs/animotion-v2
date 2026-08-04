@@ -19,8 +19,8 @@
 
 	createScene({ code: 'const first = 0;' })
 		.codeAppend('\n' + lines, 0.6)
-		.codeSelection(code.lines(0), 0.4)
-		.codeSelection(code.lines(38, 40), 0.4);
+		.codeSelection(code.lines(1), 0.4)
+		.codeSelection(code.lines(39, 41), 0.4);
 </script>
 
 <div style="height: 80px">

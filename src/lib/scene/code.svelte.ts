@@ -52,33 +52,47 @@ export function replace(from: string, to: string): RawCodeFragment {
 	return { before: from, after: to };
 }
 
+function assertLine(line: number): void {
+	if (line < 1) {
+		throw new Error(
+			`Lines are 1-indexed — the first line is 1, but you passed ${line}. Did you mean ${Math.max(1, line + 1)}?`
+		);
+	}
+}
+
 export function word(line: number, col: number, length?: number): CodeRange {
+	assertLine(line);
 	return [
-		[line, col],
-		[line, length !== undefined ? col + length : Infinity]
+		[line - 1, col],
+		[line - 1, length !== undefined ? col + length : Infinity]
 	];
 }
 
 export function lines(from: number, to?: number): CodeRange[] {
+	assertLine(from);
+	if (to !== undefined) assertLine(to);
 	return [
 		[
-			[from, 0],
-			[to ?? from, Infinity]
+			[from - 1, 0],
+			[to !== undefined ? to - 1 : from - 1, Infinity]
 		]
 	];
 }
 
 export function range(sl: number, sc: number, el: number, ec: number): CodeRange {
+	assertLine(sl);
+	assertLine(el);
 	return [
-		[sl, sc],
-		[el, ec]
+		[sl - 1, sc],
+		[el - 1, ec]
 	];
 }
 
 export function position(line: number, col: number): CodeRange {
+	assertLine(line);
 	return [
-		[line, col],
-		[line, col]
+		[line - 1, col],
+		[line - 1, col]
 	];
 }
 
