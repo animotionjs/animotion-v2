@@ -1,4 +1,5 @@
 export type { Direction, TransitionBuild } from './scene/runtime.svelte.js';
+export { createSequence } from './scene/sequence.js';
 export type { SceneEntry, Sequence } from './scene/sequence.js';
 export type { TickFrame } from './scene/steps.js';
 export type { Plugin, PluginContext } from './plugins/types.js';
@@ -25,6 +26,7 @@ export {
 } from './scene/context.svelte.js';
 export { TickStep } from './scene/steps.js';
 export { default as Scene } from './components/Scene.svelte';
+export { default as Scenes } from './components/Scenes.svelte';
 export type { Easing } from './scene/easing.js';
 export {
 	clamp,

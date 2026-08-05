@@ -63,6 +63,7 @@
 		"test:e2e": "playwright install && playwright test"
 	},
 	"peerDependencies": {
+		"@sveltejs/kit": "^2.0.0",
 		"svelte": "^5.0.0"
 	},
 	"pnpm": {

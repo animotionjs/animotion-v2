@@ -39,6 +39,7 @@ export {
 } from './easing.js';
 export { getSceneManager, setSceneManager, getSceneId, setSceneId } from './context.svelte.js';
 export { SceneManager } from './runtime.svelte.js';
+export { createSequence } from './sequence.js';
 export type { SceneEntry, Sequence } from './sequence.js';
 export { TickStep, type TickFrame } from './steps.js';
 export type { LayoutTransition, LayoutOptions } from './steps.js';

@@ -282,3 +282,48 @@ pnpm check      # type-check
 pnpm test:unit  # unit tests
 pnpm package    # build the library into dist/
 ```
+
+## Using in your own project
+
+Install `@animotion/core` into your SvelteKit project from a local build:
+
+```sh
+cd animotion-v2
+pnpm pack                 # produces animotion-core-0.0.1.tgz
+```
+
+```sh
+pnpm add /path/to/animotion-core-0.0.1.tgz
+```
+
+`Scenes` ships as raw `.svelte` source using top-level `await`, so enable experimental async in your `vite.config.ts`:
+
+```ts
+sveltekit({
+	compilerOptions: { experimental: { async: true } }
+});
+```
+
+The presentation shell is a single component, rendered from an optional-scene route:
+
+```svelte
+<script lang="ts">
+	import { Scenes } from '@animotion/core';
+	import { plugins } from '$lib/config/plugins';
+	import { sequence } from '$lib/config/scenes';
+</script>
+
+<Scenes {sequence} {plugins} />
+```
+
+where `sequence` is built from a glob over your scenes:
+
+```ts
+import { createSequence } from '@animotion/core';
+
+export const sequence = createSequence(
+	import.meta.glob(['../../scenes/*.svelte', '../../scenes/*/scene.svelte'])
+);
+```
+
+and `plugins` is a list such as `[fullscreenPlugin()]`. `configure({ ... })` sets the highlighter, aspect ratio, default transition, and render defaults. The project boilerplate — routes, config, and the Tailwind theme tokens the shell styles against — ships with the template.
