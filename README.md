@@ -331,8 +331,8 @@ The presentation shell is a single component, rendered from an optional-scene ro
 ```svelte
 <script lang="ts">
 	import { Scenes } from '@animotion/core';
-	import { plugins } from '$lib/config/plugins';
-	import { sequence } from '$lib/config/scenes';
+	import { plugins } from '#lib/config/plugins';
+	import { sequence } from '#lib/config/scenes';
 </script>
 
 <Scenes {sequence} {plugins} />
