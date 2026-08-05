@@ -1,8 +1,8 @@
 import { beforeAll, describe, expect, it, vi } from 'vitest';
-import { createCodeState } from './code.svelte';
+import { createCodeState } from '../code/code.svelte';
 import { CodeStep, ParallelStep, TickStep, type Step, type TickFrame } from './steps';
-import { easeInOut } from './easing';
-import { whenReady } from './highlighter';
+import { easeInOut } from '../easing';
+import { whenReady } from '../code/highlighter';
 
 beforeAll(async () => {
 	await whenReady();

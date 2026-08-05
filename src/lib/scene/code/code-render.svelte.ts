@@ -1,5 +1,5 @@
 import { isInSelection, type CodeRange } from './code.svelte';
-import { clampRemap, easeInOutSine, lerp } from './easing';
+import { clampRemap, easeInOutSine, lerp } from '../easing';
 import type { MorphToken, PositionedToken } from './highlighter';
 
 /**

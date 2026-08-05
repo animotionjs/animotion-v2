@@ -7,15 +7,15 @@
 		morphDigitCount,
 		selectionOpacity,
 		type RenderSpan
-	} from '../scene/code-render.svelte.js';
+	} from '../scene/code/code-render.svelte.js';
 	import {
 		computeRevealTarget,
 		computeSelectionTarget,
 		fadeMaskImage,
 		revealTargetLine,
 		scrollMask
-	} from '../scene/code-scroll.js';
-	import { getCodeState, type CodeRange } from '../scene/code.svelte.js';
+	} from '../scene/code/code-scroll.js';
+	import { getCodeState, type CodeRange } from '../scene/code/code.svelte.js';
 	import { clamp, easeInOutSine, lerp } from '../scene/easing.js';
 
 	interface Props {

@@ -12,9 +12,9 @@ import {
 } from './steps';
 import { getSceneManager, getSceneId } from './context.svelte';
 import { TransitionBuilder, type TransitionBuild } from './runtime.svelte';
-import { easeInOut, type Easing } from './easing';
-import { getOptions, type TransitionConfig } from './options';
-import { registerLanguages } from './highlighter';
+import { easeInOut, type Easing } from '../easing';
+import { getOptions, type TransitionConfig } from '../options';
+import { registerLanguages } from '../code/highlighter';
 import {
 	setCodeState,
 	createCodeState,
@@ -29,7 +29,7 @@ import {
 	type CodeRange,
 	type RangeResolver,
 	type RawCodeFragment
-} from './code.svelte';
+} from '../code/code.svelte';
 
 /**
  * The chainable scene builder returned by {@link createScene}. Step methods

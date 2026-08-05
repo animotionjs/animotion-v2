@@ -1,4 +1,4 @@
-import { clamp } from './easing';
+import { clamp } from '../easing';
 import type { CodeRange } from './code.svelte';
 import type { MorphToken } from './highlighter';
 

@@ -238,8 +238,7 @@ Both highlighter options are typed against shiki's bundles, so editor autocomple
 `src/lib/config/plugins.ts` registers plugins that hook into the presentation shell:
 
 ```ts
-import { fullscreenPlugin } from '#lib/plugins/fullscreen';
-import type { Plugin } from '#lib/plugins/types';
+import { fullscreenPlugin, type Plugin } from '@animotion/core';
 
 export const plugins: Plugin[] = [fullscreenPlugin()];
 ```

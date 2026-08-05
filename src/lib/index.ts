@@ -1,33 +1,17 @@
-export type { Direction, TransitionBuild } from './scene/runtime.svelte.js';
-export { createSequence } from './scene/sequence.js';
-export type { SceneEntry, Sequence } from './scene/sequence.js';
-export type { TickFrame } from './scene/steps.js';
-export type { Plugin, PluginContext } from './plugins/types.js';
-export type { RenderBridge } from './scene/render-bridge.js';
-
-export { configure, registerLanguages, highlight, whenReady } from './scene/highlighter.js';
-export type { Token, PositionedToken, MorphToken } from './scene/highlighter.js';
+export { createSequence } from './scene/runtime/sequence.js';
+export { configure, registerLanguages, highlight, whenReady } from './scene/code/highlighter.js';
 export { getOptions, setOptions } from './scene/options.js';
-export type {
-	Options,
-	AspectRatio,
-	ResolutionName,
-	RenderOptions,
-	RenderOptionsInput
-} from './scene/options.js';
-export { TransitionBuilder, SceneManager } from './scene/runtime.svelte.js';
-export { PluginManager } from './plugins/manager.svelte.js';
-export { fullscreenPlugin } from './plugins/fullscreen.js';
+export { TransitionBuilder, SceneManager } from './scene/runtime/runtime.svelte.js';
+export { PluginManager, fullscreenPlugin } from './plugins/index.js';
 export {
 	getSceneManager,
 	setSceneManager,
 	getSceneId,
 	setSceneId
-} from './scene/context.svelte.js';
-export { TickStep } from './scene/steps.js';
+} from './scene/runtime/context.svelte.js';
+export { TickStep } from './scene/runtime/steps.js';
 export { default as Scene } from './components/Scene.svelte';
 export { default as Scenes } from './components/Scenes.svelte';
-export type { Easing } from './scene/easing.js';
 export {
 	clamp,
 	lerp,
@@ -85,3 +69,18 @@ export {
 	code,
 	getCodeState
 } from './scene/index.js';
+
+export type { Direction, TransitionBuild } from './scene/runtime/runtime.svelte.js';
+export type { SceneEntry, Sequence } from './scene/runtime/sequence.js';
+export type { TickFrame } from './scene/runtime/steps.js';
+export type { Plugin, PluginContext } from './plugins/index.js';
+export type { RenderBridge } from './scene/runtime/render-bridge.js';
+export type { Token, PositionedToken, MorphToken } from './scene/code/highlighter.js';
+export type {
+	Options,
+	AspectRatio,
+	ResolutionName,
+	RenderOptions,
+	RenderOptionsInput
+} from './scene/options.js';
+export type { Easing } from './scene/easing.js';

@@ -1,7 +1,7 @@
 import { flushSync } from 'svelte';
-import { type CodeRange, type CodeState } from './code.svelte';
-import { diffStrings, highlight, type MorphToken, type PositionedToken } from './highlighter';
-import { clamp, clampRemap, easeInOut, lerp, type Easing } from './easing';
+import { type CodeRange, type CodeState } from '../code/code.svelte';
+import { diffStrings, highlight, type MorphToken, type PositionedToken } from '../code/highlighter';
+import { clamp, clampRemap, easeInOut, lerp, type Easing } from '../easing';
 
 /**
  * A single animation unit. A scene's chain of steps plays sequentially;

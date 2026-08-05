@@ -2,7 +2,7 @@ import { flushSync } from 'svelte';
 import { SvelteMap, SvelteSet } from 'svelte/reactivity';
 import { TweenStep, ParallelStep, type Step } from './steps';
 import { RealTimeScheduler, RenderScheduler, type FrameScheduler } from './scheduler';
-import { easeInOut, type Easing } from './easing';
+import { easeInOut, type Easing } from '../easing';
 
 /** Which way the user is moving through the presentation. */
 export type Direction = 'forward' | 'backward';

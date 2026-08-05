@@ -5,7 +5,7 @@ import CodeScrollAppendFixture from './fixtures/CodeScrollAppendFixture.svelte';
 import CodeScrollFixture from './fixtures/CodeScrollFixture.svelte';
 import { managers } from './fixtures/code-scroll-managers.js';
 import { whenReady } from './highlighter';
-import type { SceneManager } from './runtime.svelte.js';
+import type { SceneManager } from '../runtime/runtime.svelte.js';
 
 beforeEach(() => {
 	document.body.innerHTML = '';

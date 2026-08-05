@@ -1,9 +1,9 @@
 <script lang="ts">
-	import { createScene } from '../builder.svelte.js';
-	import { SceneManager } from '../runtime.svelte.js';
-	import { setSceneManager, setSceneId } from '../context.svelte.js';
+	import { createScene } from '../../runtime/builder.svelte.js';
+	import { SceneManager } from '../../runtime/runtime.svelte.js';
+	import { setSceneManager, setSceneId } from '../../runtime/context.svelte.js';
 	import { managers } from './code-scroll-managers.js';
-	import Code from '../../components/Code.svelte';
+	import Code from '../../../components/Code.svelte';
 
 	const manager = new SceneManager();
 	managers.push(manager);

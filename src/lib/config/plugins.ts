@@ -1,4 +1,3 @@
-import { fullscreenPlugin } from '#lib/plugins/fullscreen';
-import type { Plugin } from '#lib/plugins/types';
+import { fullscreenPlugin, type Plugin } from '#lib/plugins';
 
 export const plugins: Plugin[] = [fullscreenPlugin()];

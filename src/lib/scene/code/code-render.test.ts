@@ -46,9 +46,7 @@ describe('morphBounds', () => {
 	});
 
 	it('reserves enough line-number digits for both morph sides', () => {
-		const tokens = [
-			token({ code: 'line', morph: 'retain', from: [0, 8], to: [0, 9] })
-		];
+		const tokens = [token({ code: 'line', morph: 'retain', from: [0, 8], to: [0, 9] })];
 		expect(morphDigitCount(tokens)).toBe(2);
 	});
 });

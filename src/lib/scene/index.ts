@@ -37,15 +37,20 @@ export {
 	easeInOut,
 	easeOut
 } from './easing.js';
-export { getSceneManager, setSceneManager, getSceneId, setSceneId } from './context.svelte.js';
-export { SceneManager } from './runtime.svelte.js';
-export { createSequence } from './sequence.js';
-export type { SceneEntry, Sequence } from './sequence.js';
-export { TickStep, type TickFrame } from './steps.js';
-export type { LayoutTransition, LayoutOptions } from './steps.js';
-export { createScene } from './builder.svelte.js';
-export { configure, registerLanguages, highlight, whenReady } from './highlighter.js';
-export type { Token, PositionedToken, MorphToken } from './highlighter.js';
+export {
+	getSceneManager,
+	setSceneManager,
+	getSceneId,
+	setSceneId
+} from './runtime/context.svelte.js';
+export { SceneManager } from './runtime/runtime.svelte.js';
+export { createSequence } from './runtime/sequence.js';
+export type { SceneEntry, Sequence } from './runtime/sequence.js';
+export { TickStep, type TickFrame } from './runtime/steps.js';
+export type { LayoutTransition, LayoutOptions } from './runtime/steps.js';
+export { createScene } from './runtime/builder.svelte.js';
+export { configure, registerLanguages, highlight, whenReady } from './code/highlighter.js';
+export type { Token, PositionedToken, MorphToken } from './code/highlighter.js';
 export { getOptions, setOptions } from './options.js';
 export type {
 	Options,
@@ -72,5 +77,5 @@ export {
 	smartIndent,
 	code,
 	getCodeState
-} from './code.svelte.js';
+} from './code/code.svelte.js';
 export { default as Code } from '../components/Code.svelte';

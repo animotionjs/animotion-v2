@@ -2,10 +2,10 @@
 	import { onMount } from 'svelte';
 	import { afterNavigate, goto } from '$app/navigation';
 	import { page } from '$app/state';
-	import { SceneManager } from '../scene/runtime.svelte.js';
-	import { setSceneId, setSceneManager } from '../scene/context.svelte.js';
+	import { SceneManager } from '../scene/runtime/runtime.svelte.js';
+	import { setSceneId, setSceneManager } from '../scene/runtime/context.svelte.js';
 	import { getOptions } from '../scene/index.js';
-	import type { Sequence } from '../scene/sequence.js';
+	import type { Sequence } from '../scene/runtime/sequence.js';
 	import { PluginManager } from '../plugins/manager.svelte.js';
 	import type { Plugin } from '../plugins/types.js';
 	import Scene from './Scene.svelte';

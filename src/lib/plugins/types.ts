@@ -1,5 +1,5 @@
-import type { SceneManager } from '../scene/runtime.svelte';
-import type { SceneEntry } from '../scene/sequence';
+import type { SceneManager } from '../scene/runtime/runtime.svelte';
+import type { SceneEntry } from '../scene/runtime/sequence';
 
 /** Environment handed to a plugin; provides access to the presentation shell. */
 export interface PluginContext {

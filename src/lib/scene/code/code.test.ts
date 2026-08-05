@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { lines, position, range, resolveRangeArray, resolveSingleRange, smartIndent, word } from './code.svelte';
+import {
+	lines,
+	position,
+	range,
+	resolveRangeArray,
+	resolveSingleRange,
+	smartIndent,
+	word
+} from './code.svelte';
 
 describe('range helpers', () => {
 	it('interprets line numbers as 1-indexed', () => {

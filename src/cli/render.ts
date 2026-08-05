@@ -5,7 +5,7 @@ import { dirname, join, resolve } from 'node:path';
 import ffmpeg from 'ffmpeg-static';
 import { chromium, type Browser, type Page } from 'playwright';
 import { resolveScenes } from './scenes.ts';
-import type { RenderBridge } from '../lib/scene/render-bridge.js';
+import type { RenderBridge } from '../lib/scene/runtime/render-bridge.js';
 
 declare global {
 	interface Window {

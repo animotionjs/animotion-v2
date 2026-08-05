@@ -10,7 +10,7 @@ import {
 	type AspectRatio,
 	type RenderOptionsInput,
 	type TransitionConfig
-} from './options.js';
+} from '../options.js';
 
 export const DEFAULT_THEME: BundledTheme = 'poimandres';
 
