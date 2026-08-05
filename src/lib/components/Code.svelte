@@ -19,12 +19,19 @@
 	import { clamp, easeInOutSine, lerp } from '../scene/easing.js';
 
 	interface Props {
+		/** Size and typography classes, e.g. `text-2xl` (default). */
 		class?: string;
+		/** Opacity of code outside the current selection (default `0.32`). */
 		unselectedOpacity?: number;
+		/** Line height in `em` (default `1.5`). */
 		lineHeight?: number;
+		/** Show a line-number gutter (default `false`). */
 		lineNumbers?: boolean;
+		/** Fade lines out at the scroll edges (default `true`). */
 		fade?: boolean;
+		/** Fade size in `em` (default `4`). */
 		fadeSize?: number;
+		/** Which scrolling to drive: `'both'`, `'selection'`, `'reveal'`, or `'none'`. */
 		scrollMode?: 'both' | 'selection' | 'reveal' | 'none';
 	}
 

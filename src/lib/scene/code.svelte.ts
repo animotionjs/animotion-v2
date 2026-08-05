@@ -6,8 +6,15 @@ import {
 	type PositionedToken
 } from './highlighter';
 
+/**
+ * A rectangular span of source code: `[[startLine, startCol], [endLine,
+ * endCol]]`. Lines are 1-indexed in user-facing helpers (see {@link word},
+ * {@link lines}, {@link range}, {@link position}) but stored 0-indexed in the
+ * range itself. An `Infinity` column extends to the end of its line.
+ */
 export type CodeRange = [[number, number], [number, number]];
 
+/** Reactive state backing a `<Code>` instance; created via {@link createCodeState}. */
 export interface CodeState {
 	language: string;
 	resolved: string;
@@ -21,18 +28,30 @@ export interface CodeState {
 	previousSelection: CodeRange[] | null;
 }
 
+/**
+ * Svelte context accessor for the active code state. Available only within a
+ * component tree containing a `<Code>` component.
+ */
 export const [getCodeState, setCodeState] = createContext<CodeState>();
 
+/** Sentinel meaning "no explicit value" (e.g. {@link SceneBuilder#codeSelection}). */
 export const DEFAULT = Symbol('DEFAULT');
 
+/**
+ * Text to splice around a tagged-template placeholder in `codeEdit`. `before`
+ * is removed from the previous code and `after` inserted in its place.
+ */
 export interface RawCodeFragment {
 	before: string;
 	after: string;
 }
 
+/** Resolves a range argument against the code to one or more ranges. */
 export type RangeResolver = (code: string) => CodeRange | CodeRange[];
+/** Resolves a range argument against the code to exactly one range. */
 export type SingleRangeResolver = (code: string) => CodeRange;
 
+/** Selects every line of the code; used as the default selection. */
 export const ALL_LINES: CodeRange[] = [
 	[
 		[0, 0],
@@ -40,14 +59,20 @@ export const ALL_LINES: CodeRange[] = [
 	]
 ];
 
+/**
+ * A tagged-template fragment that inserts `text` at the current position.
+ * Passed to {@link SceneBuilder#codeEdit} alongside `code.insert`.
+ */
 export function insert(text: string): RawCodeFragment {
 	return { before: '', after: text };
 }
 
+/** A tagged-template fragment that deletes `text` at the current position. */
 export function remove(text: string): RawCodeFragment {
 	return { before: text, after: '' };
 }
 
+/** A tagged-template fragment that replaces `from` with `to`. */
 export function replace(from: string, to: string): RawCodeFragment {
 	return { before: from, after: to };
 }
@@ -60,6 +85,12 @@ function assertLine(line: number): void {
 	}
 }
 
+/**
+ * Range of one or more characters on a single line. `line` is 1-indexed,
+ * `col` 0-indexed; `length` defaults to the rest of the line.
+ *
+ * @throws if `line < 1`
+ */
 export function word(line: number, col: number, length?: number): CodeRange {
 	assertLine(line);
 	return [
@@ -68,6 +99,12 @@ export function word(line: number, col: number, length?: number): CodeRange {
 	];
 }
 
+/**
+ * Range spanning whole lines. `from`/`to` are 1-indexed; omitting `to`
+ * selects a single line.
+ *
+ * @throws if a line is `< 1`
+ */
 export function lines(from: number, to?: number): CodeRange[] {
 	assertLine(from);
 	if (to !== undefined) assertLine(to);
@@ -79,6 +116,12 @@ export function lines(from: number, to?: number): CodeRange[] {
 	];
 }
 
+/**
+ * Range from `[sl, sc]` to `[el, ec]`. Lines are 1-indexed, columns
+ * 0-indexed.
+ *
+ * @throws if a line is `< 1`
+ */
 export function range(sl: number, sc: number, el: number, ec: number): CodeRange {
 	assertLine(sl);
 	assertLine(el);
@@ -88,6 +131,11 @@ export function range(sl: number, sc: number, el: number, ec: number): CodeRange
 	];
 }
 
+/**
+ * Zero-width range at a single point. `line` is 1-indexed, `col` 0-indexed.
+ *
+ * @throws if `line < 1`
+ */
 export function position(line: number, col: number): CodeRange {
 	assertLine(line);
 	return [
@@ -138,6 +186,11 @@ function findLastInCode(code: string, pattern: string | RegExp): CodeRange | nul
 	return ranges.length > 0 ? ranges[ranges.length - 1] : null;
 }
 
+/**
+ * Resolves to the first occurrence of `pattern` in the code.
+ *
+ * @throws if the pattern is not found
+ */
 export function FIRST(pattern: string | RegExp): SingleRangeResolver {
 	return (code: string) => {
 		const r = findFirstInCode(code, pattern);
@@ -146,10 +199,16 @@ export function FIRST(pattern: string | RegExp): SingleRangeResolver {
 	};
 }
 
+/** Resolves to every occurrence of `pattern` in the code. */
 export function ALL(pattern: string | RegExp): RangeResolver {
 	return (code: string) => findAllInCode(code, pattern);
 }
 
+/**
+ * Resolves to the last occurrence of `pattern` in the code.
+ *
+ * @throws if the pattern is not found
+ */
 export function LAST(pattern: string | RegExp): SingleRangeResolver {
 	return (code: string) => {
 		const r = findLastInCode(code, pattern);
@@ -365,6 +424,10 @@ export function smartIndent(code: string, unit = '  '): string {
 	return out.join('\n').replace(/^\n+|\n+$/g, '');
 }
 
+/**
+ * Namespace grouping the code-range and fragment helpers for use as
+ * `code.word(...)`, `code.FIRST(...)`, etc.
+ */
 export const code = {
 	insert,
 	remove,
@@ -384,6 +447,11 @@ export const code = {
 export function codeToText(code: string): string {
 	return code;
 }
+/**
+ * Resolves a `codeEdit` tagged template into the `from` (pre-edit) and `to`
+ * (post-edit) code. Plain string tags are identical on both sides; `insert`,
+ * `remove`, and `replace` fragments contribute their `before`/`after` parts.
+ */
 export function buildEditTrees(
 	strings: TemplateStringsArray,
 	tags: (string | RawCodeFragment)[]
@@ -407,6 +475,11 @@ export function buildEditTrees(
 	return { from: fromCode, to: toCode, resolved: toCode };
 }
 
+/**
+ * Creates the reactive {@link CodeState} backing a `<Code>` component, and
+ * registers it as the current code context. Highlighter loading is deferred;
+ * tokens are re-computed once it becomes ready.
+ */
 export function createCodeState(language: string, initial: string): CodeState {
 	let settled: PositionedToken[];
 	try {
@@ -444,6 +517,11 @@ function isRangeArray(v: unknown): v is CodeRange[] {
 	return Array.isArray(v) && v.length > 0 && Array.isArray(v[0]) && Array.isArray(v[0][0]);
 }
 
+/**
+ * Resolves a range argument to a single range: a string matches its first
+ * occurrence (`FIRST`), a resolver's result is unwrapped, and an array yields
+ * its first element.
+ */
 export function resolveSingleRange(
 	arg: CodeRange | CodeRange[] | RangeResolver | string,
 	code: string
@@ -456,6 +534,11 @@ export function resolveSingleRange(
 	return isRangeArray(arg) ? arg[0] : arg;
 }
 
+/**
+ * Resolves a range argument to an array of ranges: a string matches its first
+ * occurrence, a resolver's result is wrapped if needed, and an array is used
+ * as-is.
+ */
 export function resolveRangeArray(
 	arg: CodeRange | CodeRange[] | RangeResolver | string,
 	code: string
@@ -477,6 +560,11 @@ function lineColToIndex(code: string, line: number, col: number): number {
 	return idx + Math.min(col, lines[Math.min(line, lines.length - 1)]?.length ?? 0);
 }
 
+/**
+ * Converts a {@link CodeRange} (0-indexed, `Infinity` column allowed) into
+ * string indices into `code`; an `Infinity` end-column maps to the end of the
+ * string.
+ */
 export function codeRangeToSplice(code: string, range: CodeRange): { start: number; end: number } {
 	const [[sl, sc], [el, ec]] = range;
 	const start = lineColToIndex(code, sl, sc);
@@ -489,6 +577,11 @@ export function applyRangeEdit(code: string, range: CodeRange, replacement: stri
 	return code.slice(0, start) + replacement + code.slice(end);
 }
 
+/**
+ * Whether a span of text at a 0-indexed `line`/`col` overlaps any selection
+ * range, using half-open intervals `[start, end)`. An empty selection matches
+ * everything.
+ */
 export function isInSelection(
 	line: number,
 	col: number,

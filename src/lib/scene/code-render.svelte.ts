@@ -2,6 +2,11 @@ import { isInSelection, type CodeRange } from './code.svelte';
 import { clampRemap, easeInOutSine, lerp } from './easing';
 import type { MorphToken, PositionedToken } from './highlighter';
 
+/**
+ * A positioned text span rendered by `<Code>`. `leftCh` is in `ch` units,
+ * `topEm` in `em`; `alpha` and `selected` are opacity multipliers combined as
+ * `alpha * selected`.
+ */
 export interface RenderSpan {
 	key: string;
 	text: string;
@@ -53,6 +58,10 @@ export function morphBounds(tokens: MorphToken[], progress: number): ContentBoun
 	return { width: lerp(from.width, to.width, t), height: lerp(from.height, to.height, t) };
 }
 
+/**
+ * Number of digits needed in the line-number gutter across both sides of a
+ * morph, so the gutter width stays stable while lines change.
+ */
 export function morphDigitCount(tokens: MorphToken[]): number {
 	const from = Math.ceil(sideBounds(tokens, 'from').height);
 	const to = Math.ceil(sideBounds(tokens, 'to').height);
@@ -64,6 +73,11 @@ function nextKey(): string {
 	return `cs-${spanId++}`;
 }
 
+/**
+ * Fade alpha for a morph token during a morph. Deletes fade out over the
+ * first 20% of progress; creates fade in over the last 20%; retained tokens
+ * stay at full opacity. The 0.15 overlap keeps both sides briefly visible.
+ */
 function alphaMorph(progress: number, morph: 'create' | 'delete' | 'retain'): number {
 	const overlap = 0.15;
 	if (morph === 'delete') {
@@ -75,6 +89,14 @@ function alphaMorph(progress: number, morph: 'create' | 'delete' | 'retain'): nu
 	return 1;
 }
 
+/**
+ * Opacity for a span at a 0-indexed `line`/`col`, lerping between the
+ * previous and current selection while a selection transition plays.
+ *
+ * @returns `1` when inside the selection, `unselectedOpacity` otherwise;
+ *   during a transition, the eased interpolation between the previous and
+ *   current values
+ */
 export function selectionOpacity(
 	line: number,
 	col: number,
@@ -90,6 +112,7 @@ export function selectionOpacity(
 	return lerp(oldOpacity, newOpacity, easeInOutSine(progress));
 }
 
+/** Builds static spans from settled tokens (no morph active), at full alpha. */
 export function computeSettledSpans(
 	settled: PositionedToken[],
 	selection: CodeRange[],
@@ -123,6 +146,12 @@ export function computeSettledSpans(
 	return spans;
 }
 
+/**
+ * Builds animated spans for a morph. `progress` (raw, uneased) drives fade
+ * alpha via {@link alphaMorph}; `morphProgress` drives position: retained
+ * tokens lerp from their `from` to `to` position, deletes stay at their `from`
+ * position, creates at their `to` position.
+ */
 export function computeMorphSpans(
 	tokens: MorphToken[],
 	progress: number,

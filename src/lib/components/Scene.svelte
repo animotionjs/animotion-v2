@@ -1,7 +1,12 @@
 <script lang="ts">
 	import { getSceneManager, getOptions } from '../scene/index.js';
 
-	let { children } = $props();
+	interface Props {
+		/** Scene content. */
+		children: import('svelte').Snippet;
+	}
+
+	let { children }: Props = $props();
 	const manager = getSceneManager();
 	const transition = manager.transitionState;
 	const { aspectRatio } = getOptions();

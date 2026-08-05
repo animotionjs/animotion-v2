@@ -1,12 +1,17 @@
 import type { Component } from 'svelte';
 
+/** One scene in the presentation: its `id` and position in the `sequence`. */
 export interface SceneEntry {
+	/** Scene id, from the name after the numeric prefix (e.g. `intro`). */
 	id: string;
+	/** Sort position, from the numeric prefix of the scene name. */
 	order: number;
+	/** Lazily imports the scene component on first visit. */
 	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- a scene may be any component
 	component: () => Promise<{ default: Component<any> }>;
 }
 
+/** Ordered list of scenes, sorted by `order`. */
 export type Sequence = SceneEntry[];
 
 type SceneModule = { default: Component };
@@ -19,6 +24,16 @@ function parseName(path: string): string {
 	return first.replace(/\.svelte$/, '');
 }
 
+/**
+ * Builds the ordered scene sequence from a glob of scene modules.
+ *
+ * Scene names must be `<digits>-<name>`, where the digit prefix sets the order
+ * (ascending, any number of digits) and `name` becomes the scene id; both must
+ * be unique.
+ *
+ * @throws if a scene name has no numeric prefix, or if two scenes share an id
+ *   or an order
+ */
 export function createSequence(entries: Record<string, () => Promise<unknown>>): Sequence {
 	const scenes: SceneEntry[] = [];
 	const ids = new Map<string, string>();

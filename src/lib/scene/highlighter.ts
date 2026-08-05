@@ -65,6 +65,7 @@ function ensureInit(): Promise<void> {
 
 ensureInit();
 
+/** Presentation-wide highlighter and render settings. */
 export interface ConfigureOptions {
 	theme?: BundledTheme;
 	languages?: BundledLanguage[];
@@ -73,6 +74,11 @@ export interface ConfigureOptions {
 	transition?: TransitionConfig | null;
 }
 
+/**
+ * Configures the highlighter and global options. Languages listed here are
+ * registered lazily as the highlighter loads; switching the theme restarts
+ * the highlighter.
+ */
 export function configure(options: ConfigureOptions) {
 	if (options.languages) {
 		for (const language of options.languages) pendingLanguages.add(language);
@@ -95,10 +101,12 @@ export function configure(options: ConfigureOptions) {
 	}
 }
 
+/** Resolves once the highlighter is initialized and usable. */
 export function whenReady(): Promise<void> {
 	return ensureInit();
 }
 
+/** Calls `callback` once the highlighter is ready, immediately if it already is. */
 export function onHighlighterReady(callback: () => void) {
 	if (ready) {
 		callback();
@@ -108,28 +116,42 @@ export function onHighlighterReady(callback: () => void) {
 	}
 }
 
+/** Registers additional languages with the highlighter, loading them if needed. */
 export async function registerLanguages(languages: string[]) {
 	for (const language of languages) pendingLanguages.add(language);
 	await ensureInit();
 	await loadLanguages();
 }
 
+/** A highlighted token: its source text and resolved color. */
 export interface Token {
 	code: string;
 	color: string;
 }
 
+/** A token positioned within the code grid; `line`/`col` are 0-indexed. */
 export interface PositionedToken extends Token {
 	line: number;
 	col: number;
 }
 
+/**
+ * A token in a diff between two code states. `from`/`to` are `[col, line]`
+ * positions (0-indexed) of the token on each side, or `null` on the side
+ * where the token does not exist.
+ */
 export interface MorphToken extends Token {
 	morph: 'create' | 'delete' | 'retain';
 	from: [number, number] | null;
 	to: [number, number] | null;
 }
 
+/**
+ * Tokenizes `code` with the current theme.
+ *
+ * @returns positioned tokens, or `[]` if the highlighter is not ready or the
+ *   language is unknown
+ */
 export function highlight(code: string, language: string): PositionedToken[] {
 	const highlighter = ready;
 	if (!highlighter) return [];
@@ -230,6 +252,10 @@ function longestCommonSubsequence(abMap: Map<string, Subsequence>): Subsequence[
 	return lcs.reverse();
 }
 
+/**
+ * Computes a line-level diff using the patience algorithm. Each result line
+ * carries a matching pair of indices, or `-1` on the side that is absent.
+ */
 function patienceDiff(
 	aLines: string[],
 	bLines: string[]
@@ -292,6 +318,13 @@ function patienceDiff(
 	return { lines: result, lineCountDeleted: deleted, lineCountInserted: inserted };
 }
 
+/**
+ * Diffs two highlighted code strings into morph tokens by matching token
+ * codes with a patience diff. Matched tokens are `retain` (using the target's
+ * color), tokens only in `from` are `delete`, and tokens only in `to` are
+ * `create`; each token carries its `[col, line]` position on the relevant
+ * side.
+ */
 export function diffStrings(from: string, to: string, language: string): MorphToken[] {
 	const fromTokens = highlight(from, language);
 	const toTokens = highlight(to, language);

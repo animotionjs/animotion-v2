@@ -1,5 +1,6 @@
 import type { Easing } from './easing.js';
 
+/** Named slide shapes. `video` is 16:9 landscape, `vertical` is 9:16 portrait, `square` is 1:1. */
 export const ASPECT_RATIOS = {
 	video: { width: 1920, height: 1080 },
 	vertical: { width: 1080, height: 1920 },
@@ -8,6 +9,7 @@ export const ASPECT_RATIOS = {
 
 export type AspectRatio = keyof typeof ASPECT_RATIOS;
 
+/** Render size tiers, applied to the shape's smaller side. */
 const RESOLUTIONS = {
 	'720p': 720,
 	'1080p': 1080,
@@ -16,6 +18,7 @@ const RESOLUTIONS = {
 
 export type ResolutionName = keyof typeof RESOLUTIONS;
 
+/** Fully resolved render settings; every field has a concrete value. */
 export interface RenderOptions {
 	fps: number;
 	width: number;
@@ -27,6 +30,10 @@ export interface RenderOptions {
 	progressBar: boolean;
 }
 
+/**
+ * Partial render settings. `resolution` picks a size tier; explicit
+ * `width`/`height` override it. Unset fields fall back to defaults.
+ */
 export interface RenderOptionsInput {
 	fps?: number;
 	resolution?: ResolutionName;
@@ -39,6 +46,7 @@ export interface RenderOptionsInput {
 	progressBar?: boolean;
 }
 
+/** A resolved aspect ratio: preset name plus pixel dimensions. */
 export interface AspectRatioEntry {
 	name: AspectRatio;
 	width: number;
@@ -47,14 +55,24 @@ export interface AspectRatioEntry {
 
 export type TransitionPreset = 'slide' | 'fade' | 'zoom';
 
+/**
+ * Config for the presentation-wide default transition, set via
+ * `configure({ transition })`. Only the fields relevant to `type` are used.
+ */
 export interface TransitionConfig {
+	/** Which transition style to use. */
 	type: TransitionPreset;
+	/** Transition duration in seconds. Defaults to `0.5`. */
 	duration?: number;
+	/** Easing applied to the transition. Defaults to `easeInOut`. */
 	ease?: Easing;
+	/** Slide distance in px (slide only). Defaults to `100`. */
 	distance?: number;
+	/** Starting scale factor (zoom only). Defaults to `0.5`. */
 	scale?: number;
 }
 
+/** Resolved presentation-wide settings. */
 export interface Options {
 	aspectRatio: AspectRatioEntry;
 	render: RenderOptions;
@@ -78,6 +96,10 @@ let aspectRatio: AspectRatio = DEFAULT_ASPECT_RATIO;
 let render: RenderOptionsInput = {};
 let transition: TransitionConfig | null = null;
 
+/**
+ * Sets global render options. Each provided field overrides the previous
+ * value; omitted fields are left unchanged.
+ */
 export function setOptions(input: {
 	aspectRatio?: AspectRatio;
 	render?: RenderOptionsInput;
@@ -109,6 +131,10 @@ function resolveResolution(preset: { width: number; height: number }): {
 	return { width: preset.width, height: preset.height };
 }
 
+/**
+ * Returns the resolved global options, applying configured overrides to the
+ * aspect-ratio preset and filling unset render fields with defaults.
+ */
 export function getOptions(): Options {
 	const preset = ASPECT_RATIOS[aspectRatio];
 	const { width, height } = resolveResolution(preset);

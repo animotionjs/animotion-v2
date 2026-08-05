@@ -2,6 +2,10 @@ import type { SceneManager } from './runtime.svelte';
 import type { RenderScheduler } from './scheduler';
 import type { RenderOptions } from './options.js';
 
+/**
+ * Bridge exposed to the renderer as `window.__sequenceRenderer`. Exists only
+ * while a page is loaded with `?render=video`.
+ */
 export interface RenderBridge {
 	manager: SceneManager;
 	scheduler: RenderScheduler;

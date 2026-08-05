@@ -31,6 +31,12 @@ import {
 	type RawCodeFragment
 } from './code.svelte';
 
+/**
+ * The chainable scene builder returned by {@link createScene}. Step methods
+ * append a step and return the builder for chaining; `transition*` methods
+ * configure the enter/exit transitions instead. Steps play in the order they
+ * were added; `duration` defaults are in seconds.
+ */
 export interface SceneBuilder<T> {
 	tween(key: keyof T, to: number, duration?: number, ease?: Easing): this;
 	tick(onTick: (frame: TickFrame) => void, duration?: number, ease?: Easing): this;
@@ -73,6 +79,18 @@ export interface SceneBuilder<T> {
 type Scene<T> = T & SceneBuilder<T>;
 type Object = Record<string, unknown>;
 
+/**
+ * Creates a reactive scene state object extended with the chainable step
+ * builder. `initial` becomes the scene's reactive state; the returned object
+ * carries both the state fields and the builder methods.
+ *
+ * Pass `code` (and optionally `language`) in `initial` to back a `<Code>`
+ * component with code-morphing steps. A special `indent` field sets the
+ * re-indentation unit (default `'  '`) and is removed from the state.
+ *
+ * Must run during a component's setup so the scene manager context (from
+ * `<Scenes>`) is available. Steps are loaded into the manager on mount.
+ */
 export function createScene<T extends Object>(initial: T = {} as T) {
 	const rawInitial = initial as Record<string, unknown>;
 	const indent =
@@ -99,11 +117,16 @@ export function createScene<T extends Object>(initial: T = {} as T) {
 		return smartIndent(code, indent);
 	}
 
+	/** Tweens state field `key` to `to` over `duration` seconds. */
 	state.tween = function (key: string, to: number, duration = 0.5, ease: Easing = easeInOut) {
 		steps.push(new TweenStep(state, key, to, duration, ease));
 		return this;
 	};
 
+	/**
+	 * Runs `onTick` every frame for `duration` seconds, receiving the
+	 * per-frame {@link TickFrame}.
+	 */
 	state.tick = function (
 		onTick: (frame: TickFrame) => void,
 		duration = 0.5,
@@ -113,6 +136,11 @@ export function createScene<T extends Object>(initial: T = {} as T) {
 		return this;
 	};
 
+	/**
+	 * Animates a DOM change with a FLIP transition: snapshots every element
+	 * tagged with a `data-layout` key, runs `change`, then animates retained,
+	 * added, and removed elements per the `enter`/`exit` {@link LayoutOptions}.
+	 */
 	state.layout = function (
 		change: () => void,
 		duration = 0.5,
@@ -123,6 +151,7 @@ export function createScene<T extends Object>(initial: T = {} as T) {
 		return this;
 	};
 
+	/** Runs every step added inside `fn` in parallel as a single step. */
 	state.all = function (this: Scene<T>, fn: (scene: Scene<T>) => void) {
 		const saved = steps;
 		const parallelSteps: Step[] = [];
@@ -142,22 +171,26 @@ export function createScene<T extends Object>(initial: T = {} as T) {
 		}
 	}
 
+	/** Replaces the enter transition build. */
 	state.transitionIn = function (fn: TransitionBuild) {
 		applyTransition(fn, null);
 		return this;
 	};
 
+	/** Replaces the exit transition build. */
 	state.transitionOut = function (fn: TransitionBuild) {
 		exitBuild = fn;
 		return this;
 	};
 
+	/** Disables both enter and exit transitions. */
 	state.noTransition = function () {
 		enterBuild = null;
 		exitBuild = null;
 		return this;
 	};
 
+	/** Sets a direction-aware horizontal slide transition. */
 	state.slideTransition = function (opts?: {
 		duration?: number;
 		ease?: Easing;
@@ -178,6 +211,7 @@ export function createScene<T extends Object>(initial: T = {} as T) {
 		return this;
 	};
 
+	/** Sets a scale-while-fading transition. */
 	state.zoomTransition = function (opts?: { duration?: number; ease?: Easing; scale?: number }) {
 		const { enter, exit } = buildZoom(
 			opts?.duration ?? 0.5,
@@ -188,6 +222,12 @@ export function createScene<T extends Object>(initial: T = {} as T) {
 		return this;
 	};
 
+	/**
+	 * Morphs the whole code block to `code`. Re-indents the target with the
+	 * scene's indent unit.
+	 *
+	 * @throws if the scene was created without initial `code`
+	 */
 	state.codeTo = function (
 		this: Scene<T>,
 		code: string,
@@ -213,6 +253,7 @@ export function createScene<T extends Object>(initial: T = {} as T) {
 		return this;
 	};
 
+	/** Appends `code` to the end of the code block. */
 	state.codeAppend = function (
 		this: Scene<T>,
 		code: string,
@@ -239,6 +280,7 @@ export function createScene<T extends Object>(initial: T = {} as T) {
 		return this;
 	};
 
+	/** Prepends `code` to the start of the code block. */
 	state.codePrepend = function (
 		this: Scene<T>,
 		code: string,
@@ -265,6 +307,10 @@ export function createScene<T extends Object>(initial: T = {} as T) {
 		return this;
 	};
 
+	/**
+	 * Inserts `text` at the start of `anchor`'s range. `anchor` may be a range
+	 * array, a range, or a resolver like `code.FIRST(...)`.
+	 */
 	state.codeInsert = function (
 		this: Scene<T>,
 		anchor: CodeRange | CodeRange[] | RangeResolver,
@@ -295,9 +341,13 @@ export function createScene<T extends Object>(initial: T = {} as T) {
 		return this;
 	};
 
+	/**
+	 * Replaces `target`'s range with `text`. A plain string `target` matches
+	 * its first occurrence in the code.
+	 */
 	state.codeReplace = function (
 		this: Scene<T>,
-		target: CodeRange | CodeRange[] | RangeResolver,
+		target: CodeRange | CodeRange[] | RangeResolver | string,
 		text: string,
 		duration = 0.6,
 		ease: Easing = easeInOut
@@ -325,9 +375,10 @@ export function createScene<T extends Object>(initial: T = {} as T) {
 		return this;
 	};
 
+	/** Deletes `target`'s range. A plain string `target` matches its first occurrence. */
 	state.codeRemove = function (
 		this: Scene<T>,
-		target: CodeRange | CodeRange[] | RangeResolver,
+		target: CodeRange | CodeRange[] | RangeResolver | string,
 		duration = 0.6,
 		ease: Easing = easeInOut
 	) {
@@ -354,6 +405,13 @@ export function createScene<T extends Object>(initial: T = {} as T) {
 		return this;
 	};
 
+	/**
+	 * Returns a tagged-template function that morphs the code using inline
+	 * `code.insert`/`code.remove`/`code.replace` fragments.
+	 *
+	 * @example
+	 * scene.codeEdit(0.6)`return ${code.insert('result;')};`;
+	 */
 	state.codeEdit = function (this: Scene<T>, duration = 0.6) {
 		if (!codeState)
 			throw new Error('codeEdit: no code state. Pass initial `code` to createScene().');
@@ -374,6 +432,10 @@ export function createScene<T extends Object>(initial: T = {} as T) {
 		};
 	};
 
+	/**
+	 * Highlights the selection: dims code outside `range`. With no argument,
+	 * selects the whole block.
+	 */
 	state.codeSelection = function (
 		this: Scene<T>,
 		range: CodeRange | CodeRange[] | RangeResolver | string | typeof DEFAULT = DEFAULT,

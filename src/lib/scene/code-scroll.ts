@@ -2,8 +2,16 @@ import { clamp } from './easing';
 import type { CodeRange } from './code.svelte';
 import type { MorphToken } from './highlighter';
 
+/**
+ * Which viewport edge(s) need a fade mask: `'top'` fades the top edge,
+ * `'bottom'` the bottom edge, `'both'` both, `'none'` neither.
+ */
 export type ScrollMask = 'none' | 'top' | 'bottom' | 'both';
 
+/**
+ * Returns the 0-indexed bottom line of the content newly created by a morph,
+ * or `null` if the morph creates nothing.
+ */
 export function revealTargetLine(tokens: MorphToken[]): number | null {
 	let bottom = -1;
 	for (const token of tokens) {
@@ -30,6 +38,12 @@ function selectionLines(selection: CodeRange[], lineCount: number) {
 	};
 }
 
+/**
+ * Computes the `scrollTop` in px needed to keep the selected lines in view.
+ *
+ * @returns the target `scrollTop`, or `null` if the selection is already fully
+ *   visible and no scroll is needed
+ */
 export function computeSelectionTarget(
 	selection: CodeRange[],
 	lineCount: number,
@@ -54,6 +68,12 @@ export function computeSelectionTarget(
 	return clamp(target, 0, maxScroll);
 }
 
+/**
+ * Computes the `scrollTop` in px needed to reveal the line below `bottomLine`.
+ *
+ * @returns the target `scrollTop`, or `null` if the line is already in view
+ *   and no scroll is needed
+ */
 export function computeRevealTarget(
 	bottomLine: number,
 	lineHeightPx: number,
@@ -69,6 +89,11 @@ export function computeRevealTarget(
 	return clamp(bottomPx - clientHeight + fadePx, 0, maxScroll);
 }
 
+/**
+ * Determines which edges need a fade mask given the current scroll position
+ * (with a 1px tolerance at the extremes). Returns `'none'` when there is no
+ * overflow or the viewport spans the whole content.
+ */
 export function scrollMask(
 	scrollTop: number,
 	clientHeight: number,

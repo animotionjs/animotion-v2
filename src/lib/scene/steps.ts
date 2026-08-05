@@ -3,6 +3,11 @@ import { type CodeRange, type CodeState } from './code.svelte';
 import { diffStrings, highlight, type MorphToken, type PositionedToken } from './highlighter';
 import { clamp, clampRemap, easeInOut, lerp, type Easing } from './easing';
 
+/**
+ * A single animation unit. A scene's chain of steps plays sequentially;
+ * `duration` is in seconds. `progress` values passed to `setProgress` are
+ * normalized `0..1`.
+ */
 export interface Step {
 	readonly duration: number;
 	setProgress(p: number): void;
@@ -11,6 +16,11 @@ export interface Step {
 	revert(): void;
 }
 
+/**
+ * Eases a single numeric field of a state object toward a target value.
+ * `start()` snapshots the field's current value as the `from` point; `revert()`
+ * restores that snapshot.
+ */
 export class TweenStep implements Step {
 	#state: Record<string, unknown>;
 	#key: string;
@@ -54,6 +64,7 @@ export class TweenStep implements Step {
 	}
 }
 
+/** Per-frame data passed to a `tick` callback. */
 export interface TickFrame {
 	/** eased progress 0..1 within this step */
 	progress: number;
@@ -65,6 +76,10 @@ export interface TickFrame {
 	frame: number;
 }
 
+/**
+ * Runs `onTick` every frame while the step plays. Drives arbitrary state from
+ * the step's progress; see {@link TickFrame} for the per-frame payload.
+ */
 export class TickStep implements Step {
 	#onTick: (frame: TickFrame) => void;
 	#duration: number;
@@ -108,10 +123,18 @@ export class TickStep implements Step {
 	}
 }
 
+/** Visual transition applied to entering/exiting `data-layout` elements. */
 export type LayoutTransition = 'fade' | 'scale' | 'clip' | 'wipe' | 'none';
 
+/**
+ * Enter/exit transitions for {@link LayoutStep}. Unset options default to
+ * `'fade'`; `'none'` skips the exit animation entirely (removed elements
+ * disappear instantly).
+ */
 export interface LayoutOptions {
+	/** How newly added elements animate in. Defaults to `'fade'`. */
 	enter?: LayoutTransition;
+	/** How removed elements animate out. Defaults to `'fade'`; `'none'` skips it. */
 	exit?: LayoutTransition;
 }
 
@@ -153,6 +176,15 @@ function transitionValue(
 	}
 }
 
+/**
+ * Animates a DOM change with a FLIP transition. On `start()` it snapshots the
+ * bounds of every element tagged `data-layout`, runs `change()` (flushing
+ * Svelte updates), then matches elements across the two states: retained
+ * elements glide between bounds, newly added ones animate in with the `enter`
+ * transition, and removed ones are cloned into fixed-position ghosts appended
+ * to `document.body` that animate out with the `exit` transition (skipped when
+ * `exit` is `'none'`). Ghosts are removed on `end()`/`revert()`.
+ */
 export class LayoutStep implements Step {
 	#state: Record<string, unknown>;
 	#change: () => void;
@@ -339,6 +371,11 @@ export class LayoutStep implements Step {
 	}
 }
 
+/**
+ * Runs several steps concurrently as one step. Duration is the longest
+ * sub-step; each sub-step's progress is scaled by its own duration relative to
+ * the longest, and a sub-step's `end()` fires exactly once when it completes.
+ */
 export class ParallelStep implements Step {
 	#steps: Step[];
 	#done: boolean[] = [];
@@ -383,6 +420,15 @@ export class ParallelStep implements Step {
 	}
 }
 
+/**
+ * Morphs a {@link CodeState} between two source versions. `start()` runs
+ * `build()` and diffs the versions into morph tokens; when the language
+ * changes, all existing tokens are deleted and the target is re-highlighted as
+ * all-new creates. `setProgress` feeds the raw progress through the easing
+ * into `morphProgress` (remapped within the 0.2..0.8 window), and the
+ * resulting morph is committed on `end()`. `revert()` restores the full
+ * pre-step snapshot.
+ */
 export class CodeStep implements Step {
 	#codeState: CodeState;
 	#build: () => { from: string; to: string; resolved: string };
@@ -491,6 +537,11 @@ export class CodeStep implements Step {
 	}
 }
 
+/**
+ * Animates the selection highlight moving to `range`. `start()` swaps the
+ * code state's selection and records the previous one so the opacity lerps
+ * between them; `revert()` restores the original selection.
+ */
 export class SelectionStep implements Step {
 	#codeState: CodeState;
 	#range: CodeRange[];

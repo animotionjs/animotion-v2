@@ -1,9 +1,11 @@
+/** Frame-loop abstraction so animation can run on real time or deterministically during render. */
 export interface FrameScheduler {
 	request(callback: (now: number) => void): number;
 	cancel(id: number): void;
 	now(): number;
 }
 
+/** Schedules frames on `requestAnimationFrame` with `performance.now()` time. */
 export class RealTimeScheduler implements FrameScheduler {
 	request(callback: (now: number) => void): number {
 		return requestAnimationFrame(callback);
@@ -18,6 +20,10 @@ export class RealTimeScheduler implements FrameScheduler {
 	}
 }
 
+/**
+ * Deterministic scheduler driven by {@link tick}; time advances only when
+ * told, making animation reproducible for rendering. Not tied to real time.
+ */
 export class RenderScheduler implements FrameScheduler {
 	#now = 0;
 	#callbacks: Array<{ id: number; cb: (now: number) => void }> = [];
@@ -43,6 +49,9 @@ export class RenderScheduler implements FrameScheduler {
 	 * scheduled during the batch (the normal re-request pattern) populate
 	 * a fresh list for the next tick, and cancellations issued during the
 	 * batch safely no-op against the already-snapshotted list.
+	 *
+	 * @param deltaSeconds - seconds to advance the internal clock by
+	 * @returns number of callbacks pending for the next tick
 	 */
 	tick(deltaSeconds: number): number {
 		this.#now += deltaSeconds * 1000;

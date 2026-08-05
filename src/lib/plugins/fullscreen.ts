@@ -8,6 +8,11 @@ function toggleFullscreen() {
 	}
 }
 
+/**
+ * Toggles fullscreen when the `f` key is pressed (no modifiers other than
+ * Shift). Register via `PluginManager.register` or the `plugins` prop of
+ * `<Scenes>`.
+ */
 export function fullscreenPlugin(): Plugin {
 	return {
 		name: 'fullscreen',

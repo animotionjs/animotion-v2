@@ -53,6 +53,12 @@ const progress: {
 }[] = [];
 let statusTimer: ReturnType<typeof setInterval> | null = null;
 
+/**
+ * Render pipeline: starts a Vite dev server, launches headless Chromium,
+ * probes the page for `window.__sequenceRenderer` to learn the scene list and
+ * render options, then captures each scene with a pool of workers and encodes
+ * the frames to video (unless `--frames-only`).
+ */
 async function main() {
 	if (process.argv.includes('--help') || process.argv.includes('-h')) {
 		console.log(`animotion render [scenes...]
@@ -243,6 +249,11 @@ function printStatus() {
 	}
 }
 
+/**
+ * Worker loop: owns one browser page and captures scenes one at a time,
+ * popping ids off a shared queue. Collects page errors and crashes into
+ * module-level state so the final exit code reflects them.
+ */
 async function runWorker(
 	b: Browser,
 	args: ResolvedArgs,
@@ -297,6 +308,14 @@ async function runWorker(
 	}
 }
 
+/**
+ * Records one scene frame by frame: the enter transition, each step (advanced
+ * via `manager.next()`), then the exit transition (skipped for the last
+ * scene). Frames are produced by driving the render scheduler `1/fps` seconds
+ * at a time until it reports idle; hang guards abort on runaway loops.
+ *
+ * @returns the number of frames written
+ */
 async function captureScene(
 	page: Page,
 	id: string,
@@ -383,6 +402,7 @@ async function captureScene(
 	return frameIndex - 1;
 }
 
+/** Concatenates every scene's frame sequence into a single video with ffmpeg. */
 async function encodeFinalVideo(slugs: string[], args: ResolvedArgs) {
 	const inputs: string[] = [];
 	for (const id of slugs) {
@@ -411,6 +431,7 @@ async function encodeFinalVideo(slugs: string[], args: ResolvedArgs) {
 	if (!args.keepFrames) await cleanupFrames(slugs);
 }
 
+/** Encodes a single scene's frames into its own video file. */
 async function encodeSceneVideo(id: string, args: ResolvedArgs) {
 	await runFfmpeg([
 		'-y',
@@ -470,6 +491,10 @@ function cleanup() {
 	if (server) server.kill();
 }
 
+/**
+ * Takes a PNG screenshot, retrying after a delay on transient failures. Fails
+ * fast if the page has crashed.
+ */
 async function safeScreenshot(page: Page, retries = 3): Promise<Buffer> {
 	if (isCrashed) throw new Error('Page has crashed, aborting');
 	for (let attempt = 0; attempt < retries; attempt++) {
@@ -484,6 +509,7 @@ async function safeScreenshot(page: Page, retries = 3): Promise<Buffer> {
 	throw new Error('unreachable');
 }
 
+/** Parses CLI flags and collects non-flag arguments as scene ids. */
 function parseArgs(argv: string[]): ParsedArgs {
 	const args: ParsedArgs = {
 		scenes: []
@@ -546,6 +572,7 @@ function parseArgs(argv: string[]): ParsedArgs {
 	return args;
 }
 
+/** Polls `url` until it responds OK, or throws once `timeout` ms elapses. */
 async function waitForServer(url: string, timeout = 30000) {
 	const start = Date.now();
 	while (Date.now() - start < timeout) {

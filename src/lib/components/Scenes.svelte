@@ -10,7 +10,14 @@
 	import type { Plugin } from '../plugins/types.js';
 	import Scene from './Scene.svelte';
 
-	let { sequence, plugins = [] }: { sequence: Sequence; plugins?: Plugin[] } = $props();
+	interface Props {
+		/** Ordered scenes to play. */
+		sequence: Sequence;
+		/** Plugins to register. */
+		plugins?: Plugin[];
+	}
+
+	let { sequence, plugins = [] }: Props = $props();
 
 	const manager = new SceneManager();
 	setSceneManager(manager);

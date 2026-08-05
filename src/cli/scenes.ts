@@ -1,5 +1,12 @@
 const PREFIX_PATTERN = /^\d+-/;
 
+/**
+ * Resolves requested scene ids against the full sequence, in request order and
+ * deduplicated. A scene matches by its id or by its id with the numeric prefix
+ * stripped, so `01-intro` and `intro` are equivalent.
+ *
+ * @throws if a requested scene is unknown
+ */
 export function resolveScenes(scenes: string[], all: string[]): string[] {
 	const byId = new Map<string, string>();
 	for (const id of all) byId.set(id, id);
