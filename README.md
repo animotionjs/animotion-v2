@@ -289,7 +289,7 @@ Install `@animotion/core` into your SvelteKit project from a local build:
 
 ```sh
 cd animotion-v2
-pnpm pack                 # produces animotion-core-0.0.1.tgz
+pnpm pack # produces animotion-core-0.0.1.tgz
 ```
 
 ```sh
@@ -304,6 +304,28 @@ sveltekit({
 });
 ```
 
+### Files
+
+Your project has these files; the template provides the boilerplate, you write the scenes:
+
+```txt
+src/
+├── scenes/                    # your scenes
+│   ├── 01-intro.svelte        #   NN-name.svelte, or
+│   └── 02-about/scene.svelte  #   NN-name/scene.svelte
+├── lib/config/
+│   ├── scenes.ts              #   createSequence(import.meta.glob(...))
+│   ├── plugins.ts             #   plugin list (e.g. fullscreenPlugin())
+│   └── configure.ts           #   highlighter, aspect ratio, transition, render
+├── routes/
+│   ├── +layout.svelte         #   imports the theme
+│   └── [[scene]]/+page.svelte #   <Scenes {sequence} {plugins} />
+└── styles/
+    └── theme.css              #   Tailwind theme tokens (bg-background, ...)
+```
+
+### Shell
+
 The presentation shell is a single component, rendered from an optional-scene route:
 
 ```svelte
@@ -316,7 +338,7 @@ The presentation shell is a single component, rendered from an optional-scene ro
 <Scenes {sequence} {plugins} />
 ```
 
-where `sequence` is built from a glob over your scenes:
+`sequence` is built from a glob over your scenes:
 
 ```ts
 import { createSequence } from '@animotion/core';
@@ -326,4 +348,8 @@ export const sequence = createSequence(
 );
 ```
 
-and `plugins` is a list such as `[fullscreenPlugin()]`. `configure({ ... })` sets the highlighter, aspect ratio, default transition, and render defaults. The project boilerplate — routes, config, and the Tailwind theme tokens the shell styles against — ships with the template.
+`plugins` is a list of plugins, such as `[fullscreenPlugin()]`.
+
+`configure({ ... })` sets the highlighter, aspect ratio, default transition, and render defaults.
+
+The project boilerplate — routes, config, and the Tailwind theme tokens the shell styles against — ships with the template.
