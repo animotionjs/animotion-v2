@@ -2,8 +2,8 @@
 	import { createScene } from '#lib/scene';
 
 	const scene = createScene({ order: ['Svelte 5', 'SvelteKit', 'Tailwind 4', 'TypeScript'] })
-		.layout(() => (scene.order = [...scene.order].reverse()), 0.5)
-		.layout(() => (scene.order = [...scene.order].reverse()), 0.5);
+		.layout(() => scene.order.reverse(), 0.5)
+		.layout(() => scene.order.reverse(), 0.5);
 </script>
 
 <ul>
