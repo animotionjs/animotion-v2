@@ -45,6 +45,14 @@ export type { LayoutTransition, LayoutOptions } from './steps.js';
 export { createScene } from './builder.svelte.js';
 export { configure, registerLanguages, highlight, whenReady } from './highlighter.js';
 export type { Token, PositionedToken, MorphToken } from './highlighter.js';
+export { getOptions, setOptions } from './options.js';
+export type {
+	Options,
+	AspectRatio,
+	ResolutionName,
+	RenderOptions,
+	RenderOptionsInput
+} from './options.js';
 export {
 	insert,
 	remove,

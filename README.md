@@ -203,13 +203,26 @@ The `src/lib/config/` directory holds the presentation settings.
 ```ts
 import { configure } from '#lib/scene';
 
-configure({ theme: 'poimandres', languages: ['svelte'] });
+configure({
+	theme: 'poimandres',
+	languages: ['svelte'],
+	aspectRatio: 'video',
+	render: {
+		fps: 60,
+		resolution: '1080p'
+	}
+});
 ```
 
 - `theme` is a shiki `BundledTheme` name (e.g. `'poimandres'`, `'github-dark'`, `'tokyo-night'`).
 - `languages` is a `BundledLanguage[]` of languages to register beyond the defaults (typescript, javascript, html, css, json, markdown).
+- `aspectRatio` is a preset that sets the on-screen slide shape and the default render resolution:
+  - `'video'` — 16:9, 1920×1080 (YouTube, X, presentations; default)
+  - `'vertical'` — 9:16, 1080×1920 (Reels, TikTok, Shorts)
+  - `'square'` — 1:1, 1080×1080 (Instagram feed)
+- `render` sets the default options used by `animotion render`. `resolution` picks a size tier — `'720p'`, `'1080p'`, `'4k'` — scaling the shape so its smaller side matches (e.g. `'4k'` gives 3840×2160 landscape, 2160×3840 vertical, 2160×2160 square). Explicit `width`/`height` override the tier; the remaining options fall back to their defaults.
 
-Both options are typed against shiki's bundles, so editor autocomplete suggests the valid names.
+Both highlighter options are typed against shiki's bundles, so editor autocomplete suggests the valid names.
 
 ### Plugins
 
@@ -230,7 +243,7 @@ export const plugins: Plugin[] = [fullscreenPlugin()];
 animotion render
 ```
 
-The CLI records the presentation into a video using Playwright and ffmpeg. See `animotion render --help` for options.
+The CLI records the presentation into a video using Playwright and ffmpeg. See `animotion render --help` for options. The default `fps`, `width`, `height`, `jobs`, and `out` come from `configure({ render })` in `src/lib/config/configure.ts`; CLI flags override them.
 
 ### Rendering individual scenes
 

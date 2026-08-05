@@ -13,7 +13,19 @@ declare global {
 	}
 }
 
-type RenderArgs = {
+type ParsedArgs = {
+	out?: string;
+	fps?: number;
+	width?: number;
+	height?: number;
+	jobs?: number;
+	framesOnly?: boolean;
+	keepFrames?: boolean;
+	progressBar?: boolean;
+	scenes: string[];
+};
+
+type ResolvedArgs = {
 	out: string;
 	outSet: boolean;
 	fps: number;
@@ -26,7 +38,7 @@ type RenderArgs = {
 	scenes: string[];
 };
 
-const args = parseArgs(process.argv.slice(2));
+const parsedArgs = parseArgs(process.argv.slice(2));
 let server: ChildProcess | null = null;
 let browser: Browser | null = null;
 let isCrashed = false;
@@ -51,14 +63,17 @@ Arguments:
   scenes             scene ids to render individually (default: all scenes)
 
 Options:
-  --out <path>       output video file (default: rendered/video.mp4)
-  --fps <number>     frames per second (default: 60)
-  --width <number>   video width (default: 1920)
-  --height <number>  video height (default: 1080)
-  --jobs <number>    parallel render workers (default: 4)
+  --out <path>       output video file (default: from config render options)
+  --fps <number>     frames per second (default: from config render options)
+  --width <number>   video width (default: from config render options)
+  --height <number>  video height (default: from config render options)
+  --jobs <number>    parallel render workers (default: from config render options)
   --frames-only      save frames without encoding video
   --keep-frames      keep rendered frames after encoding
   --progress-bar     show a progress bar
+
+Defaults are set in configure({ render }) in src/lib/config/configure.ts;
+CLI flags override them.
 
 Examples:
   animotion render
@@ -69,7 +84,6 @@ Examples:
 	}
 
 	const renderStart = performance.now();
-	const renderQs = args.progressBar ? 'render=video&progress=1' : 'render=video';
 	console.log('Starting dev server...');
 	server = spawn(
 		resolve('node_modules/.bin/vite'),
@@ -105,16 +119,32 @@ Examples:
 	});
 
 	const tempPage = await browser.newPage({
-		viewport: { width: args.width, height: args.height },
 		deviceScaleFactor: 1
 	});
 	tempPage.on('crash', () => {
 		isCrashed = true;
 	});
-	await tempPage.goto(`http://127.0.0.1:4173/?${renderQs}`, { waitUntil: 'domcontentloaded' });
+	await tempPage.goto(`http://127.0.0.1:4173/?render=video`, { waitUntil: 'domcontentloaded' });
 	await tempPage.waitForFunction(() => window.__sequenceRenderer !== undefined);
-	const scenes: string[] = await tempPage.evaluate(() => window.__sequenceRenderer!.scenes);
+	const { scenes, renderOptions } = await tempPage.evaluate(() => {
+		const r = window.__sequenceRenderer!;
+		return { scenes: r.scenes, renderOptions: r.renderOptions };
+	});
 	await tempPage.close();
+
+	const args: ResolvedArgs = {
+		out: parsedArgs.out ?? renderOptions.out,
+		outSet: parsedArgs.out !== undefined,
+		fps: parsedArgs.fps ?? renderOptions.fps,
+		width: parsedArgs.width ?? renderOptions.width,
+		height: parsedArgs.height ?? renderOptions.height,
+		jobs: parsedArgs.jobs ?? renderOptions.jobs,
+		framesOnly: parsedArgs.framesOnly ?? renderOptions.framesOnly,
+		keepFrames: parsedArgs.keepFrames ?? renderOptions.keepFrames,
+		progressBar: parsedArgs.progressBar ?? renderOptions.progressBar,
+		scenes: parsedArgs.scenes
+	};
+	const renderQs = args.progressBar ? 'render=video&progress=1' : 'render=video';
 
 	const perScene = args.scenes.length > 0;
 	const targets = perScene ? resolveScenes(args.scenes, scenes) : scenes;
@@ -215,15 +245,15 @@ function printStatus() {
 
 async function runWorker(
 	b: Browser,
-	args: RenderArgs,
+	args: ResolvedArgs,
 	targets: string[],
 	popScene: () => string | null,
 	renderQs: string
 ): Promise<void> {
 	const page = await b.newPage({
-		viewport: { width: args.width, height: args.height },
 		deviceScaleFactor: 1
 	});
+	await page.setViewportSize({ width: args.width, height: args.height });
 
 	page.on('pageerror', (err) => {
 		pageErrors.push(err.message);
@@ -271,7 +301,7 @@ async function captureScene(
 	page: Page,
 	id: string,
 	isLast: boolean,
-	args: RenderArgs,
+	args: ResolvedArgs,
 	sceneIndex: number
 ): Promise<number> {
 	const frameDir = resolve('rendered/frames', id);
@@ -353,7 +383,7 @@ async function captureScene(
 	return frameIndex - 1;
 }
 
-async function encodeFinalVideo(slugs: string[], args: RenderArgs) {
+async function encodeFinalVideo(slugs: string[], args: ResolvedArgs) {
 	const inputs: string[] = [];
 	for (const id of slugs) {
 		inputs.push(
@@ -381,7 +411,7 @@ async function encodeFinalVideo(slugs: string[], args: RenderArgs) {
 	if (!args.keepFrames) await cleanupFrames(slugs);
 }
 
-async function encodeSceneVideo(id: string, args: RenderArgs) {
+async function encodeSceneVideo(id: string, args: ResolvedArgs) {
 	await runFfmpeg([
 		'-y',
 		'-loglevel',
@@ -394,7 +424,7 @@ async function encodeSceneVideo(id: string, args: RenderArgs) {
 	]);
 }
 
-function sceneOutput(id: string, args: RenderArgs): string {
+function sceneOutput(id: string, args: ResolvedArgs): string {
 	if (args.outSet && args.scenes.length === 1) return args.out;
 	return resolve('rendered', `${id}.mp4`);
 }
@@ -454,17 +484,8 @@ async function safeScreenshot(page: Page, retries = 3): Promise<Buffer> {
 	throw new Error('unreachable');
 }
 
-function parseArgs(argv: string[]): RenderArgs {
-	const args: RenderArgs = {
-		out: 'rendered/video.mp4',
-		outSet: false,
-		fps: 60,
-		width: 1920,
-		height: 1080,
-		jobs: 4,
-		framesOnly: false,
-		keepFrames: false,
-		progressBar: false,
+function parseArgs(argv: string[]): ParsedArgs {
+	const args: ParsedArgs = {
 		scenes: []
 	};
 
@@ -472,7 +493,6 @@ function parseArgs(argv: string[]): RenderArgs {
 		switch (argv[i]) {
 			case '--out':
 				args.out = argv[++i];
-				args.outSet = true;
 				break;
 			case '--fps': {
 				const val = parseInt(argv[++i], 10);

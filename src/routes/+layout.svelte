@@ -8,6 +8,7 @@
 	import { SceneManager } from '#lib/scene/runtime.svelte';
 	import { sequence } from '../lib/config/scenes';
 	import { plugins } from '../lib/config/plugins';
+	import { getOptions } from '#lib/scene';
 	import '../styles/theme.css';
 
 	let { children } = $props();
@@ -42,6 +43,7 @@
 			manager,
 			scheduler,
 			scenes: sequence.map((s) => s.id),
+			renderOptions: getOptions().render,
 			navigateTo,
 			advanceFrame: (delta: number) => manager.advanceFrame(delta)
 		};
