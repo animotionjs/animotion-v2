@@ -4,16 +4,14 @@
 	let fill = $state(0);
 	let seconds = $state(0);
 
-	createScene()
-		.slideTransition({ duration: 0.4 })
-		.tick(
-			({ progress, time }) => {
-				fill = progress * 100;
-				seconds = time;
-			},
-			2.4,
-			easeInOut
-		);
+	createScene().tick(
+		({ progress, time }) => {
+			fill = progress * 100;
+			seconds = time;
+		},
+		2.4,
+		easeInOut
+	);
 </script>
 
 <div class="w-full max-w-2xl space-y-10 text-center">

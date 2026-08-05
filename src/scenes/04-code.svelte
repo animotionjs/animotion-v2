@@ -6,7 +6,6 @@
 			console.log('Hello!');
 		}`
 	})
-		.slideTransition({ duration: 0.4 })
 		.codeTo(
 			`function greet() {
 				console.log('Hi!');

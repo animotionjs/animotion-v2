@@ -2,7 +2,6 @@
 	import { createScene, easeInOut } from '#lib/scene';
 
 	const scene = createScene({ opacity: 0, view: 'title' })
-		.slideTransition({ duration: 0.4 })
 		.tween('opacity', 1, 0.6)
 		.layout(() => (scene.view = 'circle'), 0.6, easeInOut, { enter: 'scale' });
 </script>

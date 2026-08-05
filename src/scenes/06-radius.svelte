@@ -22,7 +22,6 @@
 		view: 'code',
 		radius: 3
 	})
-		.slideTransition({ duration: 0.4 })
 		.codeSelection(code.lines(1, 3), 0.4)
 		.codeSelection(code.lines(4), 0.4)
 		.layout(() => (scene.view = 'example'), 0.6)
