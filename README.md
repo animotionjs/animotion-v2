@@ -1,5 +1,3 @@
-> ⚠️ **Work in progress**
-
 # Animotion
 
 A Svelte engine for building animated presentations. A presentation is a sequence of scenes, each written as a Svelte component. Scenes drive their own animation with a scene builder, mixing value tweens, layout changes with FLIP animations, code that morphs between versions, and per-frame ticks.
@@ -300,7 +298,9 @@ pnpm add /path/to/animotion-core-0.0.1.tgz
 
 ```ts
 sveltekit({
-	compilerOptions: { experimental: { async: true } }
+	compilerOptions: {
+		experimental: { async: true }
+	}
 });
 ```
 
