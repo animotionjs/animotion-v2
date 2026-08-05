@@ -13,6 +13,7 @@ import {
 import { getSceneManager, getSceneId } from './context.svelte';
 import { TransitionBuilder, type TransitionBuild } from './runtime.svelte';
 import { easeInOut, type Easing } from './easing';
+import { getOptions, type TransitionConfig } from './options';
 import { registerLanguages } from './highlighter';
 import {
 	setCodeState,
@@ -37,6 +38,7 @@ export interface SceneBuilder<T> {
 	all(fn: (scene: this) => void): this;
 	transitionIn(fn: TransitionBuild): this;
 	transitionOut(fn: TransitionBuild): this;
+	noTransition(): this;
 	slideTransition(opts?: { duration?: number; ease?: Easing; distance?: number }): this;
 	fadeTransition(opts?: { duration?: number; ease?: Easing }): this;
 	zoomTransition(opts?: { duration?: number; ease?: Easing; scale?: number }): this;
@@ -131,12 +133,17 @@ export function createScene<T extends Object>(initial: T = {} as T) {
 		return this;
 	};
 
-	state.transitionIn = function (fn: TransitionBuild) {
-		enterBuild = fn;
+	function applyTransition(enter: TransitionBuild | null, exit: TransitionBuild | null) {
+		if (enter) enterBuild = enter;
+		if (exit) exitBuild = exit;
 		if (enterBuild) {
 			const temp = new TransitionBuilder(manager.transitionState);
 			enterBuild(temp, manager.direction);
 		}
+	}
+
+	state.transitionIn = function (fn: TransitionBuild) {
+		applyTransition(fn, null);
 		return this;
 	};
 
@@ -145,84 +152,39 @@ export function createScene<T extends Object>(initial: T = {} as T) {
 		return this;
 	};
 
+	state.noTransition = function () {
+		enterBuild = null;
+		exitBuild = null;
+		return this;
+	};
+
 	state.slideTransition = function (opts?: {
 		duration?: number;
 		ease?: Easing;
 		distance?: number;
 	}) {
-		const duration = opts?.duration ?? 0.5;
-		const ease = opts?.ease ?? easeInOut;
-		const distance = opts?.distance ?? 100;
-
-		enterBuild = (builder, direction) => {
-			const sign = direction === 'forward' ? 1 : -1;
-			builder.set('x', sign * distance);
-			builder.set('opacity', 0);
-			builder.tween('x', 0, duration, ease);
-			builder.tween('opacity', 1, duration, ease);
-		};
-
-		exitBuild = (builder, direction) => {
-			const sign = direction === 'forward' ? 1 : -1;
-			builder.set('opacity', 1);
-			builder.tween('x', -sign * distance, duration, ease);
-			builder.tween('opacity', 0, duration, ease);
-		};
-
-		if (enterBuild) {
-			const temp = new TransitionBuilder(manager.transitionState);
-			enterBuild(temp, manager.direction);
-		}
-
+		const { enter, exit } = buildSlide(
+			opts?.duration ?? 0.5,
+			opts?.ease ?? easeInOut,
+			opts?.distance ?? 100
+		);
+		applyTransition(enter, exit);
 		return this;
 	};
 
 	state.fadeTransition = function (opts?: { duration?: number; ease?: Easing }) {
-		const duration = opts?.duration ?? 0.5;
-		const ease = opts?.ease ?? easeInOut;
-
-		enterBuild = (builder) => {
-			builder.set('opacity', 0);
-			builder.tween('opacity', 1, duration, ease);
-		};
-
-		exitBuild = (builder) => {
-			builder.set('opacity', 1);
-			builder.tween('opacity', 0, duration, ease);
-		};
-
-		if (enterBuild) {
-			const temp = new TransitionBuilder(manager.transitionState);
-			enterBuild(temp, manager.direction);
-		}
-
+		const { enter, exit } = buildFade(opts?.duration ?? 0.5, opts?.ease ?? easeInOut);
+		applyTransition(enter, exit);
 		return this;
 	};
 
 	state.zoomTransition = function (opts?: { duration?: number; ease?: Easing; scale?: number }) {
-		const duration = opts?.duration ?? 0.5;
-		const ease = opts?.ease ?? easeInOut;
-		const scale = opts?.scale ?? 0.5;
-
-		enterBuild = (builder) => {
-			builder.set('opacity', 0);
-			builder.set('scale', scale);
-			builder.tween('opacity', 1, duration, ease);
-			builder.tween('scale', 1, duration, ease);
-		};
-
-		exitBuild = (builder) => {
-			builder.set('opacity', 1);
-			builder.set('scale', 1);
-			builder.tween('scale', scale, duration, ease);
-			builder.tween('opacity', 0, duration, ease);
-		};
-
-		if (enterBuild) {
-			const temp = new TransitionBuilder(manager.transitionState);
-			enterBuild(temp, manager.direction);
-		}
-
+		const { enter, exit } = buildZoom(
+			opts?.duration ?? 0.5,
+			opts?.ease ?? easeInOut,
+			opts?.scale ?? 0.5
+		);
+		applyTransition(enter, exit);
 		return this;
 	};
 
@@ -425,11 +387,101 @@ export function createScene<T extends Object>(initial: T = {} as T) {
 		return this;
 	};
 
+	const defaultTransition = getOptions().transition;
+	if (defaultTransition) {
+		const { enter, exit } = buildFromConfig(defaultTransition);
+		applyTransition(enter, exit);
+	}
+
 	onMount(() => {
 		manager.load({ steps, enterBuild, exitBuild, id: getSceneId()?.() });
 	});
 
 	return state;
+}
+
+function buildSlide(
+	duration: number,
+	ease: Easing,
+	distance: number
+): {
+	enter: TransitionBuild;
+	exit: TransitionBuild;
+} {
+	return {
+		enter: (builder, direction) => {
+			const sign = direction === 'forward' ? 1 : -1;
+			builder.set('x', sign * distance);
+			builder.set('opacity', 0);
+			builder.tween('x', 0, duration, ease);
+			builder.tween('opacity', 1, duration, ease);
+		},
+		exit: (builder, direction) => {
+			const sign = direction === 'forward' ? 1 : -1;
+			builder.set('opacity', 1);
+			builder.tween('x', -sign * distance, duration, ease);
+			builder.tween('opacity', 0, duration, ease);
+		}
+	};
+}
+
+function buildFade(
+	duration: number,
+	ease: Easing
+): {
+	enter: TransitionBuild;
+	exit: TransitionBuild;
+} {
+	return {
+		enter: (builder) => {
+			builder.set('opacity', 0);
+			builder.tween('opacity', 1, duration, ease);
+		},
+		exit: (builder) => {
+			builder.set('opacity', 1);
+			builder.tween('opacity', 0, duration, ease);
+		}
+	};
+}
+
+function buildZoom(
+	duration: number,
+	ease: Easing,
+	scale: number
+): {
+	enter: TransitionBuild;
+	exit: TransitionBuild;
+} {
+	return {
+		enter: (builder) => {
+			builder.set('opacity', 0);
+			builder.set('scale', scale);
+			builder.tween('opacity', 1, duration, ease);
+			builder.tween('scale', 1, duration, ease);
+		},
+		exit: (builder) => {
+			builder.set('opacity', 1);
+			builder.set('scale', 1);
+			builder.tween('scale', scale, duration, ease);
+			builder.tween('opacity', 0, duration, ease);
+		}
+	};
+}
+
+function buildFromConfig(config: TransitionConfig): {
+	enter: TransitionBuild;
+	exit: TransitionBuild;
+} {
+	const duration = config.duration ?? 0.5;
+	const ease = config.ease ?? easeInOut;
+	switch (config.type) {
+		case 'slide':
+			return buildSlide(duration, ease, config.distance ?? 100);
+		case 'fade':
+			return buildFade(duration, ease);
+		case 'zoom':
+			return buildZoom(duration, ease, config.scale ?? 0.5);
+	}
 }
 
 function rangeToSplice(code: string, range: CodeRange): { start: number; end: number } {

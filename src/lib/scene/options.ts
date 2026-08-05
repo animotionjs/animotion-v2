@@ -1,3 +1,5 @@
+import type { Easing } from './easing.js';
+
 export const ASPECT_RATIOS = {
 	video: { width: 1920, height: 1080 },
 	vertical: { width: 1080, height: 1920 },
@@ -43,9 +45,20 @@ export interface AspectRatioEntry {
 	height: number;
 }
 
+export type TransitionPreset = 'slide' | 'fade' | 'zoom';
+
+export interface TransitionConfig {
+	type: TransitionPreset;
+	duration?: number;
+	ease?: Easing;
+	distance?: number;
+	scale?: number;
+}
+
 export interface Options {
 	aspectRatio: AspectRatioEntry;
 	render: RenderOptions;
+	transition: TransitionConfig | null;
 }
 
 type RenderDefaults = Omit<RenderOptions, 'width' | 'height'>;
@@ -63,10 +76,17 @@ const DEFAULT_ASPECT_RATIO: AspectRatio = 'video';
 
 let aspectRatio: AspectRatio = DEFAULT_ASPECT_RATIO;
 let render: RenderOptionsInput = {};
+let transition: TransitionConfig | null = null;
 
-export function setOptions(input: { aspectRatio?: AspectRatio; render?: RenderOptionsInput }) {
+export function setOptions(input: {
+	aspectRatio?: AspectRatio;
+	render?: RenderOptionsInput;
+	transition?: TransitionConfig | null;
+}) {
 	if (input.aspectRatio) aspectRatio = input.aspectRatio;
 	if (input.render) render = { ...input.render };
+	if (input.transition) transition = input.transition;
+	if (input.transition === null) transition = null;
 }
 
 function resolveResolution(preset: { width: number; height: number }): {
@@ -106,6 +126,7 @@ export function getOptions(): Options {
 
 	return {
 		aspectRatio: { name: aspectRatio, ...preset },
-		render: resolved
+		render: resolved,
+		transition
 	};
 }

@@ -24,7 +24,6 @@ A presentation is an ordered `sequence` of scenes. Each scene is a component tha
 	import { createScene, easeInOut } from '#lib/scene';
 
 	const scene = createScene({ opacity: 0, view: 'title' })
-		.slideTransition({ duration: 0.4 })
 		.tween('opacity', 1, 0.6)
 		.layout(() => (scene.view = 'circle'), 0.6, easeInOut, { enter: 'scale' });
 </script>
@@ -79,6 +78,16 @@ The built-in presets, each accepting `{ duration, ease }`:
 - `slideTransition({ distance = 100 })`: horizontal slide. Direction-aware: when navigating forward the scene enters from the right and exits to the left; backward reverses this.
 - `fadeTransition()`: crossfade.
 - `zoomTransition({ scale = 0.5 })`: scales in/out while fading.
+
+### Default transition
+
+Scenes that don't declare a transition use the default configured in `configure({ transition })` — so you only set a transition on the scenes that differ from the default:
+
+```ts
+configure({ transition: { type: 'slide', duration: 0.4 } });
+```
+
+`transition` takes a preset name or `{ type: 'slide' | 'fade' | 'zoom', duration, ease, distance, scale }`; set it to `null` to disable the default entirely. The default fills in whichever side a scene doesn't define — a scene with only a custom `transitionIn` still gets the default exit, and vice versa. Call `.noTransition()` in a scene to opt out completely.
 
 ### Custom transitions
 
@@ -207,6 +216,7 @@ configure({
 	theme: 'poimandres',
 	languages: ['svelte'],
 	aspectRatio: 'video',
+	transition: { type: 'slide', duration: 0.4 },
 	render: {
 		fps: 60,
 		resolution: '1080p'
@@ -221,6 +231,7 @@ configure({
   - `'vertical'` — 9:16, 1080×1920 (Reels, TikTok, Shorts)
   - `'square'` — 1:1, 1080×1080 (Instagram feed)
 - `render` sets the default options used by `animotion render`. `resolution` picks a size tier — `'720p'`, `'1080p'`, `'4k'` — scaling the shape so its smaller side matches (e.g. `'4k'` gives 3840×2160 landscape, 2160×3840 vertical, 2160×2160 square). Explicit `width`/`height` override the tier; the remaining options fall back to their defaults.
+- `transition` sets the default scene transition: `{ type: 'slide' | 'fade' | 'zoom', duration?, ease?, distance?, scale? }` or `null` to disable. See [Default transition](#default-transition).
 
 Both highlighter options are typed against shiki's bundles, so editor autocomplete suggests the valid names.
 

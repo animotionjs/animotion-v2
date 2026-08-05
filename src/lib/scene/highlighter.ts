@@ -5,7 +5,12 @@ import {
 	type Highlighter
 } from 'shiki';
 import { createJavaScriptRegexEngine } from 'shiki/engine/javascript';
-import { setOptions, type AspectRatio, type RenderOptionsInput } from './options.js';
+import {
+	setOptions,
+	type AspectRatio,
+	type RenderOptionsInput,
+	type TransitionConfig
+} from './options.js';
 
 export const DEFAULT_THEME: BundledTheme = 'poimandres';
 
@@ -65,6 +70,7 @@ export interface ConfigureOptions {
 	languages?: BundledLanguage[];
 	aspectRatio?: AspectRatio;
 	render?: RenderOptionsInput;
+	transition?: TransitionConfig | null;
 }
 
 export function configure(options: ConfigureOptions) {
@@ -80,8 +86,12 @@ export function configure(options: ConfigureOptions) {
 	} else {
 		void loadLanguages();
 	}
-	if (options.aspectRatio || options.render) {
-		setOptions({ aspectRatio: options.aspectRatio, render: options.render });
+	if (options.aspectRatio || options.render || options.transition) {
+		setOptions({
+			aspectRatio: options.aspectRatio,
+			render: options.render,
+			transition: options.transition
+		});
 	}
 }
 

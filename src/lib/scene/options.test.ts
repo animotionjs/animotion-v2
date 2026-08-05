@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { getOptions, setOptions } from './options';
 
 beforeEach(() => {
-	setOptions({ aspectRatio: 'video', render: {} });
+	setOptions({ aspectRatio: 'video', render: {}, transition: null });
 });
 
 describe('options', () => {
@@ -72,5 +72,21 @@ describe('options', () => {
 		expect(options.render.fps).toBe(30);
 		expect(options.render.jobs).toBe(8);
 		expect(options.render.out).toBe('rendered/video.mp4');
+	});
+
+	it('defaults to no transition', () => {
+		expect(getOptions().transition).toBeNull();
+	});
+
+	it('resolves a configured default transition', () => {
+		setOptions({ transition: { type: 'slide', duration: 0.4 } });
+		expect(getOptions().transition).toEqual({ type: 'slide', duration: 0.4 });
+	});
+
+	it('allows disabling the default transition', () => {
+		setOptions({ transition: { type: 'fade' } });
+		expect(getOptions().transition?.type).toBe('fade');
+		setOptions({ transition: null });
+		expect(getOptions().transition).toBeNull();
 	});
 });

@@ -51,7 +51,9 @@ export type {
 	AspectRatio,
 	ResolutionName,
 	RenderOptions,
-	RenderOptionsInput
+	RenderOptionsInput,
+	TransitionConfig,
+	TransitionPreset
 } from './options.js';
 export {
 	insert,
