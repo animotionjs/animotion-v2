@@ -1,6 +1,13 @@
 import { beforeAll, describe, expect, it, vi } from 'vitest';
-import { createCodeState } from '../code/code.svelte';
-import { CodeStep, ParallelStep, TickStep, type Step, type TickFrame } from './steps';
+import { code, createCodeState, type CodeRange, type RangeResolver } from '../code/code.svelte';
+import {
+	CodeStep,
+	ParallelStep,
+	SelectionStep,
+	TickStep,
+	type Step,
+	type TickFrame
+} from './steps';
 import { easeInOut } from '../easing';
 import { whenReady } from '../code/highlighter';
 
@@ -26,6 +33,69 @@ describe('CodeStep morph timing', () => {
 		step.setProgress(0.8);
 		expect(state.rawProgress).toBe(0.8);
 		expect(state.morphProgress).toBeCloseTo(1);
+	});
+});
+
+describe('SelectionStep deferred resolution', () => {
+	const initial = `<script>
+  let count = 0;
+  let double = count * 2;
+</script>`;
+
+	const final = `<script>
+  let count = $state(0);
+  const double = $derived(count * 2);
+</script>
+
+<button onclick={() => count++}>
+  {count} * 2 = {double}
+</button>`;
+
+	type SelectionArg = CodeRange | CodeRange[] | RangeResolver | string | typeof code.DEFAULT;
+
+	function resolveAtPlay(range: SelectionArg) {
+		const state = createCodeState('svelte', initial);
+		state.resolved = final;
+		const step = new SelectionStep(state, range, 0.6);
+		step.start();
+		return state.selection;
+	}
+
+	it('resolves FIRST/LAST/ALL against the code as displayed when the step plays', () => {
+		expect(resolveAtPlay(code.FIRST(/count/g))).toEqual([
+			[
+				[1, 6],
+				[1, 11]
+			]
+		]);
+		expect(resolveAtPlay(code.LAST(/count/g))).toEqual([
+			[
+				[6, 3],
+				[6, 8]
+			]
+		]);
+		expect(resolveAtPlay(code.ALL(/count/g))).toEqual([
+			[
+				[1, 6],
+				[1, 11]
+			],
+			[
+				[2, 26],
+				[2, 31]
+			],
+			[
+				[5, 23],
+				[5, 28]
+			],
+			[
+				[6, 3],
+				[6, 8]
+			]
+		]);
+	});
+
+	it('DEFAULT selects all lines', () => {
+		expect(resolveAtPlay(code.DEFAULT)).toEqual(code.ALL_LINES);
 	});
 });
 

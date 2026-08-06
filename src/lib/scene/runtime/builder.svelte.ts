@@ -21,10 +21,8 @@ import {
 	buildEditTrees,
 	makeCodeTree,
 	resolveSingleRange,
-	resolveRangeArray,
 	smartIndent,
 	DEFAULT,
-	ALL_LINES,
 	type CodeState,
 	type CodeRange,
 	type RangeResolver,
@@ -443,9 +441,7 @@ export function createScene<T extends Object>(initial: T = {} as T) {
 	) {
 		if (!codeState)
 			throw new Error('codeSelection: no code state. Pass initial `code` to createScene().');
-		const resolvedRanges =
-			range === DEFAULT ? ALL_LINES : resolveRangeArray(range, codeState.resolved);
-		steps.push(new SelectionStep(codeState, resolvedRanges, duration));
+		steps.push(new SelectionStep(codeState, range, duration));
 		return this;
 	};
 

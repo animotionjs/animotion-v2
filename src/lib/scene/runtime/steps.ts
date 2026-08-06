@@ -1,5 +1,12 @@
 import { flushSync } from 'svelte';
-import { type CodeRange, type CodeState } from '../code/code.svelte';
+import {
+	ALL_LINES,
+	DEFAULT,
+	resolveRangeArray,
+	type CodeRange,
+	type CodeState,
+	type RangeResolver
+} from '../code/code.svelte';
 import { diffStrings, highlight, type MorphToken, type PositionedToken } from '../code/highlighter';
 import { clamp, clampRemap, easeInOut, lerp, type Easing } from '../easing';
 
@@ -544,11 +551,15 @@ export class CodeStep implements Step {
  */
 export class SelectionStep implements Step {
 	#codeState: CodeState;
-	#range: CodeRange[];
+	#range: CodeRange | CodeRange[] | RangeResolver | string | typeof DEFAULT;
 	#duration: number;
 	#snapshot: { selection: CodeRange[]; selectionProgress: number | null } | null = null;
 
-	constructor(codeState: CodeState, range: CodeRange[], duration: number) {
+	constructor(
+		codeState: CodeState,
+		range: CodeRange | CodeRange[] | RangeResolver | string | typeof DEFAULT,
+		duration: number
+	) {
 		this.#codeState = codeState;
 		this.#range = range;
 		this.#duration = duration;
@@ -563,8 +574,12 @@ export class SelectionStep implements Step {
 			selection: this.#codeState.selection,
 			selectionProgress: this.#codeState.selectionProgress
 		};
+		const resolved =
+			this.#range === DEFAULT
+				? ALL_LINES
+				: resolveRangeArray(this.#range, this.#codeState.resolved);
 		this.#codeState.previousSelection = this.#snapshot.selection;
-		this.#codeState.selection = this.#range;
+		this.#codeState.selection = resolved;
 		this.#codeState.selectionProgress = 0;
 	}
 
