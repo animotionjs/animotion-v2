@@ -164,18 +164,31 @@ function findFirstInCode(code: string, pattern: string | RegExp): CodeRange | nu
 	];
 }
 
+/**
+ * Returns a regex with the global flag so repeated `exec` calls advance
+ * through every match. Strings are escaped and matched literally; a RegExp
+ * is cloned if it lacks the `g` flag (otherwise the exec loop never
+ * terminates).
+ */
+function toGlobalRegex(pattern: string | RegExp): RegExp {
+	if (typeof pattern === 'string') {
+		return new RegExp(escapeRegex(pattern), 'g');
+	}
+	return pattern.global ? pattern : new RegExp(pattern.source, pattern.flags + 'g');
+}
+
 function findAllInCode(code: string, pattern: string | RegExp): CodeRange[] {
+	const regex = toGlobalRegex(pattern);
 	const ranges: CodeRange[] = [];
-	const regex = typeof pattern === 'string' ? new RegExp(escapeRegex(pattern), 'g') : pattern;
-	let m: RegExpExecArray | null;
-	while ((m = regex.exec(code)) !== null) {
-		if (m.index === regex.lastIndex) regex.lastIndex++;
-		const before = code.slice(0, m.index);
+	let match: RegExpExecArray | null;
+	while ((match = regex.exec(code)) !== null) {
+		if (match.index === regex.lastIndex) regex.lastIndex++;
+		const before = code.slice(0, match.index);
 		const startLine = before.split('\n').length - 1;
 		const startCol = before.length - before.lastIndexOf('\n') - 1;
 		ranges.push([
 			[startLine, startCol],
-			[startLine, startCol + m[0].length]
+			[startLine, startCol + match[0].length]
 		]);
 	}
 	return ranges;

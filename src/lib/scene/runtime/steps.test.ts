@@ -1,5 +1,11 @@
 import { beforeAll, describe, expect, it, vi } from 'vitest';
-import { code, createCodeState, type CodeRange, type RangeResolver } from '../code/code.svelte';
+import {
+	code,
+	createCodeState,
+	DEFAULT,
+	type CodeRange,
+	type RangeResolver
+} from '../code/code.svelte';
 import {
 	CodeStep,
 	ParallelStep,
@@ -51,7 +57,7 @@ describe('SelectionStep deferred resolution', () => {
   {count} * 2 = {double}
 </button>`;
 
-	type SelectionArg = CodeRange | CodeRange[] | RangeResolver | string | typeof code.DEFAULT;
+	type SelectionArg = CodeRange | CodeRange[] | RangeResolver | string | typeof DEFAULT;
 
 	function resolveAtPlay(range: SelectionArg) {
 		const state = createCodeState('svelte', initial);
@@ -95,7 +101,7 @@ describe('SelectionStep deferred resolution', () => {
 	});
 
 	it('DEFAULT selects all lines', () => {
-		expect(resolveAtPlay(code.DEFAULT)).toEqual(code.ALL_LINES);
+		expect(resolveAtPlay(DEFAULT)).toEqual(code.ALL_LINES);
 	});
 });
 

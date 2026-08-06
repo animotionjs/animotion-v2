@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
+	ALL,
+	FIRST,
+	LAST,
 	lines,
 	position,
 	range,
@@ -69,6 +72,45 @@ describe('range resolution', () => {
 	it('throws when the pattern is not found', () => {
 		expect(() => resolveSingleRange('nope', code)).toThrow();
 		expect(() => resolveRangeArray('nope', code)).toThrow();
+	});
+
+	it('matches every occurrence with a RegExp lacking the /g flag', () => {
+		const sample = 'let count = 0;\nlet double = count * 2;';
+		expect(ALL(/count/)(sample)).toEqual([
+			[
+				[0, 4],
+				[0, 9]
+			],
+			[
+				[1, 13],
+				[1, 18]
+			]
+		]);
+	});
+
+	it('resolves LAST and FIRST with a RegExp lacking the /g flag', () => {
+		const sample = 'let count = 0;\nlet double = count * 2;';
+		expect(LAST(/count/)(sample)).toEqual([
+			[1, 13],
+			[1, 18]
+		]);
+		expect(FIRST(/count/)(sample)).toEqual([
+			[0, 4],
+			[0, 9]
+		]);
+	});
+
+	it('preserves other RegExp flags', () => {
+		expect(ALL(/COUNT/i)('let Count = 1;\nlet c = Count;')).toEqual([
+			[
+				[0, 4],
+				[0, 9]
+			],
+			[
+				[1, 8],
+				[1, 13]
+			]
+		]);
 	});
 });
 
