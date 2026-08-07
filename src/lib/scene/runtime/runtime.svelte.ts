@@ -100,6 +100,11 @@ export class SceneManager {
 		return this.#totalSteps;
 	}
 
+	/** Whether the current step's animation has fully played. */
+	get stepCompleted(): boolean {
+		return this.#stepCompleted;
+	}
+
 	/** Whether the scene is at its first step with nothing played yet. */
 	get atStart(): boolean {
 		return this.#stepIndex === 0 && !this.#stepCompleted;
@@ -230,31 +235,16 @@ export class SceneManager {
 
 		if (steps.length === 0) {
 			this.#phase = 'finished';
+			this.#emitStepChange();
 		} else {
-			this.#stepIndex = 0;
-			this.#elapsed = 0;
-			this.#stepCompleted = false;
-
-			const target = saved ? (saved.stepCompleted ? saved.stepIndex + 1 : saved.stepIndex) : 0;
-			while (this.#stepIndex < target) {
-				const step = this.#steps[this.#stepIndex];
-				if (!step) break;
-				step.start();
-				step.setProgress(1);
-				step.end();
-				this.#stepIndex++;
-			}
-
-			if (this.#stepIndex >= steps.length) {
-				this.#stepIndex = steps.length - 1;
-				this.#phase = 'finished';
-				this.#stepCompleted = true;
-			} else {
-				this.#enterStep(this.#stepIndex);
-			}
+			const s = saved?.stepIndex ?? 0;
+			const stepCompleted = saved?.stepCompleted ?? false;
+			this.#positionTo(
+				stepCompleted ? s + 1 : s,
+				stepCompleted,
+				stepCompleted && s >= steps.length - 1
+			);
 		}
-
-		this.#emitStepChange();
 
 		if (this.#enterBuild) {
 			this.playEnter();
@@ -277,6 +267,82 @@ export class SceneManager {
 		this.#elapsed = 0;
 		this.#stepCompleted = false;
 		this.#needsStart = false;
+	}
+
+	/**
+	 * Positions the already-loaded scene at the given step without replaying
+	 * the enter transition. `stepCompleted` marks the current step's animation
+	 * as fully played without advancing to the next step; `finished` plays the
+	 * whole scene to completion. Steps above the target are reverted first, so
+	 * the scene regresses correctly. Used by the embedded speaker mirror to
+	 * track the presentation in place.
+	 */
+	seek(stepIndex: number, stepCompleted = false, finished = false) {
+		this.#stopLoop();
+		this.#stopTransitionLoop();
+		this.#currentStep()?.end();
+
+		const steps = this.#steps;
+		this.#totalSteps = steps.length;
+
+		if (steps.length === 0) {
+			this.#phase = 'finished';
+			this.#emitStepChange();
+			this.#resetTransitionState();
+			return;
+		}
+
+		const s = Math.max(0, Math.min(stepIndex, steps.length - 1));
+		const target = finished || stepCompleted ? s + 1 : s;
+
+		// Undo every step that has been started, in reverse, so previously
+		// applied layout side-effects and state are removed before replaying
+		// the position below. This is what lets the scene move backwards.
+		for (let i = this.#stepIndex; i >= 0; i--) {
+			steps[i]?.revert();
+		}
+
+		this.#positionTo(target, stepCompleted, finished);
+		this.#resetTransitionState();
+	}
+
+	/**
+	 * Reproduces a playback position in place: runs steps `0..target-1` to
+	 * completion, then either enters the target step (started, not progressed),
+	 * marks the previous step completed, or finishes the scene. Emits a step
+	 * change afterwards. Shared by {@link load} and {@link seek}.
+	 */
+	#positionTo(target: number, stepCompleted: boolean, finished: boolean) {
+		const steps = this.#steps;
+		this.#stepIndex = 0;
+		this.#elapsed = 0;
+		this.#stepCompleted = false;
+
+		for (let i = 0; i < target; i++) {
+			const step = steps[i];
+			if (!step) break;
+			step.start();
+			step.setProgress(1);
+			step.end();
+		}
+
+		if (steps.length === 0) {
+			this.#phase = 'finished';
+		} else if (finished || target >= steps.length) {
+			this.#stepIndex = steps.length - 1;
+			this.#stepCompleted = true;
+			this.#phase = 'finished';
+		} else if (stepCompleted) {
+			this.#stepIndex = target - 1;
+			this.#stepCompleted = true;
+			this.#phase = 'paused';
+		} else {
+			this.#stepIndex = target;
+			this.#phase = 'paused';
+			this.#enterStep(target);
+		}
+
+		this.#emitStepChange();
 	}
 
 	/** Stops all activity and unloads the current scene. */
@@ -414,6 +480,7 @@ export class SceneManager {
 		if (this.#stepIndex === 0) {
 			this.#stepCompleted = false;
 			this.#phase = 'paused';
+			this.#emitStepChange();
 			return;
 		}
 
@@ -484,10 +551,10 @@ export class SceneManager {
 				this.#rafId = null;
 				if (this.#stepIndex >= this.#steps.length - 1) {
 					this.#phase = 'finished';
-					this.#emitStepChange();
 				} else {
 					this.#phase = 'paused';
 				}
+				this.#emitStepChange();
 				return;
 			}
 

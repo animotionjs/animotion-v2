@@ -3,6 +3,12 @@ import { speakerPlugin } from './speaker';
 import type { SpeakerMessage, SpeakerState } from './channel';
 import type { PluginContext } from '../types';
 
+vi.mock('../../scene/runtime/context.svelte.js', () => ({
+	getSceneManager: vi.fn()
+}));
+
+import { getSceneManager } from '../../scene/runtime/context.svelte.js';
+
 class FakeBroadcastChannel {
 	static instances: FakeBroadcastChannel[] = [];
 	name: string;
@@ -58,6 +64,7 @@ function createContext(): PluginContext {
 		totalScenes: 2,
 		step: 0,
 		totalSteps: 0,
+		stepCompleted: false,
 		finished: false
 	};
 
@@ -220,5 +227,276 @@ describe('speakerPlugin', () => {
 		if (typeof cleanup === 'function') cleanup();
 
 		expect(channel().closed).toBe(true);
+	});
+
+	describe('embed mode', () => {
+		class FakeManager {
+			setStepState = vi.fn();
+			seek = vi.fn();
+		}
+
+		function setupEmbed() {
+			const manager = new FakeManager();
+			vi.mocked(getSceneManager).mockReturnValue(manager as never);
+			const ctx = createContext();
+			const plugin = speakerPlugin({ embed: true });
+			plugin.setup?.(ctx);
+			return { ctx, plugin, manager, channel: channel() };
+		}
+
+		beforeEach(() => {
+			vi.mocked(getSceneManager).mockReset();
+		});
+
+		it('asks the presenter for its current state instead of broadcasting', () => {
+			const { plugin, channel } = setupEmbed();
+
+			expect(channel.posts).toEqual([{ type: 'hello' }]);
+
+			plugin.onSceneChange?.({ id: 'intro', index: 0 });
+			plugin.onStepChange?.(0, 0);
+			expect(channel.posts).toEqual([{ type: 'hello' }]);
+		});
+
+		it('navigates to a broadcast scene and seeds its step', () => {
+			const { ctx, manager, channel } = setupEmbed();
+
+			channel.dispatch({
+				type: 'state',
+				state: {
+					sceneId: 'about',
+					sceneIndex: 1,
+					totalScenes: 2,
+					step: 2,
+					totalSteps: 4,
+					stepCompleted: false,
+					finished: false,
+					aspectRatio: { width: 1920, height: 1080 },
+					scenes: [{ id: 'intro' }, { id: 'about' }]
+				}
+			});
+
+			expect(manager.setStepState).toHaveBeenCalledWith('about', 2, false);
+			expect(ctx.navigateTo).toHaveBeenCalledWith('about');
+		});
+
+		it('seeks in place when the broadcast step changes within the same scene', () => {
+			const { manager, channel } = setupEmbed();
+
+			channel.dispatch({
+				type: 'state',
+				state: {
+					sceneId: 'intro',
+					sceneIndex: 0,
+					totalScenes: 2,
+					step: 1,
+					totalSteps: 4,
+					stepCompleted: false,
+					finished: false,
+					aspectRatio: { width: 1920, height: 1080 },
+					scenes: [{ id: 'intro' }, { id: 'about' }]
+				}
+			});
+
+			expect(manager.seek).toHaveBeenCalledWith(1, false, false);
+			expect(manager.setStepState).not.toHaveBeenCalled();
+		});
+
+		it('seeks to the finished state when the broadcast scene is complete', () => {
+			const { manager, channel } = setupEmbed();
+
+			channel.dispatch({
+				type: 'state',
+				state: {
+					sceneId: 'intro',
+					sceneIndex: 0,
+					totalScenes: 2,
+					step: 3,
+					totalSteps: 4,
+					stepCompleted: false,
+					finished: true,
+					aspectRatio: { width: 1920, height: 1080 },
+					scenes: [{ id: 'intro' }, { id: 'about' }]
+				}
+			});
+
+			expect(manager.seek).toHaveBeenCalledWith(3, false, true);
+		});
+
+		it('seeks in place when the broadcast step completes without advancing', () => {
+			const { manager, channel } = setupEmbed();
+
+			channel.dispatch({
+				type: 'state',
+				state: {
+					sceneId: 'intro',
+					sceneIndex: 0,
+					totalScenes: 2,
+					step: 0,
+					totalSteps: 2,
+					stepCompleted: true,
+					finished: false,
+					aspectRatio: { width: 1920, height: 1080 },
+					scenes: [{ id: 'intro' }, { id: 'about' }]
+				}
+			});
+
+			expect(manager.seek).toHaveBeenCalledWith(0, true, false);
+			expect(manager.setStepState).not.toHaveBeenCalled();
+		});
+
+		it('does not seek again when the broadcast position is unchanged', () => {
+			const { ctx, manager, channel } = setupEmbed();
+
+			channel.dispatch({
+				type: 'state',
+				state: {
+					sceneId: 'intro',
+					sceneIndex: 0,
+					totalScenes: 2,
+					step: 1,
+					totalSteps: 4,
+					stepCompleted: true,
+					finished: false,
+					aspectRatio: { width: 1920, height: 1080 },
+					scenes: [{ id: 'intro' }, { id: 'about' }]
+				}
+			});
+
+			expect(manager.seek).toHaveBeenCalledWith(1, true, false);
+
+			// The mirror keeps its own position in sync after seeking; a
+			// re-broadcast of the same triple must not drive a second seek.
+			Object.assign(ctx.state, { step: 1, stepCompleted: true, finished: false });
+			channel.dispatch({
+				type: 'state',
+				state: {
+					sceneId: 'intro',
+					sceneIndex: 0,
+					totalScenes: 2,
+					step: 1,
+					totalSteps: 4,
+					stepCompleted: true,
+					finished: false,
+					aspectRatio: { width: 1920, height: 1080 },
+					scenes: [{ id: 'intro' }, { id: 'about' }]
+				}
+			});
+
+			expect(manager.seek).toHaveBeenCalledTimes(1);
+		});
+
+		it('ignores next and prev commands', () => {
+			const { ctx, plugin, channel } = setupEmbed();
+
+			channel.dispatch({ type: 'next' });
+			channel.dispatch({ type: 'prev' });
+
+			expect(ctx.next).not.toHaveBeenCalled();
+			expect(ctx.prev).not.toHaveBeenCalled();
+			expect(channel.posts).toEqual([{ type: 'hello' }]);
+
+			plugin.onSceneChange?.({ id: 'intro', index: 0 });
+			plugin.onStepChange?.(0, 0);
+			expect(channel.posts).toEqual([{ type: 'hello' }]);
+		});
+
+		it('ignores goto commands', () => {
+			const { ctx, channel } = setupEmbed();
+
+			channel.dispatch({ type: 'goto', id: 'about' });
+
+			expect(ctx.navigateTo).not.toHaveBeenCalled();
+			expect(channel.posts).toEqual([{ type: 'hello' }]);
+		});
+
+		it('never broadcasts a state reply on hello', () => {
+			const { channel } = setupEmbed();
+
+			channel.dispatch({ type: 'hello' });
+
+			expect(channel.posts).toEqual([{ type: 'hello' }]);
+		});
+
+		it('navigates only once per distinct broadcast scene while in flight', () => {
+			const { ctx, manager, channel } = setupEmbed();
+
+			channel.dispatch({
+				type: 'state',
+				state: {
+					sceneId: 'about',
+					sceneIndex: 1,
+					totalScenes: 2,
+					step: 2,
+					totalSteps: 4,
+					stepCompleted: false,
+					finished: false,
+					aspectRatio: { width: 1920, height: 1080 },
+					scenes: [{ id: 'intro' }, { id: 'about' }]
+				}
+			});
+			// The fake context never commits the navigation, so re-broadcasting
+			// the same target must not trigger a second navigateTo.
+			channel.dispatch({
+				type: 'state',
+				state: {
+					sceneId: 'about',
+					sceneIndex: 1,
+					totalScenes: 2,
+					step: 2,
+					totalSteps: 4,
+					stepCompleted: false,
+					finished: false,
+					aspectRatio: { width: 1920, height: 1080 },
+					scenes: [{ id: 'intro' }, { id: 'about' }]
+				}
+			});
+
+			expect(ctx.navigateTo).toHaveBeenCalledOnce();
+			expect(manager.setStepState).toHaveBeenCalledTimes(1);
+		});
+
+		it('does not open the speaker view from the shortcut', () => {
+			const open = vi.fn();
+			vi.stubGlobal('window', { open });
+			const { plugin } = setupEmbed();
+
+			const event = {
+				key: 's',
+				metaKey: false,
+				ctrlKey: false,
+				altKey: false,
+				repeat: false
+			} as KeyboardEvent;
+			const consumed = plugin.onKeydown?.(event);
+
+			expect(consumed).toBeUndefined();
+			expect(open).not.toHaveBeenCalled();
+		});
+
+		it('forwards arrows to the presenter instead of navigating itself', () => {
+			const { plugin, channel } = setupEmbed();
+			channel.posts.forEach(() => channel.posts.pop());
+
+			const next = plugin.onKeydown?.({
+				key: 'ArrowRight',
+				metaKey: false,
+				ctrlKey: false,
+				altKey: false,
+				repeat: false
+			} as KeyboardEvent);
+			expect(next).toBe(true);
+			expect(channel.posts).toEqual([{ type: 'next' }]);
+
+			const prev = plugin.onKeydown?.({
+				key: 'ArrowLeft',
+				metaKey: false,
+				ctrlKey: false,
+				altKey: false,
+				repeat: false
+			} as KeyboardEvent);
+			expect(prev).toBe(true);
+			expect(channel.posts).toEqual([{ type: 'next' }, { type: 'prev' }]);
+		});
 	});
 });

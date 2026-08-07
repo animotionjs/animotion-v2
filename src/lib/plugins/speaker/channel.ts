@@ -18,6 +18,8 @@ export interface SpeakerState {
 	step: number;
 	/** Total steps in the active scene. */
 	totalSteps: number;
+	/** Whether the current step's animation has fully played. */
+	stepCompleted: boolean;
 	/** Whether the active scene has played all its steps. */
 	finished: boolean;
 	/** Slide aspect ratio, for scaling the previews. */

@@ -26,7 +26,6 @@ export {
 export { TickStep } from './scene/runtime/steps.js';
 export { default as Scene } from './components/Scene.svelte';
 export { default as Scenes } from './components/Scenes.svelte';
-export { default as SlidePreview } from './components/SlidePreview.svelte';
 export {
 	clamp,
 	lerp,

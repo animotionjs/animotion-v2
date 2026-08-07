@@ -89,3 +89,74 @@ describe('SceneManager finished step-change', () => {
 		]);
 	});
 });
+
+describe('SceneManager seek', () => {
+	function loaded() {
+		const manager = new SceneManager();
+		manager.enableRenderMode();
+		const steps = [new SpyStep(), new SpyStep(), new SpyStep()];
+		manager.load({ steps });
+		return { manager, steps };
+	}
+
+	it('positions the loaded scene at a step without animating or replaying the entrance', () => {
+		const { manager } = loaded();
+
+		manager.seek(1);
+
+		expect(manager.step).toBe(1);
+		expect(manager.finished).toBe(false);
+		expect(manager.isAnimating).toBe(false);
+		expect(manager.transitionState.opacity).toBe(1);
+	});
+
+	it('emits a step change and reaches the finished phase on the last step', () => {
+		const { manager } = loaded();
+
+		const changes: Array<{ step: number; total: number }> = [];
+		manager.onStepChange((step, total) => changes.push({ step, total }));
+
+		manager.seek(2, false, true);
+
+		expect(manager.finished).toBe(true);
+		expect(manager.step).toBe(2);
+		expect(changes).toContainEqual({ step: 2, total: 3 });
+	});
+
+	it('marks the current step as completed without advancing the next step', () => {
+		const { manager } = loaded();
+
+		manager.seek(1, true, false);
+
+		expect(manager.step).toBe(1);
+		expect(manager.stepCompleted).toBe(true);
+		expect(manager.finished).toBe(false);
+		expect(manager.isAnimating).toBe(false);
+	});
+
+	it('leaves the manager at the start when seeking step 0', () => {
+		const { manager } = loaded();
+
+		manager.seek(0);
+
+		expect(manager.step).toBe(0);
+		expect(manager.finished).toBe(false);
+	});
+
+	it('reverts steps in reverse when seeking backwards', () => {
+		const { manager, steps } = loaded();
+
+		manager.seek(2, false, true);
+		const revertsAfterFinish = steps.map((s) => s.reverts);
+
+		manager.seek(0);
+
+		expect(manager.step).toBe(0);
+		expect(manager.finished).toBe(false);
+		expect(steps.map((s) => s.reverts)).toEqual([
+			revertsAfterFinish[0] + 1,
+			revertsAfterFinish[1] + 1,
+			revertsAfterFinish[2] + 1
+		]);
+	});
+});

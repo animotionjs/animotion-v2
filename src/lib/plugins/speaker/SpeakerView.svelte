@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
+	import { resolve } from '$app/paths';
 
-	import { SlidePreview } from '#lib';
 	import { SPEAKER_CHANNEL, SpeakerChannel } from './channel';
 
 	import type { Snippet } from 'svelte';
@@ -9,7 +9,7 @@
 	import type { SpeakerMessage, SpeakerState } from './channel';
 
 	interface Props {
-		/** The presentation sequence, for rendering slide previews. */
+		/** The presentation sequence, for loading scene notes. */
 		sequence: Sequence;
 		/** The `BroadcastChannel` name shared with the presentation window. */
 		channel?: string;
@@ -26,16 +26,11 @@
 	const ratio = $derived(
 		presentation ? presentation.aspectRatio.width / presentation.aspectRatio.height : 16 / 9
 	);
-	const nextId = $derived.by(() => {
-		if (!presentation) return null;
-		const next = presentation.sceneIndex + 1;
-		return next < presentation.scenes.length ? presentation.scenes[next].id : null;
-	});
-	let sceneModules = $state<Record<string, { notes?: Snippet }>>({});
-	const notes = $derived.by(() => {
-		const candidate = sceneModules[presentation?.sceneId ?? '']?.notes;
-		return typeof candidate === 'function' ? (candidate as Snippet) : undefined;
-	});
+	// Notes are static per-scene snippets read by importing the scene module,
+	// so they work across windows without mounting the scene in the speaker.
+	let sceneNotes = $state<Record<string, Snippet>>({});
+	const notes = $derived(presentation ? sceneNotes[presentation.sceneId] : undefined);
+	const mirrorSrc = $derived(`${resolve('/')}?embed=1&channel=${encodeURIComponent(channelName)}`);
 
 	function send(message: SpeakerMessage) {
 		channel?.post(message);
@@ -61,11 +56,10 @@
 			sequence.map(async (scene) => [scene.id, await scene.component()] as const)
 		).then((modules) => {
 			if (cancelled) return;
-			sceneModules = Object.fromEntries(
-				modules.map(([id, module]) => [
-					id,
-					{ notes: typeof module.notes === 'function' ? module.notes : undefined }
-				])
+			sceneNotes = Object.fromEntries(
+				modules
+					.filter(([, module]) => typeof module.notes === 'function')
+					.map(([id, module]) => [id, module.notes as Snippet])
 			);
 		});
 		if ('BroadcastChannel' in window) {
@@ -151,27 +145,13 @@
 			<div class="flex min-w-0 flex-1 flex-col gap-5">
 				<div class="stage min-h-0 flex-1" style:--ratio={ratio}>
 					<div class="fit">
-						{#key `${presentation.sceneId}:${presentation.step}:${presentation.finished}`}
-							<SlidePreview
-								id={presentation.sceneId}
-								step={presentation.step}
-								finished={presentation.finished}
-								{sequence}
-							/>
-						{/key}
+						<iframe
+							class="h-full w-full border-0 bg-background"
+							title="Presentation mirror"
+							src={mirrorSrc}
+						></iframe>
 					</div>
 				</div>
-
-				{#if nextId}
-					<div class="flex items-center justify-center gap-3 pb-1">
-						<span class="text-sm font-medium text-gray-500">Next: {nextId}</span>
-						<div class="w-72">
-							{#key nextId}
-								<SlidePreview id={nextId} step={0} finished={false} {sequence} />
-							{/key}
-						</div>
-					</div>
-				{/if}
 			</div>
 
 			<aside
@@ -184,7 +164,7 @@
 					class="min-h-0 flex-1 overflow-y-auto px-5 py-4 text-lg leading-relaxed whitespace-pre-wrap"
 				>
 					{#if notes}
-						{@render notes?.()}
+						{@render notes()}
 					{:else}
 						<span class="text-gray-500">No notes for this scene.</span>
 					{/if}

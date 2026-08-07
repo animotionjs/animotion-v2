@@ -44,6 +44,7 @@
 			totalScenes: sequence.length,
 			step: manager.step,
 			totalSteps: manager.totalSteps,
+			stepCompleted: manager.stepCompleted,
 			finished: manager.finished
 		}))
 	);
@@ -53,6 +54,7 @@
 	const syncStep = manager.onStepChange((step, total) => {
 		state.step = step;
 		state.totalSteps = total;
+		state.stepCompleted = manager.stepCompleted;
 		state.finished = manager.finished;
 	});
 

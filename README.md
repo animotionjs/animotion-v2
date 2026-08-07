@@ -266,7 +266,7 @@ export const plugin: Plugin = {
 
 `fullscreenPlugin()` toggles fullscreen with the `f` key.
 
-`speakerPlugin()` opens a speaker view — press `s` (or call `openSpeakerView()`) to pop out a window showing live previews of the current and next scene, the current scene's notes, a timer, a clickable scene outline, and next/prev controls that drive the presentation. Notes live in each scene as a `<script module>` export:
+`speakerPlugin()` opens a speaker view — press `s` (or call `openSpeakerView()`) to pop out a window showing a live mirror of the presentation in an iframe, the current scene's notes, a timer, a clickable scene outline, and next/prev controls that drive the presentation. Because the mirror runs the real presentation (registered with the plugin in receiver mode), stepping through a scene advances in place without replaying the entrance transition. Notes live in each scene as a `<script module>` export:
 
 ```svelte
 <script module lang="ts">
@@ -278,7 +278,7 @@ export const plugin: Plugin = {
 {/snippet}
 ```
 
-The speaker view loads and renders each scene's exported `notes` snippet locally, so notes can contain styled markup. It is served from the `/speaker` route. To support custom channels, read the optional `channel` query parameter from page state and pass it to `SpeakerView`:
+The speaker view loads and renders each scene's exported `notes` snippet locally (without mounting the scene), so notes can contain styled markup. It is served from the `/speaker` route. To support custom channels, read the optional `channel` query parameter from page state and pass it to `SpeakerView`:
 
 ```svelte
 <script lang="ts">
