@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
+	import { onDestroy, onMount, untrack } from 'svelte';
 	import { afterNavigate, goto } from '$app/navigation';
 	import { page } from '$app/state';
 	import { SceneManager } from '../scene/runtime/runtime.svelte.js';
@@ -7,7 +7,7 @@
 	import { getOptions } from '../scene/index.js';
 	import type { Sequence } from '../scene/runtime/sequence.js';
 	import { PluginManager } from '../plugins/manager.svelte.js';
-	import type { Plugin } from '../plugins/types.js';
+	import type { Plugin, PresentationState } from '../plugins/types.js';
 	import Scene from './Scene.svelte';
 
 	interface Props {
@@ -34,6 +34,28 @@
 		page.url.searchParams.get('render') !== 'video' || page.url.searchParams.get('progress') === '1'
 	);
 
+	// Reactive snapshot of the presentation, exposed to plugins via `ctx.state`.
+	// The scene fields capture the initial values once; navigation and step
+	// changes update the snapshot below.
+	const state = $state<PresentationState>(
+		untrack(() => ({
+			sceneId: id,
+			sceneIndex: index,
+			totalScenes: sequence.length,
+			step: manager.step,
+			totalSteps: manager.totalSteps,
+			finished: manager.finished
+		}))
+	);
+
+	// Subscribed here (before the scene child mounts) so the first scene's
+	// `manager.load` step change is captured.
+	const syncStep = manager.onStepChange((step, total) => {
+		state.step = step;
+		state.totalSteps = total;
+		state.finished = manager.finished;
+	});
+
 	const pluginManager = createPluginManager();
 
 	onMount(() => {
@@ -41,7 +63,11 @@
 		return () => pluginManager.cleanup();
 	});
 
+	onDestroy(syncStep);
+
 	afterNavigate(() => {
+		state.sceneId = id;
+		state.sceneIndex = index;
 		pluginManager.emitSceneChange({ id, index });
 	});
 
@@ -50,7 +76,10 @@
 	}
 
 	function createPluginManager() {
-		const pluginManager = new PluginManager({ manager, sequence, navigateTo, next, prev });
+		const pluginManager = new PluginManager(
+			{ state, sequence, navigateTo, next, prev },
+			manager.onStepChange.bind(manager)
+		);
 		for (const plugin of plugins) pluginManager.register(plugin);
 		return pluginManager;
 	}

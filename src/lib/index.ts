@@ -73,7 +73,12 @@ export {
 export type { Direction, TransitionBuild } from './scene/runtime/runtime.svelte.js';
 export type { SceneEntry, Sequence } from './scene/runtime/sequence.js';
 export type { TickFrame } from './scene/runtime/steps.js';
-export type { Plugin, PluginContext } from './plugins/index.js';
+export type {
+	Plugin,
+	PluginContext,
+	PresentationState,
+	StepChangeSubscribe
+} from './plugins/index.js';
 export type { RenderBridge } from './scene/runtime/render-bridge.js';
 export type { Token, PositionedToken, MorphToken } from './scene/code/highlighter.js';
 export type {
