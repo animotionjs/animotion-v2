@@ -238,12 +238,61 @@ Both highlighter options are typed against shiki's bundles, so editor autocomple
 `src/lib/config/plugins.ts` registers plugins that hook into the presentation shell:
 
 ```ts
-import { fullscreenPlugin, type Plugin } from '@animotion/core';
+import { fullscreenPlugin, speakerPlugin, type Plugin } from '@animotion/core';
 
-export const plugins: Plugin[] = [fullscreenPlugin()];
+export const plugins: Plugin[] = [fullscreenPlugin(), speakerPlugin()];
+```
+
+A plugin is an object with a `name` and optional hooks:
+
+- `setup(ctx)` — runs when the presentation mounts; `ctx.state` is a read-only view of the current scene and step (`sceneId`, `sceneIndex`, `totalScenes`, `step`, `totalSteps`, `finished`), so plugins can read where the deck started, not just what changed. It may return a cleanup function.
+- `onSceneChange({ id, index })` / `onStepChange(step, total)` — run as the presentation plays.
+- `onKeydown(event)` — runs on every keydown; returning `true` consumes the key.
+
+For example, a plugin that installs a listener can keep setup and cleanup together:
+
+```ts
+export const plugin: Plugin = {
+	name: 'analytics',
+	setup(ctx) {
+		const onKeydown = (event: KeyboardEvent) => {
+			console.log(ctx.state.sceneId, event.key);
+		};
+		window.addEventListener('keydown', onKeydown);
+		return () => window.removeEventListener('keydown', onKeydown);
+	}
+};
 ```
 
 `fullscreenPlugin()` toggles fullscreen with the `f` key.
+
+`speakerPlugin()` opens a speaker view — press `s` (or call `openSpeakerView()`) to pop out a window showing live previews of the current and next scene, the current scene's notes, a timer, a clickable scene outline, and next/prev controls that drive the presentation. Notes live in each scene as a `<script module>` export:
+
+```svelte
+<script module lang="ts">
+	export { notes };
+</script>
+
+{#snippet notes()}
+	<p>What I say when this slide is on screen.</p>
+{/snippet}
+```
+
+The speaker view loads and renders each scene's exported `notes` snippet locally, so notes can contain styled markup. It is served from the `/speaker` route. To support custom channels, read the optional `channel` query parameter from page state and pass it to `SpeakerView`:
+
+```svelte
+<script lang="ts">
+	import { page } from '$app/state';
+	import { SpeakerView } from '#lib/plugins';
+	import { sequence } from '#lib/config/scenes';
+
+	const channel = $derived(page.url.searchParams.get('channel') ?? undefined);
+</script>
+
+<SpeakerView {sequence} {channel} />
+```
+
+For example, `/speaker?channel=demo` connects the speaker view to the `demo` channel.
 
 ## Rendering a video
 

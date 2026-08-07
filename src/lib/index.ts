@@ -2,7 +2,21 @@ export { createSequence } from './scene/runtime/sequence.js';
 export { configure, registerLanguages, highlight, whenReady } from './scene/code/highlighter.js';
 export { getOptions, setOptions } from './scene/options.js';
 export { TransitionBuilder, SceneManager } from './scene/runtime/runtime.svelte.js';
-export { PluginManager, fullscreenPlugin } from './plugins/index.js';
+export {
+	PluginManager,
+	fullscreenPlugin,
+	speakerPlugin,
+	openSpeakerView,
+	SPEAKER_CHANNEL
+} from './plugins/index.js';
+export { default as SpeakerView } from './plugins/speaker/SpeakerView.svelte';
+export type { SpeakerPluginOptions } from './plugins/index.js';
+export type {
+	SpeakerState,
+	SpeakerScene,
+	SpeakerMessage,
+	SpeakerCommand
+} from './plugins/index.js';
 export {
 	getSceneManager,
 	setSceneManager,
@@ -12,6 +26,7 @@ export {
 export { TickStep } from './scene/runtime/steps.js';
 export { default as Scene } from './components/Scene.svelte';
 export { default as Scenes } from './components/Scenes.svelte';
+export { default as SlidePreview } from './components/SlidePreview.svelte';
 export {
 	clamp,
 	lerp,

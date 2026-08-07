@@ -1,5 +1,9 @@
+<script module lang="ts">
+	export { notes };
+</script>
+
 <script lang="ts">
-	import { code, Code, createScene } from '#lib/scene';
+	import { createScene, Code, code } from '#lib/scene';
 
 	const SCALE = 60;
 	const MAX = 4;
@@ -35,6 +39,11 @@
 		})
 		.codeSelection();
 </script>
+
+{#snippet notes()}
+	A scene can mix code morphing with a layout transition and a value tween, all stepped together.
+	The circle radius tweens while the code highlights jump to the matching lines.
+{/snippet}
 
 <div class="flex items-center gap-24">
 	<div data-layout="code">

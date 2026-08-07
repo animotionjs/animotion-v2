@@ -189,6 +189,15 @@ export class SceneManager {
 		});
 	}
 
+	/**
+	 * Stores a step position under `id` without playing it. The next
+	 * {@link load} for `id` fast-forwards the scene to that position. Used by
+	 * the speaker view to render a scene at a specific step.
+	 */
+	setStepState(id: string, stepIndex: number, stepCompleted: boolean) {
+		this.#savedStates.set(id, { stepIndex, stepCompleted });
+	}
+
 	/** Whether a state was saved for `id`. */
 	hasSavedState(id: string): boolean {
 		return this.#savedStates.has(id);
@@ -475,6 +484,7 @@ export class SceneManager {
 				this.#rafId = null;
 				if (this.#stepIndex >= this.#steps.length - 1) {
 					this.#phase = 'finished';
+					this.#emitStepChange();
 				} else {
 					this.#phase = 'paused';
 				}

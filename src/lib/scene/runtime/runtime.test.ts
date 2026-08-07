@@ -65,3 +65,27 @@ describe('SceneManager resume after prev', () => {
 		expect(step.starts).toBe(2);
 	});
 });
+
+describe('SceneManager finished step-change', () => {
+	it('emits a step change when the final step finishes', () => {
+		const manager = new SceneManager();
+		manager.enableRenderMode();
+
+		const changes: Array<{ step: number; total: number }> = [];
+		manager.onStepChange((step, total) => changes.push({ step, total }));
+
+		manager.load({ steps: [new SpyStep()] });
+
+		manager.next();
+		let guard = 0;
+		while (!manager.finished && guard++ < 100) {
+			manager.advanceFrame(0.1);
+		}
+
+		expect(manager.finished).toBe(true);
+		expect(changes).toEqual([
+			{ step: 0, total: 1 },
+			{ step: 0, total: 1 }
+		]);
+	});
+});

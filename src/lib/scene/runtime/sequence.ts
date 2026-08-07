@@ -1,4 +1,4 @@
-import type { Component } from 'svelte';
+import type { Component, Snippet } from 'svelte';
 
 /** One scene in the presentation: its `id` and position in the `sequence`. */
 export interface SceneEntry {
@@ -7,14 +7,14 @@ export interface SceneEntry {
 	/** Sort position, from the numeric prefix of the scene name. */
 	order: number;
 	/** Lazily imports the scene component on first visit. */
-	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- a scene may be any component
-	component: () => Promise<{ default: Component<any> }>;
+	component: () => Promise<{ default: Component; notes?: Snippet }>;
 }
+
+/** A scene module as resolved by {@link createSequence}. */
+type SceneModule = { default: Component; notes?: Snippet };
 
 /** Ordered list of scenes, sorted by `order`. */
 export type Sequence = SceneEntry[];
-
-type SceneModule = { default: Component };
 
 const NAME_PATTERN = /^(\d+)-(.+)$/;
 
