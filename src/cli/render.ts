@@ -31,6 +31,7 @@ type ParsedArgs = {
 	gpu?: boolean;
 	bench?: boolean;
 	slices?: number;
+	separate?: boolean;
 	scenes: string[];
 };
 
@@ -49,6 +50,7 @@ type ResolvedArgs = {
 	gpu: boolean;
 	bench: boolean;
 	slices: number;
+	separate: boolean;
 	scenes: string[];
 };
 
@@ -123,6 +125,8 @@ Options:
                      fresh tab. Streaming mode only; ignored with
                      --frames-only / --keep-frames / --bench
   --bench            measure per-frame capture cost (png vs jpeg) without rendering
+  --separate         write one video per scene (rendered/<id>.mp4) instead of one
+                     combined video
   --frames-only      save frames without encoding video
   --keep-frames      keep rendered frames after encoding (forces file capture)
   --progress-bar     show a progress bar
@@ -221,6 +225,7 @@ Examples:
 		gpu: gpuActive,
 		bench: parsedArgs.bench ?? false,
 		slices: parsedArgs.slices ?? 1,
+		separate: parsedArgs.separate ?? false,
 		scenes: parsedArgs.scenes
 	};
 	const renderQs = args.progressBar ? 'render=video&progress=1' : 'render=video';
@@ -230,6 +235,13 @@ Examples:
 
 	if (perScene && args.outSet && targets.length > 1) {
 		console.error('--out can only be used when rendering a single scene');
+		process.exit(1);
+	}
+
+	if (args.separate && args.outSet) {
+		console.error(
+			'--out cannot be combined with --separate (each scene gets its own rendered/<id>.mp4)'
+		);
 		process.exit(1);
 	}
 
@@ -431,6 +443,10 @@ Examples:
 				for (const id of targets) {
 					console.log(`Done. Output: ${resolve(sceneOutput(id, args))}`);
 				}
+			} else if (args.separate) {
+				for (const id of targets) {
+					console.log(`Done. Output: ${resolve('rendered', `${id}.mp4`)}`);
+				}
 			} else {
 				console.log('Encoding final video...');
 				await concatSceneVideos(targets, args.out);
@@ -439,21 +455,8 @@ Examples:
 		} else {
 			await mkdir(resolve(dirname(args.out)), { recursive: true });
 
-			if (perScene) {
-				for (const id of targets) {
-					console.log(`Encoding ${id}...`);
-					const sceneStart = performance.now();
-					await encodeSceneVideo(id, args);
-					console.log(
-						`Done. Output: ${resolve(sceneOutput(id, args))} (${((performance.now() - sceneStart) / 1000).toFixed(2)}s)`
-					);
-				}
-				if (!args.keepFrames) {
-					for (const id of targets) {
-						await rm(resolve('rendered/frames', id), { recursive: true, force: true });
-					}
-					await rm(resolve('rendered', 'frames'), { recursive: true, force: true });
-				}
+			if (perScene || args.separate) {
+				await encodeEachScene(targets, args);
 			} else {
 				console.log('Encoding final video...');
 				await encodeFinalVideo(scenes, args);
@@ -824,6 +827,24 @@ async function encodeSceneVideo(id: string, args: ResolvedArgs) {
 	]);
 }
 
+/** Encodes each scene's captured frames into its own video file, then cleans up the frame files. */
+async function encodeEachScene(ids: string[], args: ResolvedArgs) {
+	for (const id of ids) {
+		console.log(`Encoding ${id}...`);
+		const sceneStart = performance.now();
+		await encodeSceneVideo(id, args);
+		console.log(
+			`Done. Output: ${resolve(sceneOutput(id, args))} (${((performance.now() - sceneStart) / 1000).toFixed(2)}s)`
+		);
+	}
+	if (!args.keepFrames) {
+		for (const id of ids) {
+			await rm(resolve('rendered/frames', id), { recursive: true, force: true });
+		}
+		await rm(resolve('rendered', 'frames'), { recursive: true, force: true });
+	}
+}
+
 /**
  * Stitches per-scene videos (encoded during capture) into a single video.
  * All scenes share identical encoder settings, so the streams are copied.
@@ -1164,6 +1185,9 @@ function parseArgs(argv: string[]): ParsedArgs {
 				break;
 			case '--bench':
 				args.bench = true;
+				break;
+			case '--separate':
+				args.separate = true;
 				break;
 			case '--png':
 				args.format = 'png';

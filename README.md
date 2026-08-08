@@ -268,7 +268,7 @@ animotion render first # renders the first scene
 animotion render 01-first 02-second # renders individual scenes
 ```
 
-Scenes are matched by their id (the filename without the number prefix and `.svelte`), so `01-intro` and `intro` are equivalent. Use `--out` to name the output when rendering a single scene, e.g. `animotion render intro --out rendered/intro.mp4`.
+Scenes are matched by their id (the filename without the number prefix and `.svelte`), so `01-intro` and `intro` are equivalent. Use `--out` to name the output when rendering a single scene, e.g. `animotion render intro --out rendered/intro.mp4`. To write the whole presentation as one video per scene instead of a single combined video, pass `--separate` — each scene is written to `rendered/<id>.mp4`.
 
 ## Styling
 
