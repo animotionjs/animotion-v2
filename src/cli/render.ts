@@ -1,11 +1,13 @@
 #!/usr/bin/env node
 import { spawn, type ChildProcess, type ChildProcessWithoutNullStreams } from 'node:child_process';
+import { once } from 'node:events';
 import { mkdir, rm, writeFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import ffmpeg from 'ffmpeg-static';
 import { chromium, type Browser, type Page } from 'playwright';
 import { resolveScenes } from './scenes.ts';
 import type { RenderBridge } from '../lib/scene/runtime/render-bridge.js';
+import type { FrameFormat } from '../lib/scene/options.js';
 
 declare global {
 	interface Window {
@@ -22,6 +24,11 @@ type ParsedArgs = {
 	framesOnly?: boolean;
 	keepFrames?: boolean;
 	progressBar?: boolean;
+	format?: FrameFormat;
+	jpegQuality?: number;
+	preview?: boolean;
+	gpu?: boolean;
+	bench?: boolean;
 	scenes: string[];
 };
 
@@ -35,7 +42,18 @@ type ResolvedArgs = {
 	framesOnly: boolean;
 	keepFrames: boolean;
 	progressBar: boolean;
+	format: FrameFormat;
+	jpegQuality: number;
+	gpu: boolean;
+	bench: boolean;
 	scenes: string[];
+};
+
+/** Destination for captured frames: ffmpeg stdin (streaming) or disk files. */
+type FrameSink = {
+	write(buf: Buffer): Promise<void>;
+	close(): Promise<void>;
+	abort?(): void;
 };
 
 const parsedArgs = parseArgs(process.argv.slice(2));
@@ -74,9 +92,19 @@ Options:
   --width <number>   video width (default: from config render options)
   --height <number>  video height (default: from config render options)
   --jobs <number>    parallel render workers (default: from config render options)
+  --jpeg [quality]   capture frames as JPEG at the given quality (default 95)
+                     instead of lossless PNG for faster rendering
+  --png              force lossless PNG capture (default; use with --jpeg to
+                     switch back in a preview render)
+  --preview          fast draft render: half resolution, 30 fps, JPEG capture
+  --gpu              prefer hardware acceleration (auto-falls back to software)
+  --bench            measure per-frame capture cost (png vs jpeg) without rendering
   --frames-only      save frames without encoding video
-  --keep-frames      keep rendered frames after encoding
+  --keep-frames      keep rendered frames after encoding (forces file capture)
   --progress-bar     show a progress bar
+
+By default frames are streamed straight into ffmpeg while they are captured.
+Pass --frames-only or --keep-frames to write frames to rendered/frames/ instead.
 
 Defaults are set in configure({ render }) in src/lib/config/configure.ts;
 CLI flags override them.
@@ -119,35 +147,55 @@ Examples:
 	console.log('Dev server ready on http://127.0.0.1:4173');
 
 	console.log('Launching browser...');
-	browser = await chromium.launch({
-		headless: true,
-		args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu']
-	});
+	let gpuActive = parsedArgs.gpu === true;
+	browser = await launchBrowser(gpuActive);
 
-	const tempPage = await browser.newPage({
-		deviceScaleFactor: 1
-	});
-	tempPage.on('crash', () => {
-		isCrashed = true;
-	});
-	await tempPage.goto(`http://127.0.0.1:4173/?render=video`, { waitUntil: 'domcontentloaded' });
-	await tempPage.waitForFunction(() => window.__sequenceRenderer !== undefined);
-	const { scenes, renderOptions } = await tempPage.evaluate(() => {
-		const r = window.__sequenceRenderer!;
-		return { scenes: r.scenes, renderOptions: r.renderOptions };
-	});
-	await tempPage.close();
+	async function acquireProbe() {
+		const tempPage = await browser!.newPage({
+			deviceScaleFactor: 1
+		});
+		tempPage.on('crash', () => {
+			isCrashed = true;
+		});
+		await tempPage.goto(`http://127.0.0.1:4173/?render=video`, { waitUntil: 'domcontentloaded' });
+		await tempPage.waitForFunction(() => window.__sequenceRenderer !== undefined);
+		const probe = await tempPage.evaluate(() => {
+			const r = window.__sequenceRenderer!;
+			return { scenes: r.scenes, renderOptions: r.renderOptions };
+		});
+		const gpuHealthy = gpuActive ? await checkGpuHealth(tempPage) : true;
+		await tempPage.close();
+		return { ...probe, gpuHealthy };
+	}
+
+	let probe = await acquireProbe();
+	if (gpuActive && !probe.gpuHealthy) {
+		console.warn('GPU acceleration appears unavailable, falling back to software rendering.');
+		await browser.close();
+		gpuActive = false;
+		browser = await launchBrowser(false);
+		probe = await acquireProbe();
+	}
+	const { scenes, renderOptions } = probe;
 
 	const args: ResolvedArgs = {
 		out: parsedArgs.out ?? renderOptions.out,
 		outSet: parsedArgs.out !== undefined,
-		fps: parsedArgs.fps ?? renderOptions.fps,
-		width: parsedArgs.width ?? renderOptions.width,
-		height: parsedArgs.height ?? renderOptions.height,
+		fps: parsedArgs.fps ?? (parsedArgs.preview ? 30 : renderOptions.fps),
+		width:
+			parsedArgs.width ??
+			(parsedArgs.preview ? previewDim(renderOptions.width) : renderOptions.width),
+		height:
+			parsedArgs.height ??
+			(parsedArgs.preview ? previewDim(renderOptions.height) : renderOptions.height),
 		jobs: parsedArgs.jobs ?? renderOptions.jobs,
 		framesOnly: parsedArgs.framesOnly ?? renderOptions.framesOnly,
 		keepFrames: parsedArgs.keepFrames ?? renderOptions.keepFrames,
 		progressBar: parsedArgs.progressBar ?? renderOptions.progressBar,
+		format: parsedArgs.format ?? (parsedArgs.preview ? 'jpeg' : renderOptions.format),
+		jpegQuality: parsedArgs.jpegQuality ?? renderOptions.jpegQuality,
+		gpu: gpuActive,
+		bench: parsedArgs.bench ?? false,
 		scenes: parsedArgs.scenes
 	};
 	const renderQs = args.progressBar ? 'render=video&progress=1' : 'render=video';
@@ -199,33 +247,54 @@ Examples:
 
 	const totalFrames = sceneStats.reduce((s, x) => s + x.frames, 0);
 	const captureElapsed = (performance.now() - renderStart) / 1000;
+	if (args.bench) {
+		console.log(`Bench complete (${args.gpu ? 'gpu' : 'software'} rendering).`);
+		return;
+	}
 	console.log(
 		`Captured ${targets.length} scenes, ${totalFrames} frames in ${captureElapsed.toFixed(2)}s`
 	);
 
+	const streaming = !args.framesOnly && !args.keepFrames;
+
 	if (!args.framesOnly) {
-		await mkdir(resolve(dirname(args.out)), { recursive: true });
 		const encodeStart = performance.now();
 
-		if (perScene) {
-			for (const id of targets) {
-				console.log(`Encoding ${id}...`);
-				const sceneStart = performance.now();
-				await encodeSceneVideo(id, args);
-				console.log(
-					`Done. Output: ${resolve(sceneOutput(id, args))} (${((performance.now() - sceneStart) / 1000).toFixed(2)}s)`
-				);
-			}
-			if (!args.keepFrames) {
+		if (streaming) {
+			// Frames were already piped into per-scene ffmpeg processes during
+			// capture, so only a concat remains for full-presentation renders.
+			if (perScene) {
 				for (const id of targets) {
-					await rm(resolve('rendered/frames', id), { recursive: true, force: true });
+					console.log(`Done. Output: ${resolve(sceneOutput(id, args))}`);
 				}
-				await rm(resolve('rendered', 'frames'), { recursive: true, force: true });
+			} else {
+				console.log('Encoding final video...');
+				await concatSceneVideos(targets, args.out);
+				console.log('Done. Output:', resolve(args.out));
 			}
 		} else {
-			console.log('Encoding final video...');
-			await encodeFinalVideo(scenes, args);
-			console.log('Done. Output:', resolve(args.out));
+			await mkdir(resolve(dirname(args.out)), { recursive: true });
+
+			if (perScene) {
+				for (const id of targets) {
+					console.log(`Encoding ${id}...`);
+					const sceneStart = performance.now();
+					await encodeSceneVideo(id, args);
+					console.log(
+						`Done. Output: ${resolve(sceneOutput(id, args))} (${((performance.now() - sceneStart) / 1000).toFixed(2)}s)`
+					);
+				}
+				if (!args.keepFrames) {
+					for (const id of targets) {
+						await rm(resolve('rendered/frames', id), { recursive: true, force: true });
+					}
+					await rm(resolve('rendered', 'frames'), { recursive: true, force: true });
+				}
+			} else {
+				console.log('Encoding final video...');
+				await encodeFinalVideo(scenes, args);
+				console.log('Done. Output:', resolve(args.out));
+			}
 		}
 
 		const encodeElapsed = (performance.now() - encodeStart) / 1000;
@@ -285,6 +354,13 @@ async function runWorker(
 			const sceneIndex = targets.indexOf(id);
 			const isLast = id === targets[targets.length - 1];
 
+			if (args.bench) {
+				await benchScene(page, id, args, renderQs);
+				progress[sceneIndex].done = true;
+				progress[sceneIndex].finalMs = 0;
+				continue;
+			}
+
 			await page.goto(`http://127.0.0.1:4173/${id}?${renderQs}`, {
 				waitUntil: 'domcontentloaded',
 				timeout: 10000
@@ -296,12 +372,28 @@ async function runWorker(
 				return m.totalSteps > 0 || m.phase !== 'finished' || m.transitionActive;
 			});
 
+			const streaming = !args.framesOnly && !args.keepFrames;
+			const out = args.scenes.length > 0 ? sceneOutput(id, args) : resolve('rendered', `${id}.mp4`);
+			let sink: FrameSink;
+			if (streaming) {
+				await mkdir(resolve(dirname(out)), { recursive: true });
+				sink = createStreamSink(args, out);
+			} else {
+				sink = await createFileSink(id, args);
+			}
+
 			progress[sceneIndex].startMs = performance.now();
-			const frames = await captureScene(page, id, isLast, args, sceneIndex);
-			const ms = performance.now() - progress[sceneIndex].startMs;
-			progress[sceneIndex].done = true;
-			progress[sceneIndex].finalMs = ms;
-			sceneStats.push({ id, frames, ms });
+			try {
+				const frames = await captureScene(page, id, isLast, args, sceneIndex, sink);
+				const ms = performance.now() - progress[sceneIndex].startMs;
+				progress[sceneIndex].done = true;
+				progress[sceneIndex].finalMs = ms;
+				sceneStats.push({ id, frames, ms });
+				await sink.close();
+			} catch (err) {
+				sink.abort?.();
+				throw err;
+			}
 		}
 	} finally {
 		await page.close().catch(() => {});
@@ -321,23 +413,20 @@ async function captureScene(
 	id: string,
 	isLast: boolean,
 	args: ResolvedArgs,
-	sceneIndex: number
+	sceneIndex: number,
+	sink: FrameSink
 ): Promise<number> {
-	const frameDir = resolve('rendered/frames', id);
-	await mkdir(frameDir, { recursive: true });
-
 	let frameIndex = 1;
 	const writeFrame = async (buf: Buffer) => {
-		const path = join(frameDir, `frame_${String(frameIndex).padStart(6, '0')}.png`);
 		progress[sceneIndex].frames = frameIndex;
-		await writeFile(path, buf);
+		await sink.write(buf);
 		frameIndex++;
 	};
 
 	const maxFrames = args.fps * 60;
 	let guard = 0;
 
-	await writeFrame(await safeScreenshot(page));
+	await writeFrame(await safeScreenshot(page, args));
 
 	// enter transition + initial step animation
 	while (true) {
@@ -347,7 +436,7 @@ async function captureScene(
 			(delta: number) => window.__sequenceRenderer!.advanceFrame(delta),
 			1 / args.fps
 		);
-		await writeFrame(await safeScreenshot(page));
+		await writeFrame(await safeScreenshot(page, args));
 		if (done) break;
 	}
 
@@ -362,7 +451,7 @@ async function captureScene(
 		}
 
 		await page.evaluate(() => window.__sequenceRenderer!.manager.next());
-		await writeFrame(await safeScreenshot(page));
+		await writeFrame(await safeScreenshot(page, args));
 
 		let stepGuard = 0;
 		while (true) {
@@ -374,7 +463,7 @@ async function captureScene(
 				(delta: number) => window.__sequenceRenderer!.advanceFrame(delta),
 				1 / args.fps
 			);
-			await writeFrame(await safeScreenshot(page));
+			await writeFrame(await safeScreenshot(page, args));
 			if (done) break;
 		}
 	}
@@ -388,7 +477,7 @@ async function captureScene(
 		d.manager.setDirection('forward');
 		d.manager.playExit();
 	});
-	await writeFrame(await safeScreenshot(page));
+	await writeFrame(await safeScreenshot(page, args));
 	while (true) {
 		if (isCrashed) throw new Error(`Page crashed during exit of ${id}`);
 		if (++guard > maxFrames) throw new Error(`Exit hang on ${id}: >${maxFrames} frames`);
@@ -396,10 +485,88 @@ async function captureScene(
 			(delta: number) => window.__sequenceRenderer!.advanceFrame(delta),
 			1 / args.fps
 		);
-		await writeFrame(await safeScreenshot(page));
+		await writeFrame(await safeScreenshot(page, args));
 		if (done) break;
 	}
 	return frameIndex - 1;
+}
+
+const BENCH_FRAMES = 60;
+
+/**
+ * Measures per-frame cost without rendering anything to disk: reloads the
+ * scene fresh, then times the `advanceFrame` round-trip and the screenshot
+ * separately while the enter transition plays and again while the first step
+ * runs. Both phases are measured for PNG and JPEG. Prints an aggregate line
+ * per format.
+ */
+async function benchScene(page: Page, id: string, args: ResolvedArgs, renderQs: string) {
+	for (const format of ['png', 'jpeg'] as const) {
+		await page.goto(`http://127.0.0.1:4173/${id}?${renderQs}`, {
+			waitUntil: 'domcontentloaded',
+			timeout: 10000
+		});
+		await page.waitForFunction(() => {
+			const r = window.__sequenceRenderer;
+			if (!r) return false;
+			const m = r.manager;
+			return m.totalSteps > 0 || m.phase !== 'finished' || m.transitionActive;
+		});
+
+		const opts: { type: 'png' } | { type: 'jpeg'; quality: number } =
+			format === 'jpeg' ? { type: 'jpeg', quality: args.jpegQuality } : { type: 'png' };
+		const enter = await timedLoop(page, args, opts);
+		const finished = await page.evaluate(() => window.__sequenceRenderer!.manager.finished);
+		let step: { evaluate: number[]; capture: number[] } | null = null;
+		if (!finished) {
+			await page.evaluate(() => window.__sequenceRenderer!.manager.next());
+			step = await timedLoop(page, args, opts);
+		}
+
+		const parts = [
+			`bench ${id}  format=${format}`,
+			`evaluate_avg=${avg(enter.evaluate).toFixed(1)}ms`,
+			`enter_capture_avg=${avg(enter.capture).toFixed(1)}ms`,
+			step
+				? `step_capture_avg=${avg(step.capture).toFixed(1)}ms  step_capture_p95=${p95(step.capture).toFixed(1)}ms`
+				: 'no_steps'
+		];
+		console.log(parts.join('  '));
+	}
+}
+
+/** Advances the scene and screenshots until done or {@link BENCH_FRAMES} frames, timing each stage. */
+async function timedLoop(
+	page: Page,
+	args: ResolvedArgs,
+	opts: { type: 'png' } | { type: 'jpeg'; quality: number }
+): Promise<{ evaluate: number[]; capture: number[] }> {
+	const evaluate: number[] = [];
+	const capture: number[] = [];
+	for (let i = 0; i < BENCH_FRAMES; i++) {
+		const t0 = performance.now();
+		const { done } = await page.evaluate(
+			(delta: number) => window.__sequenceRenderer!.advanceFrame(delta),
+			1 / args.fps
+		);
+		const t1 = performance.now();
+		await page.screenshot(opts);
+		const t2 = performance.now();
+		evaluate.push(t1 - t0);
+		capture.push(t2 - t1);
+		if (done && i > 0) break;
+	}
+	return { evaluate, capture };
+}
+
+function avg(values: number[]): number {
+	return values.length ? values.reduce((sum, n) => sum + n, 0) / values.length : 0;
+}
+
+function p95(values: number[]): number {
+	if (!values.length) return 0;
+	const sorted = [...values].sort((a, b) => a - b);
+	return sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * 0.95))];
 }
 
 /** Concatenates every scene's frame sequence into a single video with ffmpeg. */
@@ -410,7 +577,7 @@ async function encodeFinalVideo(slugs: string[], args: ResolvedArgs) {
 			'-framerate',
 			String(args.fps),
 			'-i',
-			join('rendered/frames', id, 'frame_%06d.png')
+			join('rendered/frames', id, `frame_%06d.${args.format}`)
 		);
 	}
 
@@ -440,9 +607,43 @@ async function encodeSceneVideo(id: string, args: ResolvedArgs) {
 		'-framerate',
 		String(args.fps),
 		'-i',
-		join('rendered/frames', id, 'frame_%06d.png'),
+		join('rendered/frames', id, `frame_%06d.${args.format}`),
 		...encodeFlags(sceneOutput(id, args))
 	]);
+}
+
+/**
+ * Stitches per-scene videos (encoded during capture) into a single video.
+ * All scenes share identical encoder settings, so the streams are copied.
+ */
+async function concatSceneVideos(ids: string[], out: string) {
+	await mkdir(resolve(dirname(out)), { recursive: true });
+	const listPath = resolve('rendered', 'concat.txt');
+	const list = ids.map((id) => `file '${resolve('rendered', `${id}.mp4`)}'`).join('\n');
+	await writeFile(listPath, list);
+	try {
+		await runFfmpeg([
+			'-y',
+			'-loglevel',
+			'error',
+			'-f',
+			'concat',
+			'-safe',
+			'0',
+			'-i',
+			listPath,
+			'-c',
+			'copy',
+			out
+		]);
+	} finally {
+		await rm(listPath, { force: true });
+	}
+	for (const id of ids) {
+		const path = resolve('rendered', `${id}.mp4`);
+		if (path === resolve(out)) continue;
+		await rm(path, { force: true });
+	}
 }
 
 function sceneOutput(id: string, args: ResolvedArgs): string {
@@ -454,6 +655,8 @@ function encodeFlags(out: string): string[] {
 	return [
 		'-c:v',
 		'libx264',
+		'-preset',
+		'veryfast',
 		'-pix_fmt',
 		'yuv420p',
 		'-crf',
@@ -486,20 +689,75 @@ async function cleanupFrames(ids: string[]) {
 	await rm(resolve('rendered', 'frames'), { recursive: true, force: true });
 }
 
+/** Launches headless Chromium, preferring hardware acceleration when `gpu`. */
+function launchBrowser(gpu: boolean): Promise<Browser> {
+	const args = ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'];
+	if (gpu) {
+		args.push('--enable-gpu', '--enable-unsafe-swiftshader');
+	} else {
+		args.push('--disable-gpu');
+	}
+	return chromium.launch({ headless: true, args });
+}
+
+/**
+ * Verifies the GPU-enabled browser can actually render: a WebGL context must
+ * be creatable and a screenshot must not be blank. Returns false so the caller
+ * can fall back to software rendering.
+ */
+async function checkGpuHealth(page: Page): Promise<boolean> {
+	try {
+		const webglOk = await page.evaluate(() => {
+			try {
+				const c = document.createElement('canvas');
+				const gl =
+					(c.getContext('webgl2') as WebGL2RenderingContext | null) ||
+					(c.getContext('webgl') as WebGLRenderingContext | null);
+				if (!gl) return false;
+				gl.clearColor(1, 0, 0, 1);
+				gl.clear(gl.COLOR_BUFFER_BIT);
+				gl.finish();
+				return true;
+			} catch {
+				return false;
+			}
+		});
+		if (!webglOk) return false;
+		const buf = await page.screenshot({ type: 'png' });
+		return !isBlankBuffer(buf);
+	} catch {
+		return false;
+	}
+}
+
+/** Heuristic: a buffer whose sampled bytes are all identical is treated as blank. */
+function isBlankBuffer(buf: Buffer): boolean {
+	const step = Math.max(1, Math.floor(buf.length / 200));
+	const first = buf[0];
+	for (let i = step; i < buf.length; i += step) {
+		if (buf[i] !== first) return false;
+	}
+	return true;
+}
+
 function cleanup() {
 	if (browser) browser.close().catch(() => {});
 	if (server) server.kill();
 }
 
 /**
- * Takes a PNG screenshot, retrying after a delay on transient failures. Fails
- * fast if the page has crashed.
+ * Takes a screenshot (PNG or JPEG per `args.format`), retrying after a delay
+ * on transient failures. Fails fast if the page has crashed.
  */
-async function safeScreenshot(page: Page, retries = 3): Promise<Buffer> {
+async function safeScreenshot(page: Page, args: ResolvedArgs, retries = 3): Promise<Buffer> {
 	if (isCrashed) throw new Error('Page has crashed, aborting');
+	const options =
+		args.format === 'jpeg'
+			? ({ type: 'jpeg', quality: args.jpegQuality } as const)
+			: ({ type: 'png' } as const);
 	for (let attempt = 0; attempt < retries; attempt++) {
 		try {
-			return await page.screenshot({ type: 'png' });
+			return await page.screenshot(options);
 		} catch (err) {
 			if (attempt === retries - 1) throw err;
 			console.warn(`Screenshot failed (attempt ${attempt + 1}/${retries}), retrying...`);
@@ -507,6 +765,69 @@ async function safeScreenshot(page: Page, retries = 3): Promise<Buffer> {
 		}
 	}
 	throw new Error('unreachable');
+}
+
+/** Writes frames to rendered/frames/<id>/frame_%06d.<format> on disk. */
+async function createFileSink(id: string, args: ResolvedArgs): Promise<FrameSink> {
+	const frameDir = resolve('rendered/frames', id);
+	await mkdir(frameDir, { recursive: true });
+	let index = 0;
+	return {
+		async write(buf) {
+			const path = join(frameDir, `frame_${String(++index).padStart(6, '0')}.${args.format}`);
+			await writeFile(path, buf);
+		},
+		async close() {}
+	};
+}
+
+/**
+ * Pipes frames into an ffmpeg process that encodes the scene video as frames
+ * arrive, so capture and encoding overlap and no files are written to disk.
+ */
+function createStreamSink(args: ResolvedArgs, out: string): FrameSink {
+	const proc = spawn(ffmpeg!, [
+		'-y',
+		'-loglevel',
+		'error',
+		'-f',
+		'image2pipe',
+		'-framerate',
+		String(args.fps),
+		'-i',
+		'-',
+		...encodeFlags(out)
+	]) as ChildProcessWithoutNullStreams;
+
+	const stderr: Buffer[] = [];
+	proc.stderr.on('data', (d: Buffer) => stderr.push(d));
+	const exit = new Promise<number>((resolve) => proc.on('exit', (code) => resolve(code ?? -1)));
+
+	return {
+		async write(buf) {
+			const ok = proc.stdin.write(buf);
+			if (!ok) await once(proc.stdin, 'drain');
+		},
+		async close() {
+			proc.stdin.end();
+			const code = await exit;
+			if (code !== 0) {
+				throw new Error(
+					`ffmpeg exited with code ${code}: ${Buffer.concat(stderr).toString('utf8')}`
+				);
+			}
+		},
+		abort() {
+			proc.kill();
+			rm(out, { force: true }).catch(() => {});
+		}
+	};
+}
+
+/** Halves `n` to an even number, with a floor of 2, for preview renders. */
+function previewDim(n: number): number {
+	const half = Math.floor(n / 2);
+	return Math.max(2, half - (half % 2));
 }
 
 /** Parses CLI flags and collects non-flag arguments as scene ids. */
@@ -564,6 +885,29 @@ function parseArgs(argv: string[]): ParsedArgs {
 				break;
 			case '--progress-bar':
 				args.progressBar = true;
+				break;
+			case '--preview':
+				args.preview = true;
+				break;
+			case '--gpu':
+				args.gpu = true;
+				break;
+			case '--bench':
+				args.bench = true;
+				break;
+			case '--png':
+				args.format = 'png';
+				break;
+			case '--jpeg':
+				args.format = 'jpeg';
+				if (argv[i + 1] !== undefined && /^\d+$/.test(argv[i + 1])) {
+					const quality = parseInt(argv[++i], 10);
+					if (quality < 0 || quality > 100) {
+						console.error('--jpeg quality must be between 0 and 100');
+						process.exit(1);
+					}
+					args.jpegQuality = quality;
+				}
 				break;
 			default:
 				args.scenes.push(argv[i]);

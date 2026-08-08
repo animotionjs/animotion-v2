@@ -18,6 +18,9 @@ const RESOLUTIONS = {
 
 export type ResolutionName = keyof typeof RESOLUTIONS;
 
+/** Frame image format captured from the page. */
+export type FrameFormat = 'png' | 'jpeg';
+
 /** Fully resolved render settings; every field has a concrete value. */
 export interface RenderOptions {
 	fps: number;
@@ -28,6 +31,8 @@ export interface RenderOptions {
 	framesOnly: boolean;
 	keepFrames: boolean;
 	progressBar: boolean;
+	format: FrameFormat;
+	jpegQuality: number;
 }
 
 /**
@@ -44,6 +49,8 @@ export interface RenderOptionsInput {
 	framesOnly?: boolean;
 	keepFrames?: boolean;
 	progressBar?: boolean;
+	format?: FrameFormat;
+	jpegQuality?: number;
 }
 
 /** A resolved aspect ratio: preset name plus pixel dimensions. */
@@ -87,7 +94,9 @@ const DEFAULT_RENDER: RenderDefaults = {
 	out: 'rendered/video.mp4',
 	framesOnly: false,
 	keepFrames: false,
-	progressBar: false
+	progressBar: false,
+	format: 'png',
+	jpegQuality: 95
 };
 
 const DEFAULT_ASPECT_RATIO: AspectRatio = 'video';
@@ -147,7 +156,9 @@ export function getOptions(): Options {
 		out: render.out ?? DEFAULT_RENDER.out,
 		framesOnly: render.framesOnly ?? DEFAULT_RENDER.framesOnly,
 		keepFrames: render.keepFrames ?? DEFAULT_RENDER.keepFrames,
-		progressBar: render.progressBar ?? DEFAULT_RENDER.progressBar
+		progressBar: render.progressBar ?? DEFAULT_RENDER.progressBar,
+		format: render.format ?? DEFAULT_RENDER.format,
+		jpegQuality: render.jpegQuality ?? DEFAULT_RENDER.jpegQuality
 	};
 
 	return {

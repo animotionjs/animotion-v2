@@ -17,7 +17,9 @@ describe('options', () => {
 			out: 'rendered/video.mp4',
 			framesOnly: false,
 			keepFrames: false,
-			progressBar: false
+			progressBar: false,
+			format: 'png',
+			jpegQuality: 95
 		});
 	});
 
@@ -72,6 +74,13 @@ describe('options', () => {
 		expect(options.render.fps).toBe(30);
 		expect(options.render.jobs).toBe(8);
 		expect(options.render.out).toBe('rendered/video.mp4');
+	});
+
+	it('resolves jpeg format and quality overrides', () => {
+		setOptions({ render: { format: 'jpeg', jpegQuality: 90 } });
+		const options = getOptions();
+		expect(options.render.format).toBe('jpeg');
+		expect(options.render.jpegQuality).toBe(90);
 	});
 
 	it('defaults to no transition', () => {

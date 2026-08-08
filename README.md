@@ -253,6 +253,8 @@ animotion render
 
 The CLI records the presentation into a video using Playwright and ffmpeg. See `animotion render --help` for options. The default `fps`, `width`, `height`, `jobs`, and `out` come from `configure({ render })` in `src/lib/config/configure.ts`; CLI flags override them.
 
+By default frames are streamed straight into ffmpeg while they are captured, so capture and encoding overlap and nothing is written to `rendered/frames/`. For faster draft renders use `--preview` (half resolution, 30 fps, JPEG capture) or `--jpeg [quality]` (lossy JPEG instead of lossless PNG). `--gpu` lets headless Chromium use hardware acceleration when available (with an automatic fallback to software rendering). `--bench` measures the per-frame cost of advancing and capturing (PNG vs JPEG) without rendering anything, which is useful for comparing `--gpu` against the default. Pass `--frames-only` to save frames without encoding, or `--keep-frames` to keep the frame files on disk after encoding (both switch back to file-based capture).
+
 ### Rendering individual scenes
 
 Pass one or more scene ids to render only those scenes, each written to its own video (`rendered/<id>.mp4`):

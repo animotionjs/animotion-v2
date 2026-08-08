@@ -58,6 +58,7 @@ export type {
 	ResolutionName,
 	RenderOptions,
 	RenderOptionsInput,
+	FrameFormat,
 	TransitionConfig,
 	TransitionPreset
 } from './options.js';
