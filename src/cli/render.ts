@@ -8,6 +8,7 @@ import { chromium, type Browser, type Page } from 'playwright';
 import { resolveScenes } from './scenes.ts';
 import type { RenderBridge } from '../lib/scene/runtime/render-bridge.js';
 import type { FrameFormat } from '../lib/scene/options.js';
+import { sliceRanges, type SliceRange } from '../lib/scene/runtime/slices.ts';
 
 declare global {
 	interface Window {
@@ -29,6 +30,7 @@ type ParsedArgs = {
 	preview?: boolean;
 	gpu?: boolean;
 	bench?: boolean;
+	slices?: number;
 	scenes: string[];
 };
 
@@ -46,7 +48,21 @@ type ResolvedArgs = {
 	jpegQuality: number;
 	gpu: boolean;
 	bench: boolean;
+	slices: number;
 	scenes: string[];
+};
+
+/** A unit of work popped by a worker: one scene, or one frame range of one scene. */
+type WorkItem = {
+	id: string;
+	sceneIndex: number;
+	isLast: boolean;
+	/** Null means capture the scene's full range from frame 1. */
+	range: SliceRange | null;
+	/** 1-based slice index within the scene (null when not slicing). */
+	sliceK: number | null;
+	sinkPath: string;
+	bench: boolean;
 };
 
 /** Destination for captured frames: ffmpeg stdin (streaming) or disk files. */
@@ -98,6 +114,14 @@ Options:
                      switch back in a preview render)
   --preview          fast draft render: half resolution, 30 fps, JPEG capture
   --gpu              prefer hardware acceleration (auto-falls back to software)
+  --slices [count]   capture each scene's frames across count parallel workers,
+                     each handling a contiguous frame range (default 4). Helps
+                     when some workers would otherwise be idle (fewer scenes
+                     than --jobs); skipped otherwise. The scene must drive its
+                     state purely from time/frame (no Math.random, Date.now, or
+                     accumulated side-effects), since every slice runs in a
+                     fresh tab. Streaming mode only; ignored with
+                     --frames-only / --keep-frames / --bench
   --bench            measure per-frame capture cost (png vs jpeg) without rendering
   --frames-only      save frames without encoding video
   --keep-frames      keep rendered frames after encoding (forces file capture)
@@ -196,6 +220,7 @@ Examples:
 		jpegQuality: parsedArgs.jpegQuality ?? renderOptions.jpegQuality,
 		gpu: gpuActive,
 		bench: parsedArgs.bench ?? false,
+		slices: parsedArgs.slices ?? 1,
 		scenes: parsedArgs.scenes
 	};
 	const renderQs = args.progressBar ? 'render=video&progress=1' : 'render=video';
@@ -208,21 +233,152 @@ Examples:
 		process.exit(1);
 	}
 
-	const workerCount = Math.min(args.jobs, targets.length);
-
-	console.log(
-		`Rendering ${targets.length} scene${targets.length === 1 ? '' : 's'} with ${workerCount} ${workerCount === 1 ? 'worker' : 'workers'}...`
-	);
+	const streaming = !args.framesOnly && !args.keepFrames;
+	// Slicing turns a scene into several workers. It only helps when some
+	// workers would otherwise sit idle — i.e. when there are fewer scenes than
+	// jobs. With as many scenes as jobs, the workers are already saturated by
+	// whole scenes, and slicing would only add page-load overhead (measured:
+	// full-deck renders gain ~6%, not worth the capture-mode switch). Within
+	// that constraint, only scenes long enough for the speedup to outweigh
+	// their own page-load overhead get sliced (see SLICE_MIN_SECONDS below).
+	const useSlices = args.slices > 1 && streaming && !args.bench && targets.length < args.jobs;
 
 	progress.length = 0;
 	for (const id of targets) progress.push({ id, frames: 0, done: false, startMs: 0, finalMs: 0 });
 
+	if (args.slices > 1 && !streaming) {
+		console.warn(
+			'--slices requires streaming capture; ignoring it (pass neither --frames-only nor --keep-frames).'
+		);
+	} else if (args.slices > 1 && targets.length >= args.jobs) {
+		console.warn(
+			`--slices skipped: all ${args.jobs} workers are already used by the ${targets.length} scenes. ` +
+				'Slicing only adds parallelism when there are idle workers (fewer scenes than --jobs).'
+		);
+	}
+
+	const sliceCounts = new Map<string, number>();
+	const items: WorkItem[] = [];
+
+	// Minimum scene length (seconds of footage) for slicing to pay off: each
+	// slice adds a ~1-2s page load, so a scene must be long enough that the
+	// parallel speedup outweighs those loads.
+	const SLICE_MIN_SECONDS = 4;
+
+	if (useSlices) {
+		// Every slice must start from a known frame, so measure each scene's
+		// exact total frame count by driving it once without screenshots
+		// (cheap: advance-only, ~0.5ms per frame).
+		const dryPage = await browser!.newPage({ deviceScaleFactor: 1 });
+		dryPage.on('crash', () => {
+			isCrashed = true;
+		});
+		dryPage.on('pageerror', (err) => pageErrors.push(err.message));
+		console.log('Measuring scene frame counts...');
+		const totals: number[] = [];
+		for (let i = 0; i < targets.length; i++) {
+			const id = targets[i];
+			const isLast = i === targets.length - 1;
+			// settle=false: the frame count comes from the step math alone, so
+			// there's no need to wait for network idle or asset loads.
+			await loadScenePage(dryPage, id, renderQs, false);
+			const { total } = await driveScene(dryPage, id, isLast, args, i, null, null);
+			totals.push(total);
+			console.log(`  ${id}: ${total} frames`);
+		}
+		await dryPage.close().catch(() => {});
+
+		for (let i = 0; i < targets.length; i++) {
+			const id = targets[i];
+			const isLast = i === targets.length - 1;
+			// Only slice scenes long enough that the per-slice page-load
+			// overhead pays off (~4 seconds of footage at the render fps).
+			const sliceCount =
+				totals[i] >= SLICE_MIN_SECONDS * args.fps ? Math.min(args.slices, totals[i]) : 1;
+			const ranges = sliceCount > 1 ? sliceRanges(totals[i], sliceCount) : null;
+			sliceCounts.set(id, ranges?.length ?? 1);
+			if (!ranges) {
+				items.push({
+					id,
+					sceneIndex: i,
+					isLast,
+					range: null,
+					sliceK: null,
+					sinkPath: sceneVideoOut(id, perScene, args),
+					bench: false
+				});
+				continue;
+			}
+			for (let k = 0; k < ranges.length; k++) {
+				const sliceK = k + 1;
+				items.push({
+					id,
+					sceneIndex: i,
+					isLast,
+					range: ranges[k],
+					sliceK,
+					sinkPath: sliceSinkPath(id, sliceK),
+					bench: false
+				});
+			}
+		}
+	} else if (args.bench) {
+		for (let i = 0; i < targets.length; i++) {
+			items.push({
+				id: targets[i],
+				sceneIndex: i,
+				isLast: i === targets.length - 1,
+				range: null,
+				sliceK: null,
+				sinkPath: '',
+				bench: true
+			});
+		}
+	} else {
+		for (let i = 0; i < targets.length; i++) {
+			const id = targets[i];
+			items.push({
+				id,
+				sceneIndex: i,
+				isLast: i === targets.length - 1,
+				range: null,
+				sliceK: null,
+				sinkPath: sceneVideoOut(id, perScene, args),
+				bench: false
+			});
+		}
+	}
+
+	if (
+		args.slices > 1 &&
+		streaming &&
+		sliceCounts.size > 0 &&
+		![...sliceCounts.values()].some((n) => n > 1)
+	) {
+		console.warn(
+			`--slices had no effect: none of the ${targets.length} scene${targets.length === 1 ? '' : 's'} ` +
+				`has at least ${SLICE_MIN_SECONDS}s of footage (${SLICE_MIN_SECONDS * args.fps} frames at ${args.fps} fps), so every scene renders whole.`
+		);
+	}
+
+	const workerCount = Math.min(args.jobs, items.length);
+
+	console.log(
+		`Rendering ${targets.length} scene${targets.length === 1 ? '' : 's'} with ${workerCount} ${workerCount === 1 ? 'worker' : 'workers'} (${items.length} item${items.length === 1 ? '' : 's'})...`
+	);
+
+	const remaining = new Map<string, number>();
+	for (const item of items) {
+		if (item.bench) continue;
+		remaining.set(item.id, (remaining.get(item.id) ?? 0) + 1);
+	}
+
 	let nextIndex = 0;
-	function popScene(): string | null {
+	function popItem(): WorkItem | null {
 		const i = nextIndex;
-		if (i >= targets.length) return null;
+		if (i >= items.length) return null;
 		nextIndex = i + 1;
-		return targets[i];
+		return items[i];
 	}
 
 	for (let i = 0; i < targets.length; i++) process.stdout.write('\n');
@@ -230,7 +386,7 @@ Examples:
 
 	const workers: Promise<void>[] = [];
 	for (let w = 0; w < workerCount; w++) {
-		workers.push(runWorker(browser!, args, targets, popScene, renderQs));
+		workers.push(runWorker(browser!, args, popItem, renderQs, remaining));
 	}
 	await Promise.all(workers);
 
@@ -255,14 +411,22 @@ Examples:
 		`Captured ${targets.length} scenes, ${totalFrames} frames in ${captureElapsed.toFixed(2)}s`
 	);
 
-	const streaming = !args.framesOnly && !args.keepFrames;
-
 	if (!args.framesOnly) {
 		const encodeStart = performance.now();
 
 		if (streaming) {
-			// Frames were already piped into per-scene ffmpeg processes during
-			// capture, so only a concat remains for full-presentation renders.
+			// Frames were already piped into ffmpeg during capture. Sliced
+			// scenes have per-slice videos to stitch first; then only a
+			// per-scene concat remains for full-presentation renders.
+			if (useSlices) {
+				for (const id of targets) {
+					const count = sliceCounts.get(id) ?? 1;
+					if (count <= 1) continue;
+					console.log(`Stitching slices of ${id}...`);
+					await concatSliceVideos(id, count, sceneVideoOut(id, perScene, args));
+				}
+				await rm(resolve('rendered', 'slices'), { recursive: true, force: true });
+			}
 			if (perScene) {
 				for (const id of targets) {
 					console.log(`Done. Output: ${resolve(sceneOutput(id, args))}`);
@@ -319,16 +483,16 @@ function printStatus() {
 }
 
 /**
- * Worker loop: owns one browser page and captures scenes one at a time,
- * popping ids off a shared queue. Collects page errors and crashes into
+ * Worker loop: owns one browser page and captures work items one at a time,
+ * popping them off a shared queue. Collects page errors and crashes into
  * module-level state so the final exit code reflects them.
  */
 async function runWorker(
 	b: Browser,
 	args: ResolvedArgs,
-	targets: string[],
-	popScene: () => string | null,
-	renderQs: string
+	popItem: () => WorkItem | null,
+	renderQs: string,
+	remaining: Map<string, number>
 ): Promise<void> {
 	const page = await b.newPage({
 		deviceScaleFactor: 1
@@ -348,48 +512,47 @@ async function runWorker(
 	try {
 		while (true) {
 			if (isCrashed) break;
-			const id = popScene();
-			if (!id) break;
+			const item = popItem();
+			if (!item) break;
 
-			const sceneIndex = targets.indexOf(id);
-			const isLast = id === targets[targets.length - 1];
-
-			if (args.bench) {
-				await benchScene(page, id, args, renderQs);
-				progress[sceneIndex].done = true;
-				progress[sceneIndex].finalMs = 0;
+			if (item.bench) {
+				await benchScene(page, item.id, args, renderQs);
+				progress[item.sceneIndex].done = true;
+				progress[item.sceneIndex].finalMs = 0;
 				continue;
 			}
 
-			await page.goto(`http://127.0.0.1:4173/${id}?${renderQs}`, {
-				waitUntil: 'domcontentloaded',
-				timeout: 10000
-			});
-			await page.waitForFunction(() => {
-				const r = window.__sequenceRenderer;
-				if (!r) return false;
-				const m = r.manager;
-				return m.totalSteps > 0 || m.phase !== 'finished' || m.transitionActive;
-			});
+			await loadScenePage(page, item.id, renderQs);
 
 			const streaming = !args.framesOnly && !args.keepFrames;
-			const out = args.scenes.length > 0 ? sceneOutput(id, args) : resolve('rendered', `${id}.mp4`);
 			let sink: FrameSink;
 			if (streaming) {
-				await mkdir(resolve(dirname(out)), { recursive: true });
-				sink = createStreamSink(args, out);
+				await mkdir(resolve(dirname(item.sinkPath)), { recursive: true });
+				sink = createStreamSink(args, item.sinkPath);
 			} else {
-				sink = await createFileSink(id, args);
+				sink = await createFileSink(item.id, args);
 			}
 
-			progress[sceneIndex].startMs = performance.now();
+			progress[item.sceneIndex].startMs ||= performance.now();
 			try {
-				const frames = await captureScene(page, id, isLast, args, sceneIndex, sink);
-				const ms = performance.now() - progress[sceneIndex].startMs;
-				progress[sceneIndex].done = true;
-				progress[sceneIndex].finalMs = ms;
-				sceneStats.push({ id, frames, ms });
+				const { written } = await driveScene(
+					page,
+					item.id,
+					item.isLast,
+					args,
+					item.sceneIndex,
+					item.range,
+					sink
+				);
+				const ms = performance.now() - progress[item.sceneIndex].startMs;
 				await sink.close();
+				sceneStats.push({ id: item.id, frames: written, ms });
+				const left = (remaining.get(item.id) ?? 1) - 1;
+				remaining.set(item.id, left);
+				if (left <= 0) {
+					progress[item.sceneIndex].done = true;
+					progress[item.sceneIndex].finalMs = ms;
+				}
 			} catch (err) {
 				sink.abort?.();
 				throw err;
@@ -401,32 +564,77 @@ async function runWorker(
 }
 
 /**
- * Records one scene frame by frame: the enter transition, each step (advanced
- * via `manager.next()`), then the exit transition (skipped for the last
- * scene). Frames are produced by driving the render scheduler `1/fps` seconds
- * at a time until it reports idle; hang guards abort on runaway loops.
- *
- * @returns the number of frames written
+ * Navigates a page to a scene in render mode, waits for the renderer, and
+ * gives asynchronous scene setup (model/image/video loads, dynamic imports)
+ * time to finish before capture starts. Without this, a slice starting
+ * mid-timeline pre-rolls in milliseconds and can capture a page whose async
+ * content has not loaded yet. Best-effort: capture proceeds if the page never
+ * goes quiet within the timeout.
  */
-async function captureScene(
+async function loadScenePage(page: Page, id: string, renderQs: string, settle = true) {
+	await page.goto(`http://127.0.0.1:4173/${id}?${renderQs}`, {
+		waitUntil: 'domcontentloaded',
+		timeout: 10000
+	});
+	await page.waitForFunction(() => {
+		const r = window.__sequenceRenderer;
+		if (!r) return false;
+		const m = r.manager;
+		return m.totalSteps > 0 || m.phase !== 'finished' || m.transitionActive;
+	});
+	if (settle) {
+		// Wait for network idle plus a short buffer so asynchronous scene setup —
+		// model/image/video loads, dynamic imports — is complete before any frame
+		// is captured. Network idle already means nothing is in flight, so the
+		// buffer only needs to cover post-load settling (e.g. texture uploads).
+		await page.waitForLoadState('networkidle', { timeout: 15000 }).catch(() => {});
+		await page.waitForTimeout(150);
+	}
+}
+
+/**
+ * Drives one scene frame by frame through the enter transition, each step
+ * (advanced via `manager.next()`), then the exit transition (skipped for the
+ * last scene), advancing the render scheduler `1/fps` seconds at a time until
+ * it reports idle. Hang guards abort on runaway loops.
+ *
+ * The same function powers three modes:
+ * - serial capture (`sink` set, `range` null): captures every frame from 1;
+ * - time-sliced capture (`sink` set, `range` set): pre-rolls the manager
+ *   through the frames before `range.start` without screenshots (the exact
+ *   same `next()`/`advanceFrame` sequence as serial, so the state at each
+ *   frame is identical), then captures frames `start..end`; and
+ * - dry-run measuring (`sink` null): counts frames without screenshots.
+ *
+ * @returns `written` frames written to `sink`, and `total` frames covered.
+ */
+async function driveScene(
 	page: Page,
 	id: string,
 	isLast: boolean,
 	args: ResolvedArgs,
 	sceneIndex: number,
-	sink: FrameSink
-): Promise<number> {
+	range: SliceRange | null,
+	sink: FrameSink | null
+): Promise<{ written: number; total: number }> {
 	let frameIndex = 1;
-	const writeFrame = async (buf: Buffer) => {
-		progress[sceneIndex].frames = frameIndex;
-		await sink.write(buf);
+	let written = 0;
+
+	const writeFrame = async () => {
+		const f = frameIndex;
 		frameIndex++;
+		progress[sceneIndex].frames = f;
+		if (!sink) return;
+		if (range && (f < range.start || f > range.end)) return;
+		await sink.write(await safeScreenshot(page, args));
+		written++;
 	};
+	const withinRange = () => !range || frameIndex <= range.end;
 
 	const maxFrames = args.fps * 60;
 	let guard = 0;
 
-	await writeFrame(await safeScreenshot(page, args));
+	await writeFrame();
 
 	// enter transition + initial step animation
 	while (true) {
@@ -436,14 +644,16 @@ async function captureScene(
 			(delta: number) => window.__sequenceRenderer!.advanceFrame(delta),
 			1 / args.fps
 		);
-		await writeFrame(await safeScreenshot(page, args));
+		await writeFrame();
 		if (done) break;
+		if (!withinRange()) break;
 	}
 
 	// steps
 	guard = 0;
 	while (true) {
 		if (isCrashed) throw new Error(`Page crashed during steps of ${id}`);
+		if (!withinRange()) break;
 		const finished = await page.evaluate(() => window.__sequenceRenderer!.manager.finished);
 		if (finished) break;
 		if (++guard > 200) {
@@ -451,11 +661,12 @@ async function captureScene(
 		}
 
 		await page.evaluate(() => window.__sequenceRenderer!.manager.next());
-		await writeFrame(await safeScreenshot(page, args));
+		await writeFrame();
 
 		let stepGuard = 0;
 		while (true) {
 			if (isCrashed) throw new Error(`Page crashed during step animation of ${id}`);
+			if (!withinRange()) break;
 			if (++stepGuard > maxFrames) {
 				throw new Error(`Step animation hang on ${id}: >${maxFrames} frames`);
 			}
@@ -463,12 +674,12 @@ async function captureScene(
 				(delta: number) => window.__sequenceRenderer!.advanceFrame(delta),
 				1 / args.fps
 			);
-			await writeFrame(await safeScreenshot(page, args));
+			await writeFrame();
 			if (done) break;
 		}
 	}
 
-	if (isLast) return frameIndex - 1;
+	if (isLast) return { written, total: frameIndex - 1 };
 
 	// exit transition
 	guard = 0;
@@ -477,18 +688,19 @@ async function captureScene(
 		d.manager.setDirection('forward');
 		d.manager.playExit();
 	});
-	await writeFrame(await safeScreenshot(page, args));
+	await writeFrame();
 	while (true) {
 		if (isCrashed) throw new Error(`Page crashed during exit of ${id}`);
+		if (!withinRange()) break;
 		if (++guard > maxFrames) throw new Error(`Exit hang on ${id}: >${maxFrames} frames`);
 		const { done } = await page.evaluate(
 			(delta: number) => window.__sequenceRenderer!.advanceFrame(delta),
 			1 / args.fps
 		);
-		await writeFrame(await safeScreenshot(page, args));
+		await writeFrame();
 		if (done) break;
 	}
-	return frameIndex - 1;
+	return { written, total: frameIndex - 1 };
 }
 
 const BENCH_FRAMES = 60;
@@ -649,6 +861,52 @@ async function concatSceneVideos(ids: string[], out: string) {
 function sceneOutput(id: string, args: ResolvedArgs): string {
 	if (args.outSet && args.scenes.length === 1) return args.out;
 	return resolve('rendered', `${id}.mp4`);
+}
+
+/** The scene-level video file a capture (sliced or not) ultimately produces. */
+function sceneVideoOut(id: string, perScene: boolean, args: ResolvedArgs): string {
+	return perScene ? sceneOutput(id, args) : resolve('rendered', `${id}.mp4`);
+}
+
+/** The intermediate mp4 a worker streams one slice of a scene into. */
+function sliceSinkPath(id: string, sliceK: number): string {
+	return resolve('rendered', 'slices', `${id}.${sliceK}.mp4`);
+}
+
+/**
+ * Stitches a scene's per-slice videos (all encoded with identical settings) in
+ * order into `out` with a stream copy, then removes the slice files.
+ */
+async function concatSliceVideos(id: string, count: number, out: string) {
+	await mkdir(resolve(dirname(out)), { recursive: true });
+	const sliceDir = resolve('rendered', 'slices');
+	const listPath = resolve('rendered', 'slices-concat.txt');
+	const list: string[] = [];
+	for (let k = 1; k <= count; k++) {
+		list.push(`file '${resolve(sliceDir, `${id}.${k}.mp4`)}'`);
+	}
+	await writeFile(listPath, list.join('\n'));
+	try {
+		await runFfmpeg([
+			'-y',
+			'-loglevel',
+			'error',
+			'-f',
+			'concat',
+			'-safe',
+			'0',
+			'-i',
+			listPath,
+			'-c',
+			'copy',
+			out
+		]);
+	} finally {
+		await rm(listPath, { force: true });
+	}
+	for (let k = 1; k <= count; k++) {
+		await rm(resolve(sliceDir, `${id}.${k}.mp4`), { force: true });
+	}
 }
 
 function encodeFlags(out: string): string[] {
@@ -891,6 +1149,18 @@ function parseArgs(argv: string[]): ParsedArgs {
 				break;
 			case '--gpu':
 				args.gpu = true;
+				break;
+			case '--slices':
+				if (argv[i + 1] !== undefined && /^\d+$/.test(argv[i + 1])) {
+					const val = parseInt(argv[++i], 10);
+					if (val < 1) {
+						console.error('--slices requires a positive integer');
+						process.exit(1);
+					}
+					args.slices = val;
+				} else {
+					args.slices = 4;
+				}
 				break;
 			case '--bench':
 				args.bench = true;

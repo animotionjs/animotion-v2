@@ -43,6 +43,30 @@ describe('SceneManager + TickStep (render mode)', () => {
 	});
 });
 
+describe('SceneManager determinism for time slicing', () => {
+	it('reproduces identical tick frames across fresh drives', () => {
+		const drive = () => {
+			const manager = new SceneManager();
+			manager.enableRenderMode();
+			const frames: TickFrame[] = [];
+			manager.load({ steps: [new TickStep((f) => frames.push(f), 1)] });
+			manager.next();
+			let guard = 0;
+			while (!manager.finished && guard++ < 100) {
+				manager.advanceFrame(1 / 60);
+			}
+			expect(guard).toBeLessThan(100);
+			return frames.map((f) => `${f.progress}|${f.time}|${f.frame}`);
+		};
+
+		// Each slice runs in a fresh page, so the whole drive must be a pure
+		// function of the step + advance calls (no accumulated state leaking
+		// across drives, no real time / randomness).
+		expect(drive()).toEqual(drive());
+		expect(drive().length).toBeGreaterThan(0);
+	});
+});
+
 describe('SceneManager resume after prev', () => {
 	it('restarts the current step when resuming after prev', () => {
 		const manager = new SceneManager();
