@@ -1,7 +1,3 @@
-<script module lang="ts">
-	export { notes };
-</script>
-
 <script lang="ts">
 	import { createScene } from '#lib/scene';
 
@@ -10,10 +6,10 @@
 		.layout(() => scene.order.reverse(), 0.5);
 </script>
 
-{#snippet notes()}
+<div data-notes>
 	The layout step animates DOM changes with FLIP. Every element carries a data-layout key so the
 	engine can match it across states. Watch the list reverse.
-{/snippet}
+</div>
 
 <ul>
 	{#each scene.order as item (item)}

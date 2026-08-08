@@ -26,6 +26,8 @@ export interface SpeakerState {
 	aspectRatio: { width: number; height: number };
 	/** Every scene, for the outline. */
 	scenes: SpeakerScene[];
+	/** Current scene's notes markup, from its hidden `[data-notes]` box. */
+	notes?: string;
 }
 
 /** A command sent from the speaker view to the presentation. */

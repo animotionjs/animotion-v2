@@ -1,7 +1,3 @@
-<script module lang="ts">
-	export { notes };
-</script>
-
 <script lang="ts">
 	import { createScene, easeInOut } from '#lib/scene';
 
@@ -18,10 +14,10 @@
 	);
 </script>
 
-{#snippet notes()}
+<div data-notes>
 	The tick step runs a callback every frame with &#123; progress, time, deltaTime, frame &#125;,
 	letting you drive arbitrary state — here a progress bar and a counter.
-{/snippet}
+</div>
 
 <div class="w-full max-w-2xl space-y-10 text-center">
 	<h1 class="text-5xl font-bold">tick step</h1>

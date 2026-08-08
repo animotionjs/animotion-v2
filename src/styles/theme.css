@@ -45,4 +45,10 @@
 	span[data-layout] {
 		display: inline-block;
 	}
+
+	/* Scenes author presenter notes in a hidden `[data-notes]` box; the
+	   presentation forwards that markup to the speaker view over its channel. */
+	[data-notes] {
+		display: none;
+	}
 }

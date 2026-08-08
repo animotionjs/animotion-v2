@@ -51,7 +51,13 @@ export function speakerPlugin(options: SpeakerPluginOptions = {}): Plugin {
 			stepCompleted: ctx?.state.stepCompleted ?? false,
 			finished: ctx?.state.finished ?? false,
 			aspectRatio: { width: aspectRatio.width, height: aspectRatio.height },
-			scenes
+			scenes,
+			// The presentation window renders the active scene, so its own
+			// hidden `[data-notes]` box holds the current scene's notes.
+			notes:
+				typeof document !== 'undefined'
+					? (document.querySelector('[data-notes]')?.innerHTML ?? '')
+					: ''
 		};
 	}
 

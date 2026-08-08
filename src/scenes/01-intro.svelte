@@ -1,7 +1,3 @@
-<script module lang="ts">
-	export { notes };
-</script>
-
 <script lang="ts">
 	import { createScene, easeInOut } from '#lib/scene';
 
@@ -10,10 +6,10 @@
 		.layout(() => (scene.view = 'circle'), 0.6, easeInOut, { enter: 'scale' });
 </script>
 
-{#snippet notes()}
+<div data-notes>
 	Welcome to Animotion, a Svelte engine for building animated presentations. Press the right arrow
 	to move through the steps.
-{/snippet}
+</div>
 
 <div class="grid place-items-center gap-16">
 	<p data-layout="title" class="text-6xl font-bold" style:opacity={scene.opacity}>🪄 Animotion</p>

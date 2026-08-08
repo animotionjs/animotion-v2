@@ -1,7 +1,3 @@
-<script module lang="ts">
-	export { notes };
-</script>
-
 <script lang="ts">
 	import { createScene, Code, code } from '#lib/scene';
 
@@ -30,9 +26,9 @@
 		.codeSelection();
 </script>
 
-{#snippet notes()}
+<div data-notes>
 	Code steps morph source between versions: codeTo, codeInsert, codeReplace, codeRemove, and the
 	codeEdit tagged template. Ranges are 1-indexed lines, 0-indexed columns.
-{/snippet}
+</div>
 
 <Code class="text-2xl" />

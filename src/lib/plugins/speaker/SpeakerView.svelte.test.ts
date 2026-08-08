@@ -3,7 +3,6 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import SpeakerView from './SpeakerView.svelte';
 
-import type { Sequence } from '#lib';
 import type { SpeakerMessage, SpeakerState } from './channel';
 
 class FakeBroadcastChannel {
@@ -28,12 +27,7 @@ class FakeBroadcastChannel {
 	}
 }
 
-const sequence: Sequence = [
-	{ id: 'intro', order: 1, component: () => import('./fixtures/PreviewScene.svelte') },
-	{ id: 'about', order: 2, component: () => import('./fixtures/PreviewScene.svelte') }
-];
-
-function state(): SpeakerState {
+function state(overrides: Partial<SpeakerState> = {}): SpeakerState {
 	return {
 		sceneId: 'intro',
 		sceneIndex: 0,
@@ -43,7 +37,8 @@ function state(): SpeakerState {
 		stepCompleted: false,
 		finished: false,
 		aspectRatio: { width: 1920, height: 1080 },
-		scenes: [{ id: 'intro' }, { id: 'about' }]
+		scenes: [{ id: 'intro' }, { id: 'about' }],
+		...overrides
 	};
 }
 
@@ -62,7 +57,7 @@ beforeEach(() => {
 
 describe('SpeakerView', () => {
 	it('asks for the current state on mount', () => {
-		const app = mount(SpeakerView, { target: document.body, props: { sequence } });
+		const app = mount(SpeakerView, { target: document.body });
 		flushSync();
 
 		expect(channel().posts).toContainEqual({ type: 'hello' });
@@ -71,7 +66,7 @@ describe('SpeakerView', () => {
 	});
 
 	it('shows a waiting message before the first state arrives', () => {
-		const app = mount(SpeakerView, { target: document.body, props: { sequence } });
+		const app = mount(SpeakerView, { target: document.body });
 		flushSync();
 
 		expect(document.body.textContent).toContain('press s to connect');
@@ -80,21 +75,53 @@ describe('SpeakerView', () => {
 	});
 
 	it('renders the notes, scene outline, and a mirror iframe from a state message', async () => {
-		const app = mount(SpeakerView, { target: document.body, props: { sequence } });
+		const app = mount(SpeakerView, { target: document.body });
 		flushSync();
 		await vi.waitFor(() => expect(channel().posts).toContainEqual({ type: 'hello' }));
 
-		channel().dispatch({ type: 'state', state: state() });
+		channel().dispatch({
+			type: 'state',
+			state: state({
+				notes: '<p class="speaker-notes">Exported notes, <strong>rich</strong> content.</p>'
+			})
+		});
 		await vi.waitFor(() => expect(document.body.textContent).toContain('Exported notes'));
 
-		expect(document.body.textContent).toContain('Exported notes, not broadcast notes.');
-		expect(document.body.textContent).not.toContain('Broadcast notes must not be rendered.');
+		expect(document.querySelector('.speaker-notes strong')).not.toBeNull();
 		expect(document.body.textContent).toContain('intro');
 		expect(document.body.textContent).toContain('about');
 
 		const iframe = document.querySelector('iframe');
 		expect(iframe).not.toBeNull();
 		expect(iframe).toHaveAttribute('src', '/?embed=1&channel=animotion%3Aspeaker');
+
+		unmount(app);
+	});
+
+	it('swaps the notes when the scene changes', async () => {
+		const app = mount(SpeakerView, { target: document.body });
+		flushSync();
+		channel().dispatch({
+			type: 'state',
+			state: state({ notes: '<strong>Intro</strong> notes.' })
+		});
+		await vi.waitFor(() => expect(document.body.textContent).toContain('Intro notes.'));
+
+		channel().dispatch({
+			type: 'state',
+			state: state({ sceneId: 'about', sceneIndex: 1, notes: '<em>About</em> notes.' })
+		});
+		await vi.waitFor(() => expect(document.body.textContent).toContain('About notes.'));
+		expect(document.body.textContent).not.toContain('Intro notes.');
+
+		unmount(app);
+	});
+
+	it('shows a fallback when the scene has no notes', async () => {
+		const app = mount(SpeakerView, { target: document.body });
+		flushSync();
+		channel().dispatch({ type: 'state', state: state() });
+		await vi.waitFor(() => expect(document.body.textContent).toContain('No notes for this scene.'));
 
 		unmount(app);
 	});
@@ -109,7 +136,7 @@ describe('SpeakerView', () => {
 
 		const app = mount(SpeakerView, {
 			target: document.body,
-			props: { sequence, channel: 'custom' }
+			props: { channel: 'custom' }
 		});
 		flushSync();
 
@@ -122,7 +149,7 @@ describe('SpeakerView', () => {
 	});
 
 	it('sends next when the forward button is pressed', () => {
-		const app = mount(SpeakerView, { target: document.body, props: { sequence } });
+		const app = mount(SpeakerView, { target: document.body });
 		flushSync();
 
 		channel().dispatch({ type: 'state', state: state() });
@@ -139,7 +166,7 @@ describe('SpeakerView', () => {
 	});
 
 	it('sends next and prev from the arrow keys', () => {
-		const app = mount(SpeakerView, { target: document.body, props: { sequence } });
+		const app = mount(SpeakerView, { target: document.body });
 		flushSync();
 
 		window.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight' }));
@@ -153,7 +180,7 @@ describe('SpeakerView', () => {
 	});
 
 	it('sends goto when an outline scene is clicked', async () => {
-		const app = mount(SpeakerView, { target: document.body, props: { sequence } });
+		const app = mount(SpeakerView, { target: document.body });
 		flushSync();
 
 		channel().dispatch({ type: 'state', state: state() });

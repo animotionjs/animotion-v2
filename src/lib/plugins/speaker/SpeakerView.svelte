@@ -4,33 +4,32 @@
 
 	import { SPEAKER_CHANNEL, SpeakerChannel } from './channel';
 
-	import type { Snippet } from 'svelte';
-	import type { Sequence } from '#lib';
 	import type { SpeakerMessage, SpeakerState } from './channel';
 
 	interface Props {
-		/** The presentation sequence, for loading scene notes. */
-		sequence: Sequence;
 		/** The `BroadcastChannel` name shared with the presentation window. */
 		channel?: string;
 	}
 
-	let { sequence, channel: channelName = SPEAKER_CHANNEL }: Props = $props();
+	let { channel: channelName = SPEAKER_CHANNEL }: Props = $props();
+
+	const channelSupported = typeof BroadcastChannel !== 'undefined';
 
 	let presentation = $state<SpeakerState | null>(null);
 	let elapsed = $state(0);
 
 	let channel: SpeakerChannel | null = null;
 	let timer: ReturnType<typeof setInterval> | null = null;
+	let startedAt: number | null = null;
 
 	const ratio = $derived(
 		presentation ? presentation.aspectRatio.width / presentation.aspectRatio.height : 16 / 9
 	);
-	// Notes are static per-scene snippets read by importing the scene module,
-	// so they work across windows without mounting the scene in the speaker.
-	let sceneNotes = $state<Record<string, Snippet>>({});
-	const notes = $derived(presentation ? sceneNotes[presentation.sceneId] : undefined);
 	const mirrorSrc = $derived(`${resolve('/')}?embed=1&channel=${encodeURIComponent(channelName)}`);
+	// Notes are authored by the deck author in a hidden `[data-notes]` box and
+	// forwarded with the state broadcast, so rich HTML (bold, links, code)
+	// survives across windows without the speaker importing scene modules.
+	const notes = $derived(presentation?.notes ?? '');
 
 	function send(message: SpeakerMessage) {
 		channel?.post(message);
@@ -50,28 +49,26 @@
 		}
 	}
 
+	function resetTimer() {
+		startedAt = Date.now();
+		elapsed = 0;
+	}
+
 	onMount(() => {
-		let cancelled = false;
-		void Promise.all(
-			sequence.map(async (scene) => [scene.id, await scene.component()] as const)
-		).then((modules) => {
-			if (cancelled) return;
-			sceneNotes = Object.fromEntries(
-				modules
-					.filter(([, module]) => typeof module.notes === 'function')
-					.map(([id, module]) => [id, module.notes as Snippet])
-			);
-		});
-		if ('BroadcastChannel' in window) {
+		if (channelSupported) {
 			channel = new SpeakerChannel(channelName);
 			channel.onmessage = (message) => {
-				if (message.type === 'state') presentation = message.state;
+				if (message.type === 'state') {
+					presentation = message.state;
+					if (startedAt === null) startedAt = Date.now();
+				}
 			};
 			send({ type: 'hello' });
 		}
-		timer = setInterval(() => elapsed++, 1000);
+		timer = setInterval(() => {
+			if (startedAt !== null) elapsed = Math.floor((Date.now() - startedAt) / 1000);
+		}, 1000);
 		return () => {
-			cancelled = true;
 			channel?.close();
 			channel = null;
 			if (timer) clearInterval(timer);
@@ -112,7 +109,7 @@
 			<span class="text-2xl font-bold tabular-nums">{formatTime(elapsed)}</span>
 			<button
 				class="rounded-lg border border-zinc-800 px-3 py-1.5 text-sm text-gray-400 hover:text-foreground"
-				onclick={() => (elapsed = 0)}
+				onclick={resetTimer}
 			>
 				Reset timer
 			</button>
@@ -160,11 +157,13 @@
 				<div class="border-b border-zinc-800 px-4 py-2.5 text-sm font-semibold text-gray-400">
 					Notes
 				</div>
-				<div
-					class="min-h-0 flex-1 overflow-y-auto px-5 py-4 text-lg leading-relaxed whitespace-pre-wrap"
-				>
+				<div class="min-h-0 flex-1 overflow-y-auto px-5 py-4 text-lg leading-relaxed">
 					{#if notes}
-						{@render notes()}
+						<!-- Notes are authored by the deck author, same trust as the
+						     scene markup itself, and forwarded over the speaker
+						     channel rather than untrusted user input. -->
+						<!-- eslint-disable-next-line svelte/no-at-html-tags -->
+						{@html notes}
 					{:else}
 						<span class="text-gray-500">No notes for this scene.</span>
 					{/if}
@@ -190,9 +189,13 @@
 		</footer>
 	{:else}
 		<main class="flex flex-1 items-center justify-center">
-			<p class="text-gray-500">
-				Open the presentation and press <kbd class="text-foreground">s</kbd> to connect.
-			</p>
+			{#if channelSupported}
+				<p class="text-gray-500">
+					Open the presentation and press <kbd class="text-foreground">s</kbd> to connect.
+				</p>
+			{:else}
+				<p class="text-gray-500">BroadcastChannel is not supported in this browser.</p>
+			{/if}
 		</main>
 	{/if}
 </div>
