@@ -8,7 +8,7 @@ export interface PresentationState {
 	sceneIndex: number;
 	/** Total number of scenes. */
 	totalScenes: number;
-	/** The 0-based index of the current step. */
+	/** The step the user is currently on (0-based); a completed step counts as the next one. */
 	step: number;
 	/** Total number of steps in the active scene. */
 	totalSteps: number;

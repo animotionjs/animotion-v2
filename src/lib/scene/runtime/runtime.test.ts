@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest';
-import { SceneManager } from './runtime.svelte';
+import { describe, expect, it, vi } from 'vitest';
+import { SceneManager, type TransitionBuild } from './runtime.svelte';
 import { TickStep, type Step, type TickFrame } from './steps';
 
 class SpyStep implements Step {
@@ -87,5 +87,139 @@ describe('SceneManager resume after prev', () => {
 
 		manager.next();
 		expect(step.starts).toBe(2);
+	});
+});
+
+describe('SceneManager saved states', () => {
+	it('getSavedState returns undefined before any save', () => {
+		const manager = new SceneManager();
+		expect(manager.getSavedState('intro')).toBeUndefined();
+	});
+
+	it('getSavedState returns the state recorded by saveState', () => {
+		const manager = new SceneManager();
+		manager.enableRenderMode();
+		manager.load({ steps: [new SpyStep(), new SpyStep()] });
+
+		manager.next();
+		manager.advanceFrame(1);
+		manager.saveState('intro');
+
+		expect(manager.getSavedState('intro')).toEqual({ stepIndex: 0, stepCompleted: true });
+	});
+
+	it('restoreState resumes a scene paused after the given steps', () => {
+		const manager = new SceneManager();
+		manager.enableRenderMode();
+		const steps = [new SpyStep(), new SpyStep(), new SpyStep(), new SpyStep()];
+
+		manager.restoreState('intro', 2);
+		manager.load({ steps, id: 'intro' });
+
+		expect(manager.step).toBe(1);
+		expect(manager.currentStep).toBe(2);
+		expect(manager.totalSteps).toBe(4);
+		expect(manager.finished).toBe(false);
+		expect(steps[0].ends).toBe(1);
+		expect(steps[1].ends).toBe(1);
+		expect(steps[2].starts).toBe(0);
+		expect(steps[2].ends).toBe(0);
+	});
+
+	it('goes back one step with a single prev after resuming', () => {
+		const manager = new SceneManager();
+		manager.enableRenderMode();
+		const steps = [new SpyStep(), new SpyStep(), new SpyStep()];
+
+		manager.restoreState('code', 2);
+		manager.load({ steps, id: 'code' });
+		expect(manager.currentStep).toBe(2);
+
+		manager.prev();
+
+		expect(manager.currentStep).toBe(1);
+		expect(steps[1].reverts).toBe(1);
+	});
+
+	it('restoreState clamps out-of-range steps to the last step', () => {
+		const manager = new SceneManager();
+		manager.enableRenderMode();
+		const steps = [new SpyStep(), new SpyStep(), new SpyStep()];
+
+		manager.restoreState('intro', 99);
+		manager.load({ steps, id: 'intro' });
+
+		expect(manager.step).toBe(2);
+		expect(manager.finished).toBe(true);
+		expect(steps[0].ends).toBe(1);
+		expect(steps[1].ends).toBe(1);
+		expect(steps[2].ends).toBe(1);
+	});
+});
+
+describe('SceneManager currentStep', () => {
+	it('counts a completed step as the next step', () => {
+		const manager = new SceneManager();
+		manager.enableRenderMode();
+		manager.load({ steps: [new SpyStep(), new SpyStep()] });
+
+		expect(manager.currentStep).toBe(0);
+
+		manager.next();
+		manager.advanceFrame(1);
+
+		expect(manager.currentStep).toBe(1);
+	});
+});
+
+describe('SceneManager step-change events', () => {
+	it('emits the effective step when a step completes', () => {
+		const manager = new SceneManager();
+		manager.enableRenderMode();
+		const events: Array<[number, number]> = [];
+		manager.onStepChange((step, total) => events.push([step, total]));
+
+		manager.load({ steps: [new SpyStep(), new SpyStep()] });
+		manager.next();
+		manager.advanceFrame(1);
+
+		expect(events).toContainEqual([1, 2]);
+	});
+
+	it('emits step 0 when rewinding a completed first step', () => {
+		const manager = new SceneManager();
+		manager.enableRenderMode();
+		const events: Array<[number, number]> = [];
+		manager.onStepChange((step, total) => events.push([step, total]));
+
+		manager.load({ steps: [new SpyStep(), new SpyStep()] });
+		manager.next();
+		manager.advanceFrame(1);
+		manager.prev();
+
+		expect(events.at(-1)).toEqual([0, 2]);
+		expect(manager.currentStep).toBe(0);
+	});
+});
+
+describe('SceneManager enter transition', () => {
+	it('skips the enter transition on the first load and plays it on later loads', () => {
+		vi.stubGlobal(
+			'requestAnimationFrame',
+			vi.fn(() => 1)
+		);
+		vi.stubGlobal('cancelAnimationFrame', vi.fn());
+		try {
+			const manager = new SceneManager();
+			const enterBuild: TransitionBuild = (builder) => builder.tween('opacity', 1, 0.5);
+
+			manager.load({ steps: [new SpyStep()], enterBuild });
+			expect(manager.transitionActive).toBe(false);
+
+			manager.load({ steps: [new SpyStep()], enterBuild });
+			expect(manager.transitionActive).toBe(true);
+		} finally {
+			vi.unstubAllGlobals();
+		}
 	});
 });

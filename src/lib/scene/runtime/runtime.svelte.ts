@@ -70,6 +70,7 @@ export class SceneManager {
 	#enterBuild: TransitionBuild | null = null;
 	#exitBuild: TransitionBuild | null = null;
 	#exitBusy = false;
+	#firstLoad = true;
 
 	#stepChangeListeners = new SvelteSet<(step: number, total: number) => void>();
 
@@ -81,7 +82,7 @@ export class SceneManager {
 
 	#emitStepChange() {
 		for (const listener of this.#stepChangeListeners) {
-			listener(this.#stepIndex, this.#totalSteps);
+			listener(this.currentStep, this.#totalSteps);
 		}
 	}
 
@@ -93,6 +94,14 @@ export class SceneManager {
 	/** The 0-based index of the current step. */
 	get step(): number {
 		return this.#stepIndex;
+	}
+
+	/**
+	 * The step the user is currently on: a completed step counts as the next
+	 * one, so a scene with the first step played reports `1`.
+	 */
+	get currentStep(): number {
+		return this.#stepCompleted ? this.#stepIndex + 1 : this.#stepIndex;
 	}
 
 	/** Total number of steps in the loaded scene. */
@@ -194,6 +203,20 @@ export class SceneManager {
 		return this.#savedStates.has(id);
 	}
 
+	/** Returns the saved state for `id`, or `undefined` if none was saved. */
+	getSavedState(id: string): SavedState | undefined {
+		return this.#savedStates.get(id);
+	}
+
+	/**
+	 * Seeds the saved state for `id` to land paused on `step` (0-based). Used
+	 * to resume from a URL hash before the scene loads; {@link load} fast-forwards
+	 * to the step. Out-of-range steps are clamped by {@link load}.
+	 */
+	restoreState(id: string, step: number) {
+		this.#savedStates.set(id, { stepIndex: step, stepCompleted: false });
+	}
+
 	/**
 	 * Loads a scene's steps into the manager. If `id` has a saved state, the
 	 * scene is fast-forwarded to that step. Used by `createScene` on mount.
@@ -240,6 +263,14 @@ export class SceneManager {
 				this.#stepIndex = steps.length - 1;
 				this.#phase = 'finished';
 				this.#stepCompleted = true;
+			} else if (target > 0) {
+				// Resumed past the start: steps 0..target-1 are complete, so we
+				// pause between them and the next step (the state normal playback
+				// reaches after the previous step finishes). This keeps `prev()`
+				// from being a no-op when the resumed step is entered but unplayed.
+				this.#stepIndex = target - 1;
+				this.#stepCompleted = true;
+				this.#phase = 'paused';
 			} else {
 				this.#enterStep(this.#stepIndex);
 			}
@@ -247,11 +278,16 @@ export class SceneManager {
 
 		this.#emitStepChange();
 
-		if (this.#enterBuild) {
+		// The enter transition plays when navigating between scenes; on the very
+		// first load of a page session it is skipped so a reload jumps straight
+		// to the resumed step. Render mode always plays it: the renderer drives
+		// it explicitly and every render scene is a fresh-page first load.
+		if (this.#enterBuild && (this.#renderMode || !this.#firstLoad)) {
 			this.playEnter();
 		} else {
 			this.#resetTransitionState();
 		}
+		this.#firstLoad = false;
 	}
 
 	#softClear() {
@@ -405,6 +441,7 @@ export class SceneManager {
 		if (this.#stepIndex === 0) {
 			this.#stepCompleted = false;
 			this.#phase = 'paused';
+			this.#emitStepChange();
 			return;
 		}
 
@@ -478,6 +515,7 @@ export class SceneManager {
 				} else {
 					this.#phase = 'paused';
 				}
+				this.#emitStepChange();
 				return;
 			}
 

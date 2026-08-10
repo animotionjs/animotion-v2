@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { onDestroy, onMount, untrack } from 'svelte';
-	import { afterNavigate, goto } from '$app/navigation';
+	import { afterNavigate, beforeNavigate, goto, replaceState } from '$app/navigation';
 	import { page } from '$app/state';
 	import { SceneManager } from '../scene/runtime/runtime.svelte.js';
 	import { setSceneId, setSceneManager } from '../scene/runtime/context.svelte.js';
@@ -25,6 +25,11 @@
 	const id = $derived(page.params.scene ?? sequence[0].id);
 
 	setSceneId(() => id);
+
+	// Seed the current scene's position from the URL hash (`/scene#N`) before
+	// the scene child mounts and calls `manager.load`. No-op on the server,
+	// where the hash is never sent.
+	untrack(() => applyUrlStep(id, page.url));
 
 	const index = $derived(sequence.findIndex((s) => s.id === id));
 	const scene = $derived(sequence.find((s) => s.id === id) ?? sequence[0]);
@@ -54,6 +59,8 @@
 		state.step = step;
 		state.totalSteps = total;
 		state.finished = manager.finished;
+		manager.saveState(id);
+		updateUrlStep(step);
 	});
 
 	const pluginManager = createPluginManager();
@@ -69,6 +76,12 @@
 		state.sceneId = id;
 		state.sceneIndex = index;
 		pluginManager.emitSceneChange({ id, index });
+	});
+
+	// Seed the target scene's position from its URL hash before it mounts.
+	beforeNavigate(({ to }) => {
+		if (!to) return;
+		applyUrlStep(to.params?.scene ?? sequence[0].id, to.url);
 	});
 
 	if (typeof window !== 'undefined' && page.url.searchParams.get('render') === 'video') {
@@ -97,10 +110,39 @@
 	}
 
 	function navigateTo(targetId: string) {
-		const path = '/' + targetId;
-		const params = page.url.searchParams.toString();
-		if (!params) return goto(path);
-		return goto(path + '?' + params);
+		const saved = manager.getSavedState(targetId);
+		const step = saved ? (saved.stepCompleted ? saved.stepIndex + 1 : saved.stepIndex) : null;
+		const search = page.url.search;
+		const hash = step === null || step === 0 ? '' : `#${step}`;
+		return goto(`/${targetId}${search}${hash}`);
+	}
+
+	/**
+	 * Restores the saved position for `sceneId` from `url`'s hash fragment
+	 * (`/scene#N`). A valid non-negative integer becomes the paused step the
+	 * scene resumes at; anything else leaves the scene at its start.
+	 */
+	function applyUrlStep(sceneId: string, url: { hash: string }) {
+		const raw = url.hash.slice(1);
+		if (raw === '') return;
+		const step = Number(raw);
+		if (Number.isInteger(step) && step >= 0) {
+			manager.restoreState(sceneId, step);
+		}
+	}
+
+	/** Mirrors the current step in the URL hash (`/scene#N`) without navigating. */
+	function updateUrlStep(step: number) {
+		if (typeof window === 'undefined') return;
+		if (page.url.searchParams.get('render') === 'video') return;
+		const location = window.location;
+		if (step === 0) {
+			if (!location.hash) return;
+			replaceState(location.pathname + location.search, {});
+			return;
+		}
+		if (location.hash === `#${step}`) return;
+		replaceState(`#${step}`, {});
 	}
 
 	function next() {
