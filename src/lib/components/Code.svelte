@@ -132,17 +132,22 @@
 		}
 	}
 
-	// ResizeObserver also catches changes caused by font loading and by the
-	// parent's max-height, neither of which necessarily changes a prop
+	// Re-measures when code bounds or typography change. These change the
+	// content height without resizing the scroll container itself.
 	$effect(() => {
-		if (!codeBlock || typeof ResizeObserver === 'undefined') return;
 		void bounds;
 		void classes;
 		void lineHeight;
+		refreshMeasurements();
+	});
 
+	// Observes the scroll container. Also catches changes caused by font
+	// loading and by the parent's max-height, neither of which necessarily
+	// changes a prop. Created once; cleanup on unmount.
+	$effect(() => {
+		if (!codeBlock || typeof ResizeObserver === 'undefined') return;
 		const observer = new ResizeObserver(refreshMeasurements);
 		observer.observe(codeBlock);
-		refreshMeasurements();
 		return () => observer.disconnect();
 	});
 
