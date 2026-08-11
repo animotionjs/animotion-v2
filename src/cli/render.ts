@@ -185,7 +185,7 @@ Examples:
 		tempPage.on('crash', () => {
 			isCrashed = true;
 		});
-		await tempPage.goto(`http://127.0.0.1:4173/?render=video`, { waitUntil: 'domcontentloaded' });
+		await tempPage.goto(`http://127.0.0.1:4173/?render`, { waitUntil: 'domcontentloaded' });
 		await tempPage.waitForFunction(() => window.__sequenceRenderer !== undefined);
 		const probe = await tempPage.evaluate(() => {
 			const r = window.__sequenceRenderer!;
@@ -228,7 +228,7 @@ Examples:
 		separate: parsedArgs.separate ?? false,
 		scenes: parsedArgs.scenes
 	};
-	const renderQs = args.progressBar ? 'render=video&progress=1' : 'render=video';
+	const renderQs = args.progressBar ? 'render&progress' : 'render';
 
 	const perScene = args.scenes.length > 0;
 	const targets = perScene ? resolveScenes(args.scenes, scenes) : scenes;

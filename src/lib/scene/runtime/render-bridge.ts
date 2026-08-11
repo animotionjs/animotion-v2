@@ -4,7 +4,7 @@ import type { RenderOptions } from '../options.js';
 
 /**
  * Bridge exposed to the renderer as `window.__sequenceRenderer`. Exists only
- * while a page is loaded with `?render=video`.
+ * while a page is loaded with `?render`.
  */
 export interface RenderBridge {
 	manager: SceneManager;

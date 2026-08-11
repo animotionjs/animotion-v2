@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { easeInOut, createScene } from '#lib/scene';
+	import { createScene, easeInOut } from '#lib/scene';
 
 	let fill = $state(0);
 	let seconds = $state(0);
@@ -13,6 +13,11 @@
 		easeInOut
 	);
 </script>
+
+<div data-notes>
+	The tick step runs a callback every frame with &#123; progress, time, deltaTime, frame &#125;,
+	letting you drive arbitrary state — here a progress bar and a counter.
+</div>
 
 <div class="w-full max-w-2xl space-y-10 text-center">
 	<h1 class="text-5xl font-bold">tick step</h1>

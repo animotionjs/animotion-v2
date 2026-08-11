@@ -36,7 +36,7 @@
 	const Content = $derived((await scene.component()).default);
 	const progress = $derived(((index + manager.completion) / sequence.length) * 100);
 	const showProgressBar = $derived(
-		page.url.searchParams.get('render') !== 'video' || page.url.searchParams.get('progress') === '1'
+		!page.url.searchParams.has('render') || page.url.searchParams.has('progress')
 	);
 
 	// Reactive snapshot of the presentation, exposed to plugins via `ctx.state`.
@@ -49,6 +49,8 @@
 			totalScenes: sequence.length,
 			step: manager.step,
 			totalSteps: manager.totalSteps,
+			stepCompleted: manager.stepCompleted,
+			playing: manager.playing,
 			finished: manager.finished
 		}))
 	);
@@ -58,12 +60,19 @@
 	const syncStep = manager.onStepChange((step, total) => {
 		state.step = step;
 		state.totalSteps = total;
+		state.stepCompleted = manager.stepCompleted;
+		state.playing = manager.playing;
 		state.finished = manager.finished;
 		manager.saveState(id);
 		updateUrlStep(step);
 	});
 
 	const pluginManager = createPluginManager();
+
+	// True while a scene-change navigation is in flight, so a second press at
+	// the boundary (which has no exit-transition window while the window is
+	// hidden) cannot start a second `goto` that would abort the first.
+	let navigating = false;
 
 	onMount(() => {
 		pluginManager.setup();
@@ -76,6 +85,7 @@
 		state.sceneId = id;
 		state.sceneIndex = index;
 		pluginManager.emitSceneChange({ id, index });
+		navigating = false;
 	});
 
 	// Seed the target scene's position from its URL hash before it mounts.
@@ -84,7 +94,7 @@
 		applyUrlStep(to.params?.scene ?? sequence[0].id, to.url);
 	});
 
-	if (typeof window !== 'undefined' && page.url.searchParams.get('render') === 'video') {
+	if (typeof window !== 'undefined' && page.url.searchParams.has('render')) {
 		setupRenderBridge();
 	}
 
@@ -134,7 +144,7 @@
 	/** Mirrors the current step in the URL hash (`/scene#N`) without navigating. */
 	function updateUrlStep(step: number) {
 		if (typeof window === 'undefined') return;
-		if (page.url.searchParams.get('render') === 'video') return;
+		if (page.url.searchParams.has('render')) return;
 		const location = window.location;
 		if (step === 0) {
 			if (!location.hash) return;
@@ -146,9 +156,10 @@
 	}
 
 	function next() {
-		if (manager.exitBusy) return;
+		if (manager.exitBusy || navigating) return;
 		if (manager.finished) {
 			if (index >= sequence.length - 1) return;
+			navigating = true;
 			manager.saveState(id);
 			manager.setDirection('forward');
 			manager.playExit().then(() => navigateTo(sequence[index + 1].id));
@@ -158,9 +169,10 @@
 	}
 
 	function prev() {
-		if (manager.exitBusy) return;
+		if (manager.exitBusy || navigating) return;
 		if (manager.atStart) {
 			if (index <= 0) return;
+			navigating = true;
 			manager.saveState(id);
 			manager.setDirection('backward');
 			manager.playExit().then(() => navigateTo(sequence[index - 1].id));

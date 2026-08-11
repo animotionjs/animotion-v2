@@ -12,6 +12,10 @@ export interface PresentationState {
 	step: number;
 	/** Total number of steps in the active scene. */
 	totalSteps: number;
+	/** Whether the current step's animation has fully played. */
+	stepCompleted: boolean;
+	/** Whether the current step's animation is playing. */
+	playing: boolean;
 	/** Whether the active scene has finished all its steps. */
 	finished: boolean;
 }

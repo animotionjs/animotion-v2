@@ -2,7 +2,14 @@ export { createSequence } from './scene/runtime/sequence.js';
 export { configure, registerLanguages, highlight, whenReady } from './scene/code/highlighter.js';
 export { getOptions, setOptions } from './scene/options.js';
 export { TransitionBuilder, SceneManager } from './scene/runtime/runtime.svelte.js';
-export { PluginManager, fullscreenPlugin } from './plugins/index.js';
+export {
+	PluginManager,
+	fullscreenPlugin,
+	speakerPlugin,
+	openSpeakerView,
+	SpeakerView,
+	SPEAKER_SESSION
+} from './plugins/index.js';
 export {
 	getSceneManager,
 	setSceneManager,
@@ -78,6 +85,13 @@ export type {
 	PluginContext,
 	PresentationState,
 	StepChangeSubscribe
+} from './plugins/index.js';
+export type { SpeakerPluginOptions } from './plugins/index.js';
+export type {
+	SpeakerState,
+	SpeakerScene,
+	SpeakerMessage,
+	SpeakerCommand
 } from './plugins/index.js';
 export type { RenderBridge } from './scene/runtime/render-bridge.js';
 export type { Token, PositionedToken, MorphToken } from './scene/code/highlighter.js';

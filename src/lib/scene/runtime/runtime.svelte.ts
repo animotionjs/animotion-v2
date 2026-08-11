@@ -58,6 +58,9 @@ export class SceneManager {
 	#needsStart = false;
 	#rafId: number | null = null;
 	#transitionRafId: number | null = null;
+	#stepStall: ReturnType<typeof setTimeout> | null = null;
+	#transitionStall: ReturnType<typeof setTimeout> | null = null;
+	#transitionDeadline: ReturnType<typeof setTimeout> | null = null;
 	#lastFrame = 0;
 	#transitionLastFrame = 0;
 	#transitionElapsed = 0;
@@ -107,6 +110,16 @@ export class SceneManager {
 	/** Total number of steps in the loaded scene. */
 	get totalSteps(): number {
 		return this.#totalSteps;
+	}
+
+	/** Whether the current step's animation has fully played. */
+	get stepCompleted(): boolean {
+		return this.#stepCompleted;
+	}
+
+	/** Whether the current step's animation is playing. */
+	get playing(): boolean {
+		return this.#phase === 'tweening';
 	}
 
 	/** Whether the scene is at its first step with nothing played yet. */
@@ -198,6 +211,15 @@ export class SceneManager {
 		});
 	}
 
+	/**
+	 * Stores a step position under `id` without playing it. The next
+	 * {@link load} for `id` fast-forwards the scene to that position. Used by
+	 * the speaker view to render a scene at a specific step.
+	 */
+	setStepState(id: string, stepIndex: number, stepCompleted: boolean) {
+		this.#savedStates.set(id, { stepIndex, stepCompleted });
+	}
+
 	/** Whether a state was saved for `id`. */
 	hasSavedState(id: string): boolean {
 		return this.#savedStates.has(id);
@@ -244,6 +266,7 @@ export class SceneManager {
 
 		if (steps.length === 0) {
 			this.#phase = 'finished';
+			this.#emitStepChange();
 		} else {
 			this.#stepIndex = 0;
 			this.#elapsed = 0;
@@ -306,6 +329,82 @@ export class SceneManager {
 		this.#needsStart = false;
 	}
 
+	/**
+	 * Positions the already-loaded scene at the given step without replaying
+	 * the enter transition. `stepCompleted` marks the current step's animation
+	 * as fully played without advancing to the next step; `finished` plays the
+	 * whole scene to completion. Steps above the target are reverted first, so
+	 * the scene regresses correctly. Used by the embedded speaker mirror to
+	 * track the presentation in place.
+	 */
+	seek(stepIndex: number, stepCompleted = false, finished = false) {
+		this.#stopLoop();
+		this.#stopTransitionLoop();
+		this.#currentStep()?.end();
+
+		const steps = this.#steps;
+		this.#totalSteps = steps.length;
+
+		if (steps.length === 0) {
+			this.#phase = 'finished';
+			this.#emitStepChange();
+			this.#resetTransitionState();
+			return;
+		}
+
+		const s = Math.max(0, Math.min(stepIndex, steps.length - 1));
+		const target = finished || stepCompleted ? s + 1 : s;
+
+		// Undo every step that has been started, in reverse, so previously
+		// applied layout side-effects and state are removed before replaying
+		// the position below. This is what lets the scene move backwards.
+		for (let i = this.#stepIndex; i >= 0; i--) {
+			steps[i]?.revert();
+		}
+
+		this.#positionTo(target, stepCompleted, finished);
+		this.#resetTransitionState();
+	}
+
+	/**
+	 * Reproduces a playback position in place: runs steps `0..target-1` to
+	 * completion, then either enters the target step (started, not progressed),
+	 * marks the previous step completed, or finishes the scene. Emits a step
+	 * change afterwards. Used by {@link seek}.
+	 */
+	#positionTo(target: number, stepCompleted: boolean, finished: boolean) {
+		const steps = this.#steps;
+		this.#stepIndex = 0;
+		this.#elapsed = 0;
+		this.#stepCompleted = false;
+
+		for (let i = 0; i < target; i++) {
+			const step = steps[i];
+			if (!step) break;
+			step.start();
+			step.setProgress(1);
+			step.end();
+		}
+
+		if (steps.length === 0) {
+			this.#phase = 'finished';
+		} else if (finished || target >= steps.length) {
+			this.#stepIndex = steps.length - 1;
+			this.#stepCompleted = true;
+			this.#phase = 'finished';
+		} else if (stepCompleted) {
+			this.#stepIndex = target - 1;
+			this.#stepCompleted = true;
+			this.#phase = 'paused';
+		} else {
+			this.#stepIndex = target;
+			this.#phase = 'paused';
+			this.#enterStep(target);
+		}
+
+		this.#emitStepChange();
+	}
+
 	/** Stops all activity and unloads the current scene. */
 	clear() {
 		this.#softClear();
@@ -317,7 +416,13 @@ export class SceneManager {
 		return this.#playTransition(this.#enterBuild);
 	}
 
-	/** Plays the exit transition and resolves when it completes. */
+	/**
+	 * Plays the exit transition and resolves when it completes. The transition
+	 * is given a deadline equal to its duration, so it resolves even when
+	 * `requestAnimationFrame` never fires (e.g. a window on a non-active
+	 * virtual desktop), which would otherwise block the navigation that awaits
+	 * `playExit`.
+	 */
 	playExit(): Promise<void> {
 		const promise = this.#playTransition(this.#exitBuild);
 		this.#exitBusy = true;
@@ -365,7 +470,23 @@ export class SceneManager {
 		this.#transitionElapsed = 0;
 		this.#transitionLastFrame = this.#scheduler.now();
 
+		let done = false;
+		const complete = () => {
+			if (done) return;
+			done = true;
+			this.#clearTransitionStall();
+			this.#clearTransitionDeadline();
+			if (this.#transitionRafId !== null) {
+				this.#scheduler.cancel(this.#transitionRafId);
+				this.#transitionRafId = null;
+			}
+			step.setProgress(1);
+			step.end();
+			onComplete();
+		};
+
 		const frame = (now: number) => {
+			this.#clearTransitionStall();
 			const delta = (now - this.#transitionLastFrame) / 1000;
 			this.#transitionLastFrame = now;
 
@@ -375,9 +496,7 @@ export class SceneManager {
 			if (this.#renderMode) flushSync();
 
 			if (progress >= 1) {
-				step.end();
-				this.#transitionRafId = null;
-				onComplete();
+				complete();
 				return;
 			}
 
@@ -385,13 +504,64 @@ export class SceneManager {
 		};
 
 		this.#transitionRafId = this.#scheduler.request(frame);
+
+		// A window the compositor is not presenting (e.g. on a non-active
+		// virtual desktop) never receives animation frames, so the tween above
+		// would stall and the transition promise would never resolve, blocking
+		// the navigation that awaits it. The two timers below cover that:
+		//   - a short stall force-completes the transition when no frame has
+		//     arrived at all (the window was already hidden);
+		//   - a deadline at the transition's nominal duration force-completes
+		//     it when frames stop arriving mid-transition (the window hid
+		//     after it had begun).
+		// A visible window delivers frames throughout and finishes the tween
+		// first, clearing both. Render mode drives frames deterministically,
+		// so it skips the timers.
+		if (!this.#renderMode) {
+			this.#transitionStall = setTimeout(() => {
+				this.#transitionStall = null;
+				complete();
+			}, 150);
+			this.#transitionDeadline = setTimeout(
+				() => {
+					this.#transitionDeadline = null;
+					complete();
+				},
+				step.duration * 1000 + 100
+			);
+		}
+	}
+
+	#clearTransitionStall() {
+		if (this.#transitionStall !== null) {
+			clearTimeout(this.#transitionStall);
+			this.#transitionStall = null;
+		}
+	}
+
+	#clearTransitionDeadline() {
+		if (this.#transitionDeadline !== null) {
+			clearTimeout(this.#transitionDeadline);
+			this.#transitionDeadline = null;
+		}
 	}
 
 	#stopTransitionLoop() {
+		this.#clearTransitionStall();
+		this.#clearTransitionDeadline();
 		if (this.#transitionRafId !== null) {
 			this.#scheduler.cancel(this.#transitionRafId);
 			this.#transitionRafId = null;
 		}
+	}
+
+	/**
+	 * Plays the current step's animation in place, without advancing. Used by
+	 * the embedded speaker mirror to follow a presenter animating a step. Emits
+	 * a step change so the playing state propagates.
+	 */
+	play() {
+		this.#playCurrent();
 	}
 
 	/** Advances to the next step, or fast-forwards the current tween. */
@@ -496,6 +666,7 @@ export class SceneManager {
 
 		this.#phase = 'tweening';
 		this.#lastFrame = this.#scheduler.now();
+		this.#emitStepChange();
 
 		const frame = (now: number) => {
 			const delta = (now - this.#lastFrame) / 1000;
@@ -507,15 +678,7 @@ export class SceneManager {
 			if (this.#renderMode) flushSync();
 
 			if (progress >= 1) {
-				step.end();
-				this.#stepCompleted = true;
-				this.#rafId = null;
-				if (this.#stepIndex >= this.#steps.length - 1) {
-					this.#phase = 'finished';
-				} else {
-					this.#phase = 'paused';
-				}
-				this.#emitStepChange();
+				this.#completeStepTween(step);
 				return;
 			}
 
@@ -525,9 +688,53 @@ export class SceneManager {
 		};
 
 		this.#rafId = this.#scheduler.request(frame);
+
+		// A window the compositor is not presenting (e.g. on a non-active
+		// virtual desktop) never receives animation frames, so this tween would
+		// never complete and the step would need an extra press to fast-forward
+		// past it. A stall timer at the step's duration finishes it on its own,
+		// in step with a visible mirror's animation; a visible window finishes
+		// the tween first and clears it. The timer stays armed for the whole
+		// step, so it also catches a window that hides mid-tween. Render mode
+		// drives frames deterministically, so it skips the timer.
+		if (!this.#renderMode) {
+			this.#stepStall = setTimeout(
+				() => {
+					this.#stepStall = null;
+					if (this.#rafId !== null) {
+						this.#scheduler.cancel(this.#rafId);
+						this.#rafId = null;
+						this.#completeStepTween(step);
+					}
+				},
+				step.duration * 1000 + 50
+			);
+		}
+	}
+
+	/** Finishes the current step's tween in place, as if its animation completed. */
+	#completeStepTween(step: Step) {
+		this.#clearStepStall();
+		step.end();
+		this.#stepCompleted = true;
+		this.#rafId = null;
+		if (this.#stepIndex >= this.#steps.length - 1) {
+			this.#phase = 'finished';
+		} else {
+			this.#phase = 'paused';
+		}
+		this.#emitStepChange();
+	}
+
+	#clearStepStall() {
+		if (this.#stepStall !== null) {
+			clearTimeout(this.#stepStall);
+			this.#stepStall = null;
+		}
 	}
 
 	#stopLoop() {
+		this.#clearStepStall();
 		if (this.#rafId !== null) {
 			this.#scheduler.cancel(this.#rafId);
 			this.#rafId = null;

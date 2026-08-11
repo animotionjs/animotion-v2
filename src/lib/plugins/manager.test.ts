@@ -14,6 +14,8 @@ function createMockContext(): PluginContext {
 			totalScenes: 1,
 			step: 0,
 			totalSteps: 0,
+			stepCompleted: false,
+			playing: false,
 			finished: false
 		},
 		sequence: [],

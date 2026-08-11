@@ -26,4 +26,9 @@
 		.codeSelection();
 </script>
 
+<div data-notes>
+	Code steps morph source between versions: codeTo, codeInsert, codeReplace, codeRemove, and the
+	codeEdit tagged template. Ranges are 1-indexed lines, 0-indexed columns.
+</div>
+
 <Code class="text-2xl" />

@@ -45,4 +45,8 @@
 	span[data-layout] {
 		display: inline-block;
 	}
+
+	[data-notes] {
+		display: none;
+	}
 }

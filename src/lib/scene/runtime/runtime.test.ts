@@ -223,3 +223,277 @@ describe('SceneManager enter transition', () => {
 		}
 	});
 });
+
+describe('SceneManager stall timers', () => {
+	it('completes a transition when the animation frame never fires', async () => {
+		vi.useFakeTimers();
+		vi.stubGlobal(
+			'requestAnimationFrame',
+			vi.fn(() => 1)
+		);
+		vi.stubGlobal('cancelAnimationFrame', vi.fn());
+		try {
+			const manager = new SceneManager();
+			const exitBuild: TransitionBuild = (builder) => builder.tween('opacity', 0, 0.5);
+
+			manager.load({ steps: [new SpyStep()], exitBuild });
+			const exit = manager.playExit();
+			expect(manager.transitionActive).toBe(true);
+
+			await vi.advanceTimersByTimeAsync(150);
+			expect(manager.transitionActive).toBe(false);
+
+			await exit;
+			expect(manager.exitBusy).toBe(false);
+			expect(manager.transitionState.opacity).toBe(0);
+		} finally {
+			vi.unstubAllGlobals();
+			vi.useRealTimers();
+		}
+	});
+
+	it('does not force-complete a transition the animation frame finishes', async () => {
+		vi.useFakeTimers();
+		const capture: { frame: ((now: number) => void) | null } = { frame: null };
+		vi.stubGlobal(
+			'requestAnimationFrame',
+			vi.fn((callback: (now: number) => void) => {
+				capture.frame = callback;
+				return 1;
+			})
+		);
+		vi.stubGlobal('cancelAnimationFrame', vi.fn());
+		try {
+			const manager = new SceneManager();
+			const exitBuild: TransitionBuild = (builder) => builder.tween('opacity', 0, 0.5);
+
+			manager.load({ steps: [new SpyStep()], exitBuild });
+			const exit = manager.playExit();
+
+			capture.frame?.(500);
+			await exit;
+			expect(manager.exitBusy).toBe(false);
+			expect(manager.transitionActive).toBe(false);
+
+			await vi.advanceTimersByTimeAsync(1000);
+			expect(manager.transitionActive).toBe(false);
+			expect(manager.transitionState.opacity).toBe(0);
+		} finally {
+			vi.unstubAllGlobals();
+			vi.useRealTimers();
+		}
+	});
+
+	it('completes a transition when the animation frame stalls after the first frame', async () => {
+		vi.useFakeTimers();
+		const capture: { frame: ((now: number) => void) | null } = { frame: null };
+		vi.stubGlobal(
+			'requestAnimationFrame',
+			vi.fn((callback: (now: number) => void) => {
+				capture.frame = callback;
+				return 1;
+			})
+		);
+		vi.stubGlobal('cancelAnimationFrame', vi.fn());
+		try {
+			const manager = new SceneManager();
+			const exitBuild: TransitionBuild = (builder) => builder.tween('opacity', 0, 0.5);
+
+			manager.load({ steps: [new SpyStep()], exitBuild });
+			const exit = manager.playExit();
+
+			capture.frame?.(100);
+			expect(manager.transitionActive).toBe(true);
+
+			await vi.advanceTimersByTimeAsync(500 + 100);
+			expect(manager.transitionActive).toBe(false);
+
+			await exit;
+			expect(manager.exitBusy).toBe(false);
+			expect(manager.transitionState.opacity).toBe(0);
+		} finally {
+			vi.unstubAllGlobals();
+			vi.useRealTimers();
+		}
+	});
+
+	it('completes a step on its own when the animation frame never fires', async () => {
+		vi.useFakeTimers();
+		vi.stubGlobal(
+			'requestAnimationFrame',
+			vi.fn(() => 1)
+		);
+		vi.stubGlobal('cancelAnimationFrame', vi.fn());
+		try {
+			const manager = new SceneManager();
+			manager.load({ steps: [new SpyStep(), new SpyStep()] });
+
+			manager.next();
+			expect(manager.stepCompleted).toBe(false);
+
+			await vi.advanceTimersByTimeAsync(1000 + 50);
+			expect(manager.stepCompleted).toBe(true);
+			expect(manager.currentStep).toBe(1);
+			expect(manager.finished).toBe(false);
+		} finally {
+			vi.unstubAllGlobals();
+			vi.useRealTimers();
+		}
+	});
+
+	it('completes a step when the animation frame stalls after the first frame', async () => {
+		vi.useFakeTimers();
+		const capture: { frame: ((now: number) => void) | null } = { frame: null };
+		vi.stubGlobal(
+			'requestAnimationFrame',
+			vi.fn((callback: (now: number) => void) => {
+				capture.frame = callback;
+				return 1;
+			})
+		);
+		vi.stubGlobal('cancelAnimationFrame', vi.fn());
+		try {
+			const manager = new SceneManager();
+			manager.load({ steps: [new SpyStep(), new SpyStep()] });
+
+			manager.next();
+			capture.frame?.(250);
+			expect(manager.stepCompleted).toBe(false);
+
+			await vi.advanceTimersByTimeAsync(1000 + 50);
+			expect(manager.stepCompleted).toBe(true);
+			expect(manager.currentStep).toBe(1);
+		} finally {
+			vi.unstubAllGlobals();
+			vi.useRealTimers();
+		}
+	});
+});
+
+describe('SceneManager finished step-change', () => {
+	it('emits a step change when the final step finishes', () => {
+		const manager = new SceneManager();
+		manager.enableRenderMode();
+
+		const changes: Array<{ step: number; total: number }> = [];
+		manager.onStepChange((step, total) => changes.push({ step, total }));
+
+		manager.load({ steps: [new SpyStep()] });
+
+		manager.next();
+		let guard = 0;
+		while (!manager.finished && guard++ < 100) {
+			manager.advanceFrame(0.1);
+		}
+
+		expect(manager.finished).toBe(true);
+		// Emits: load (step 0), animation start (step 0, playing), finish (step 1).
+		expect(changes).toEqual([
+			{ step: 0, total: 1 },
+			{ step: 0, total: 1 },
+			{ step: 1, total: 1 }
+		]);
+	});
+});
+
+describe('SceneManager playing state', () => {
+	it('reports playing while a step animates and stops when it completes', () => {
+		const manager = new SceneManager();
+		manager.enableRenderMode();
+		manager.load({ steps: [new SpyStep(), new SpyStep()] });
+
+		expect(manager.playing).toBe(false);
+
+		manager.next();
+		expect(manager.playing).toBe(true);
+
+		manager.advanceFrame(1);
+		expect(manager.playing).toBe(false);
+		expect(manager.stepCompleted).toBe(true);
+	});
+
+	it('plays the current step in place via play() without advancing', () => {
+		const manager = new SceneManager();
+		manager.enableRenderMode();
+		const step = new SpyStep();
+		manager.load({ steps: [step] });
+
+		manager.play();
+		expect(manager.playing).toBe(true);
+
+		manager.advanceFrame(1);
+		expect(step.ends).toBe(1);
+		expect(manager.step).toBe(0);
+	});
+});
+
+describe('SceneManager seek', () => {
+	function loaded() {
+		const manager = new SceneManager();
+		manager.enableRenderMode();
+		const steps = [new SpyStep(), new SpyStep(), new SpyStep()];
+		manager.load({ steps });
+		return { manager, steps };
+	}
+
+	it('positions the loaded scene at a step without animating or replaying the entrance', () => {
+		const { manager } = loaded();
+
+		manager.seek(1);
+
+		expect(manager.step).toBe(1);
+		expect(manager.finished).toBe(false);
+		expect(manager.isAnimating).toBe(false);
+		expect(manager.transitionState.opacity).toBe(1);
+	});
+
+	it('emits a step change and reaches the finished phase on the last step', () => {
+		const { manager } = loaded();
+
+		const changes: Array<{ step: number; total: number }> = [];
+		manager.onStepChange((step, total) => changes.push({ step, total }));
+
+		manager.seek(2, false, true);
+
+		expect(manager.finished).toBe(true);
+		expect(manager.step).toBe(2);
+		expect(changes).toContainEqual({ step: 3, total: 3 });
+	});
+
+	it('marks the current step as completed without advancing the next step', () => {
+		const { manager } = loaded();
+
+		manager.seek(1, true, false);
+
+		expect(manager.step).toBe(1);
+		expect(manager.stepCompleted).toBe(true);
+		expect(manager.finished).toBe(false);
+		expect(manager.isAnimating).toBe(false);
+	});
+
+	it('leaves the manager at the start when seeking step 0', () => {
+		const { manager } = loaded();
+
+		manager.seek(0);
+
+		expect(manager.step).toBe(0);
+		expect(manager.finished).toBe(false);
+	});
+
+	it('reverts steps in reverse when seeking backwards', () => {
+		const { manager, steps } = loaded();
+
+		manager.seek(2, false, true);
+		const revertsAfterFinish = steps.map((s) => s.reverts);
+
+		manager.seek(0);
+
+		expect(manager.step).toBe(0);
+		expect(manager.finished).toBe(false);
+		expect(steps.map((s) => s.reverts)).toEqual([
+			revertsAfterFinish[0] + 1,
+			revertsAfterFinish[1] + 1,
+			revertsAfterFinish[2] + 1
+		]);
+	});
+});
