@@ -2,6 +2,7 @@ import { createContext } from 'svelte';
 import {
 	highlight,
 	onHighlighterReady,
+	onHighlighterRefresh,
 	type MorphToken,
 	type PositionedToken
 } from './highlighter';
@@ -513,9 +514,15 @@ export function createCodeState(language: string, initial: string): CodeState {
 		previousSelection: null
 	});
 
-	onHighlighterReady(() => {
+	onHighlighterReady(function refresh() {
 		if (state.tokens === null) {
 			state.settled = highlight(state.resolved, state.language);
+			// The highlighter may be ready while an extra language (e.g.
+			// `svelte`) is still loading; wait for the language-load
+			// notification and retry until the tokens resolve.
+			if (state.settled.length === 0 && state.resolved.length > 0) {
+				onHighlighterRefresh(refresh);
+			}
 		}
 	});
 

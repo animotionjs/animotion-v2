@@ -7,7 +7,15 @@ import {
 	type CodeState,
 	type RangeResolver
 } from '../code/code.svelte';
-import { diffStrings, highlight, type MorphToken, type PositionedToken } from '../code/highlighter';
+import {
+	diffStrings,
+	highlight,
+	isHighlighterReady,
+	onHighlighterReady,
+	onHighlighterRefresh,
+	type MorphToken,
+	type PositionedToken
+} from '../code/highlighter';
 import { clamp, clampRemap, easeInOut, lerp, type Easing } from '../easing';
 
 /**
@@ -431,10 +439,13 @@ export class ParallelStep implements Step {
  * Morphs a {@link CodeState} between two source versions. `start()` runs
  * `build()` and diffs the versions into morph tokens; when the language
  * changes, all existing tokens are deleted and the target is re-highlighted as
- * all-new creates. `setProgress` feeds the raw progress through the easing
- * into `morphProgress` (remapped within the 0.2..0.8 window), and the
- * resulting morph is committed on `end()`. `revert()` restores the full
- * pre-step snapshot.
+ * all-new creates. If the highlighter is not ready when the step starts (or an
+ * extra language is still loading), the diff is deferred and recomputed on the
+ * next highlighter readiness or language-load notification, so a step that
+ * begins before Shiki loads never commits empty tokens. `setProgress` feeds
+ * the raw progress through the easing into `morphProgress` (remapped within
+ * the 0.2..0.8 window), and the resulting morph is committed on `end()`.
+ * `revert()` restores the full pre-step snapshot.
  */
 export class CodeStep implements Step {
 	#codeState: CodeState;
@@ -453,6 +464,11 @@ export class CodeStep implements Step {
 	} | null = null;
 	#pendingResolved = '';
 	#pendingSettled: PositionedToken[] = [];
+	#from = '';
+	#to = '';
+	#langChanged = false;
+	#active = false;
+	#refreshArmed = false;
 
 	constructor(
 		codeState: CodeState,
@@ -473,7 +489,7 @@ export class CodeStep implements Step {
 	}
 
 	start() {
-		const langChanged = this.#language !== null && this.#language !== this.#codeState.language;
+		this.#langChanged = this.#language !== null && this.#language !== this.#codeState.language;
 		this.#snapshot = {
 			resolved: this.#codeState.resolved,
 			settled: this.#codeState.settled,
@@ -485,9 +501,20 @@ export class CodeStep implements Step {
 		};
 		this.#pendingResolved = this.#codeState.resolved;
 		this.#pendingSettled = this.#codeState.settled;
+		if (this.#langChanged) this.#codeState.language = this.#language!;
 		const { from, to, resolved } = this.#build();
-		if (langChanged) {
-			this.#codeState.language = this.#language!;
+		this.#from = from;
+		this.#to = to;
+		this.#active = true;
+		this.#applyDiff();
+		this.#codeState.rawProgress = 0;
+		this.#codeState.progress = 0;
+		this.#codeState.morphProgress = 0;
+		this.#pendingResolved = resolved;
+	}
+
+	#applyDiff() {
+		if (this.#langChanged) {
 			const deletes: MorphToken[] = this.#codeState.settled.map((t) => ({
 				code: t.code,
 				color: t.color,
@@ -495,7 +522,7 @@ export class CodeStep implements Step {
 				from: [t.col, t.line],
 				to: null
 			}));
-			const creates: MorphToken[] = highlight(to, this.#codeState.language).map((t) => ({
+			const creates: MorphToken[] = highlight(this.#to, this.#codeState.language).map((t) => ({
 				code: t.code,
 				color: t.color,
 				morph: 'create',
@@ -503,15 +530,33 @@ export class CodeStep implements Step {
 				to: [t.col, t.line]
 			}));
 			this.#codeState.tokens = [...deletes, ...creates];
-			this.#pendingSettled = highlight(to, this.#codeState.language);
+			this.#pendingSettled = highlight(this.#to, this.#codeState.language);
 		} else {
-			this.#codeState.tokens = diffStrings(from, to, this.#codeState.language);
-			this.#pendingSettled = highlight(to, this.#codeState.language);
+			this.#codeState.tokens = diffStrings(this.#from, this.#to, this.#codeState.language);
+			this.#pendingSettled = highlight(this.#to, this.#codeState.language);
 		}
-		this.#codeState.rawProgress = 0;
-		this.#codeState.progress = 0;
-		this.#codeState.morphProgress = 0;
-		this.#pendingResolved = resolved;
+		const stillEmpty = this.#codeState.tokens.length === 0 && this.#pendingSettled.length === 0;
+		if (stillEmpty) {
+			this.#armRefresh();
+		} else {
+			this.#refreshArmed = false;
+		}
+	}
+
+	#armRefresh() {
+		if (this.#refreshArmed) return;
+		this.#refreshArmed = true;
+		if (!isHighlighterReady()) {
+			onHighlighterReady(() => {
+				if (this.#active) this.#applyDiff();
+			});
+		} else {
+			// Highlighter is up but an extra language may still be loading;
+			// recompute on the next language-load notification.
+			onHighlighterRefresh(() => {
+				if (this.#active) this.#applyDiff();
+			});
+		}
 	}
 
 	setProgress(p: number) {
@@ -523,6 +568,8 @@ export class CodeStep implements Step {
 	}
 
 	end() {
+		this.#active = false;
+		this.#refreshArmed = false;
 		this.#codeState.resolved = this.#pendingResolved;
 		this.#codeState.settled = this.#pendingSettled;
 		this.#codeState.tokens = null;
@@ -532,6 +579,8 @@ export class CodeStep implements Step {
 	}
 
 	revert() {
+		this.#active = false;
+		this.#refreshArmed = false;
 		if (!this.#snapshot) return;
 		this.#codeState.resolved = this.#snapshot.resolved;
 		this.#codeState.settled = this.#snapshot.settled;

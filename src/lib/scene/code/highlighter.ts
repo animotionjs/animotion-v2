@@ -32,16 +32,28 @@ let generation = 0;
 const pendingLanguages = new Set<string>();
 let refreshCallbacks: (() => void)[] = [];
 
+let refreshWaiters: (() => void)[] = [];
+
+function notifyRefreshWaiters() {
+	const waiters = refreshWaiters;
+	refreshWaiters = [];
+	for (const waiter of waiters) waiter();
+}
+
 function runRefresh() {
 	const callbacks = refreshCallbacks;
 	refreshCallbacks = [];
 	for (const callback of callbacks) callback();
+	notifyRefreshWaiters();
 }
 
 function loadLanguages() {
 	if (!ready) return Promise.resolve();
 	return Promise.all(
 		[...pendingLanguages].map((language) => ready!.loadLanguage(language as never))
+	).then(
+		() => notifyRefreshWaiters(),
+		() => notifyRefreshWaiters()
 	);
 }
 
@@ -114,6 +126,21 @@ export function onHighlighterReady(callback: () => void) {
 		refreshCallbacks.push(callback);
 		ensureInit();
 	}
+}
+
+/** Whether the highlighter has been created and can tokenize. */
+export function isHighlighterReady(): boolean {
+	return ready !== null;
+}
+
+/**
+ * Calls `callback` on the next highlighter readiness or language-load
+ * notification. Unlike {@link onHighlighterReady}, it never invokes the
+ * callback synchronously, so a callback may re-register to wait for the next
+ * notification (for example while an extra language is still loading).
+ */
+export function onHighlighterRefresh(callback: () => void) {
+	refreshWaiters.push(callback);
 }
 
 /** Registers additional languages with the highlighter, loading them if needed. */
