@@ -151,6 +151,8 @@ export interface LayoutOptions {
 	enter?: LayoutTransition;
 	/** How removed elements animate out. Defaults to `'fade'`; `'none'` skips it. */
 	exit?: LayoutTransition;
+	/** Easing applied to every tween in the step. Defaults to `easeInOut`. */
+	ease?: Easing;
 }
 
 const DEFAULT_ENTER: LayoutTransition = 'fade';
@@ -214,13 +216,12 @@ export class LayoutStep implements Step {
 		state: Record<string, unknown>,
 		change: () => void,
 		duration: number,
-		ease: Easing = easeInOut,
 		options: LayoutOptions = {}
 	) {
 		this.#state = state;
 		this.#change = change;
 		this.#duration = duration;
-		this.#ease = ease;
+		this.#ease = options.ease ?? easeInOut;
 		this.#enter = options.enter ?? DEFAULT_ENTER;
 		this.#exit = options.exit ?? DEFAULT_EXIT;
 	}

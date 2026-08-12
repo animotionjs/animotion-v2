@@ -3,7 +3,7 @@
 
 	const scene = createScene({ opacity: 0, view: 'title' })
 		.tween('opacity', 1, 0.6)
-		.layout(() => (scene.view = 'circle'), 0.6, easeInOut, { enter: 'scale' });
+		.layout(() => (scene.view = 'logo'), 0.6, { ease: easeInOut, enter: 'scale' });
 </script>
 
 <div data-notes>
@@ -11,10 +11,9 @@
 	to move through the steps.
 </div>
 
-<div class="grid place-items-center gap-16">
-	<p data-layout="title" class="text-6xl font-bold" style:opacity={scene.opacity}>🪄 Animotion</p>
-
-	{#if scene.view === 'circle'}
-		<div data-layout="circle" class="h-48 w-48 rounded-full bg-amber-400"></div>
+<div class="text-6xl font-bold">
+	{#if scene.view === 'logo'}
+		<span data-layout="logo">🪄</span>
 	{/if}
+	<span data-layout="title" style:opacity={scene.opacity}>Animotion</span>
 </div>

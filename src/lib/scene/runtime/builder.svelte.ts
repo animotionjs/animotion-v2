@@ -38,7 +38,7 @@ import {
 export interface SceneBuilder<T> {
 	tween(key: keyof T, to: number, duration?: number, ease?: Easing): this;
 	tick(onTick: (frame: TickFrame) => void, duration?: number, ease?: Easing): this;
-	layout(change: () => void, duration?: number, ease?: Easing, options?: LayoutOptions): this;
+	layout(change: () => void, duration?: number, options?: LayoutOptions): this;
 	all(fn: (scene: this) => void): this;
 	transitionIn(fn: TransitionBuild): this;
 	transitionOut(fn: TransitionBuild): this;
@@ -139,13 +139,8 @@ export function createScene<T extends Object>(initial: T = {} as T) {
 	 * tagged with a `data-layout` key, runs `change`, then animates retained,
 	 * added, and removed elements per the `enter`/`exit` {@link LayoutOptions}.
 	 */
-	state.layout = function (
-		change: () => void,
-		duration = 0.5,
-		ease: Easing = easeInOut,
-		options?: LayoutOptions
-	) {
-		steps.push(new LayoutStep(state, change, duration, ease, options));
+	state.layout = function (change: () => void, duration = 0.5, options: LayoutOptions = {}) {
+		steps.push(new LayoutStep(state, change, duration, options));
 		return this;
 	};
 

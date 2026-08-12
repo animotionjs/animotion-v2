@@ -71,6 +71,23 @@ describe('LayoutStep', () => {
 		expect(el.style.opacity).toBe('');
 	});
 
+	it('applies a custom ease from options', () => {
+		setBody('');
+		const step = new LayoutStep(
+			{},
+			() => {
+				setBody('<div data-layout="a" style="width:100px;height:50px"></div>');
+			},
+			0.5,
+			{ enter: 'scale', ease: () => 0 }
+		);
+		step.start();
+
+		const el = element('[data-layout="a"]');
+		step.setProgress(1);
+		expect(el.style.transform).toBe('scale(0)');
+	});
+
 	it('scales in when enter is scale', () => {
 		setBody('');
 		const step = new LayoutStep(
@@ -79,7 +96,6 @@ describe('LayoutStep', () => {
 				setBody('<div data-layout="a" style="width:100px;height:50px"></div>');
 			},
 			0.5,
-			undefined,
 			{ enter: 'scale' }
 		);
 		step.start();
@@ -103,7 +119,6 @@ describe('LayoutStep', () => {
 				setBody('<div data-layout="a" style="width:100px;height:50px"></div>');
 			},
 			0.5,
-			undefined,
 			{ enter: 'clip' }
 		);
 		step.start();
@@ -126,7 +141,6 @@ describe('LayoutStep', () => {
 				setBody('<div data-layout="a" style="width:100px;height:50px"></div>');
 			},
 			0.5,
-			undefined,
 			{ enter: 'wipe' }
 		);
 		step.start();
@@ -149,7 +163,6 @@ describe('LayoutStep', () => {
 				setBody('<div data-layout="a" style="width:100px;height:50px"></div>');
 			},
 			0.5,
-			undefined,
 			{ enter: 'none' }
 		);
 		step.start();
@@ -209,7 +222,6 @@ describe('LayoutStep', () => {
 				setBody('');
 			},
 			0.5,
-			undefined,
 			{ exit: 'scale' }
 		);
 		step.start();
@@ -232,7 +244,6 @@ describe('LayoutStep', () => {
 				setBody('');
 			},
 			0.5,
-			undefined,
 			{ exit: 'clip' }
 		);
 		step.start();
@@ -257,7 +268,6 @@ describe('LayoutStep', () => {
 				setBody('');
 			},
 			0.5,
-			undefined,
 			{ exit: 'none' }
 		);
 		step.start();
