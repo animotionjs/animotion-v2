@@ -1,5 +1,4 @@
 <script lang="ts">
-	import favicon from '../assets/favicon.svg';
 	import '../styles/theme.css';
 
 	let { children } = $props();
@@ -7,7 +6,7 @@
 
 <svelte:head>
 	<title>Animotion</title>
-	<link rel="icon" href={favicon} />
+	<link rel="icon" href="https://fav.farm/🪄" />
 </svelte:head>
 
 {@render children()}
