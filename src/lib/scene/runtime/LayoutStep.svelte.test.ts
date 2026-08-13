@@ -62,7 +62,7 @@ describe('LayoutStep', () => {
 		expect(el.style.width).toBe('');
 	});
 
-	it('tweens width and height for a resized element', () => {
+	it('morphs a resized element via a transform scale', () => {
 		setBody('<div data-layout="a" style="width:100px;height:50px"></div>');
 		const step = new LayoutStep(
 			{},
@@ -74,20 +74,27 @@ describe('LayoutStep', () => {
 		);
 		step.start();
 
+		// The box is pinned at its final size and transformed back to its
+		// previous one, so its edges scale at float precision (no stepping).
 		const el = element('[data-layout="a"]');
-		expect(el.style.width).toBe('100px');
-		expect(el.style.height).toBe('50px');
+		expect(el.style.width).toBe('200px');
+		expect(el.style.height).toBe('80px');
+		expect(el.style.transformOrigin).toBe('left top');
+		expect(el.style.transform).toBe('translate(0px, 0px) scale(0.5, 0.625)');
 		expect(el.style.minWidth).toBe('auto');
 		expect(el.style.maxWidth).toBe('none');
+		expect(el.getBoundingClientRect().width).toBeCloseTo(100, 1);
 
 		step.setProgress(0.5);
-		expect(el.style.width).toBe('150px');
-		expect(el.style.height).toBe('65px');
+		expect(el.style.transform).toBe('translate(0px, 0px) scale(0.75, 0.8125)');
 
 		step.setProgress(1);
+		expect(el.style.transform).toBe('translate(0px, 0px) scale(1, 1)');
+
 		step.end();
 		expect(el.style.width).toBe('');
 		expect(el.style.height).toBe('');
+		expect(el.style.transform).toBe('');
 		expect(el.style.minWidth).toBe('');
 	});
 
@@ -107,19 +114,76 @@ describe('LayoutStep', () => {
 		);
 		step.start();
 
-		// The element is pinned out of flow at its previous bounds via
-		// left/top, so the first frame must land there rather than being
-		// pushed further by a translate.
+		// Pinned at the final (centered) bounds, with the transform translating
+		// back to the previous (also centered) bounds, so the first frame lands
+		// where the element was rather than being pushed further.
 		const el = element('[data-layout="a"]');
 		const rect = el.getBoundingClientRect();
 		expect(rect.x).toBe(150);
 		expect(rect.y).toBe(125);
 		expect(el.style.position).toBe('absolute');
-		expect(el.style.left).toBe('150px');
-		expect(el.style.top).toBe('125px');
-		expect(el.style.transform).toBe('');
+		expect(el.style.left).toBe('100px');
+		expect(el.style.top).toBe('100px');
+		expect(el.style.transform).toBe('translate(50px, 25px) scale(0.5, 0.5)');
 
 		step.end();
+	});
+
+	it('counter-scales children so they stay crisp while their box grows', () => {
+		setBody(`
+			<div data-layout="box" style="width:100px;height:100px">
+				<div data-layout="child" style="width:40px;height:20px">text</div>
+			</div>
+		`);
+		const step = new LayoutStep(
+			{},
+			() => {
+				element('[data-layout="box"]').style.width = '200px';
+				element('[data-layout="box"]').style.height = '200px';
+			},
+			0.5
+		);
+		step.start();
+
+		const box = element('[data-layout="box"]');
+		const child = element('[data-layout="child"]');
+		expect(box.style.transform).toBe('translate(0px, 0px) scale(0.5, 0.5)');
+		// The box scales to half; the child cancels it with scale(2) so its
+		// rendered size stays 40px throughout.
+		expect(child.style.transform).toBe('translate(0px, 0px) scale(2, 2)');
+		expect(child.getBoundingClientRect().width).toBeCloseTo(40, 1);
+
+		step.setProgress(0.5);
+		expect(child.getBoundingClientRect().width).toBeCloseTo(40, 1);
+
+		step.setProgress(1);
+		expect(child.style.transform).toBe('translate(0px, 0px) scale(1, 1)');
+
+		step.end();
+		expect(child.style.transform).toBe('');
+	});
+
+	it('counter-scales border-radius so corners stay put while the box grows', () => {
+		setBody('<div data-layout="a" style="width:100px;height:100px;border-radius:16px"></div>');
+		const step = new LayoutStep(
+			{},
+			() => {
+				element('[data-layout="a"]').style.width = '200px';
+			},
+			0.5
+		);
+		step.start();
+
+		const el = element('[data-layout="a"]');
+		// Height doesn't change (y-scale 1), so only the horizontal radius is
+		// counter-scaled: 16px set in a box scaled 0.5 renders 16px.
+		expect(el.style.borderRadius).toBe('32px / 16px');
+
+		step.setProgress(1);
+		expect(el.style.borderRadius).toBe('16px');
+
+		step.end();
+		expect(el.style.borderRadius).toBe('');
 	});
 
 	it('morphs border-radius when it changes', () => {

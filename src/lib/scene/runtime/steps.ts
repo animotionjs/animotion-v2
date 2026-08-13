@@ -166,6 +166,19 @@ interface LayoutTween {
 	transition: LayoutTransition;
 	/** flip-only: size and changed visual properties, each lerped by progress */
 	props: LayoutPropTween[];
+	/**
+	 * Present when the element morphs between sizes: `x`/`y` track the current
+	 * frame's scale so the border-radius can be counter-scaled against it.
+	 */
+	scale?: { x0: number; y0: number; x: number; y: number };
+	/**
+	 * Present when the nearest `data-layout` ancestor morphs between sizes:
+	 * the counter transform cancels the ancestor's scale so this element's
+	 * content never stretches with it.
+	 */
+	parentScale?: { x0: number; y0: number };
+	/** this element's local left/top in the final layout, for the counter */
+	localFinal?: { x: number; y: number };
 }
 
 /** A single property interpolated between two computed values. */
@@ -336,8 +349,8 @@ function createLayoutPropTween(
 	return { prop, from: cap(from.values), to: cap(to.values), format: from.format };
 }
 
-/** Serializes a pixel value rounded to a whole pixel. */
-const px = (value: number) => `${Math.round(value)}px`;
+/** Serializes a pixel value rounded to one decimal. */
+const px = (value: number) => `${Math.round(value * 10) / 10}px`;
 
 function transitionValue(
 	transition: LayoutTransition,
@@ -414,9 +427,29 @@ export class LayoutStep implements Step {
 		const eased = this.#ease(progress);
 		for (const tween of this.#tweens) {
 			if (tween.mode === 'flip') {
+				if (tween.scale) {
+					tween.scale.x = lerp(tween.scale.x0, 1, eased);
+					tween.scale.y = lerp(tween.scale.y0, 1, eased);
+				}
+				let left: number | undefined;
+				let top: number | undefined;
 				for (const prop of tween.props) {
 					const values = prop.from.map((from, i) => from + (prop.to[i] - from) * eased);
 					tween.el.style.setProperty(prop.prop, prop.format(values));
+					if (prop.prop === 'left') left = values[0];
+					if (prop.prop === 'top') top = values[0];
+				}
+				if (tween.parentScale) {
+					// Cancel the ancestor's scale (this element never
+					// size-morphs itself, so its own transform is free) so it
+					// keeps its crisp size while the ancestor morphs.
+					const sPx = lerp(tween.parentScale.x0, 1, eased);
+					const sPy = lerp(tween.parentScale.y0, 1, eased);
+					const lx = left ?? tween.localFinal!.x;
+					const ly = top ?? tween.localFinal!.y;
+					tween.el.style.transform = `translate(${lx * (1 / sPx - 1)}px, ${
+						ly * (1 / sPy - 1)
+					}px) scale(${1 / sPx}, ${1 / sPy})`;
 				}
 			} else {
 				const value = transitionValue(
@@ -427,6 +460,18 @@ export class LayoutStep implements Step {
 				if (value.opacity !== undefined) tween.el.style.opacity = String(value.opacity);
 				if (value.transform !== undefined) tween.el.style.transform = value.transform;
 				if (value.clipPath !== undefined) tween.el.style.clipPath = value.clipPath;
+				if (tween.parentScale) {
+					// Counter-scale over the transition transform (applied last,
+					// in the unscaled space) so the element stays crisp.
+					const sPx = lerp(tween.parentScale.x0, 1, eased);
+					const sPy = lerp(tween.parentScale.y0, 1, eased);
+					const lx = tween.localFinal!.x;
+					const ly = tween.localFinal!.y;
+					const counter = `translate(${lx * (1 / sPx - 1)}px, ${
+						ly * (1 / sPy - 1)
+					}px) scale(${1 / sPx}, ${1 / sPy})`;
+					tween.el.style.transform = value.transform ? `${value.transform} ${counter}` : counter;
+				}
 			}
 		}
 	}
@@ -502,13 +547,35 @@ export class LayoutStep implements Step {
 			return { prev: { left: 0, top: 0 }, final: { left: 0, top: 0 } };
 		};
 
+		// Retained elements that morph between sizes scale via a transform (see
+		// below); children look this map up to cancel the ancestor's scale so
+		// their content stays crisp while the ancestor morphs.
+		const scalingAncestors = new Map<string, { x0: number; y0: number }>();
+		for (const [key, { rect }] of lastBounds) {
+			const prev = firstBounds.get(key);
+			if (prev && (prev.rect.width !== rect.width || prev.rect.height !== rect.height)) {
+				scalingAncestors.set(key, {
+					x0: prev.rect.width / rect.width,
+					y0: prev.rect.height / rect.height
+				});
+			}
+		}
+
+		const parentScaleOf = (el: HTMLElement) => {
+			// Skip the element itself, mirroring `originOf`.
+			const ancestor = el.parentElement?.closest('[data-layout]') as HTMLElement | null;
+			return ancestor ? scalingAncestors.get(ancestor.dataset.layout!) : undefined;
+		};
+
 		for (const [key, { el, rect, styles }] of lastBounds) {
 			const prev = firstBounds.get(key);
 			if (prev) {
 				// Take the element out of flow so the container's size tween
 				// can't re-lay-out it mid-animation (e.g. a flex row
-				// re-distributing), then glide position and size from the old
-				// bounds to the final ones via left/top/width/height.
+				// re-distributing). Position glides via left/top; size morphs
+				// via a transform so the box scales at float precision instead
+				// of re-laying-out fractional width/height each frame (which
+				// shimmers at slow durations).
 				const origin = originOf(el);
 				el.style.position = 'absolute';
 				// `top`/`left` position the margin box, so margins would shift
@@ -520,64 +587,114 @@ export class LayoutStep implements Step {
 				el.style.maxWidth = 'none';
 				el.style.maxHeight = 'none';
 				const props: LayoutPropTween[] = [];
-				if (prev.rect.left !== rect.left) {
+				const finalLeft = rect.left - origin.final.left;
+				const finalTop = rect.top - origin.final.top;
+				const sizeChanged = prev.rect.width !== rect.width || prev.rect.height !== rect.height;
+				let scale: { x0: number; y0: number; x: number; y: number } | undefined;
+				if (sizeChanged) {
+					// Pin the box at its final bounds and transform it back to
+					// its previous ones: translate() covers the move, scale()
+					// the size, anchored at the top-left so the box grows from
+					// where it was. Children counter-scale via `parentScale`.
+					el.style.left = px(finalLeft);
+					el.style.top = px(finalTop);
+					el.style.width = px(rect.width);
+					el.style.height = px(rect.height);
+					el.style.transformOrigin = 'top left';
+					scale = {
+						x0: prev.rect.width / rect.width,
+						y0: prev.rect.height / rect.height,
+						x: 1,
+						y: 1
+					};
 					props.push({
-						prop: 'left',
-						from: [prev.rect.left - origin.prev.left],
-						to: [rect.left - origin.final.left],
-						format: (values) => px(values[0])
+						prop: 'transform',
+						from: [
+							prev.rect.left - origin.prev.left - finalLeft,
+							prev.rect.top - origin.prev.top - finalTop,
+							scale.x0,
+							scale.y0
+						],
+						to: [0, 0, 1, 1],
+						format: (values) =>
+							`translate(${values[0]}px, ${values[1]}px) scale(${values[2]}, ${values[3]})`
 					});
-				}
-				if (prev.rect.top !== rect.top) {
-					props.push({
-						prop: 'top',
-						from: [prev.rect.top - origin.prev.top],
-						to: [rect.top - origin.final.top],
-						format: (values) => px(values[0])
-					});
-				}
-				if (prev.rect.width !== rect.width) {
-					props.push({
-						prop: 'width',
-						from: [prev.rect.width],
-						to: [rect.width],
-						format: (values) => px(values[0])
-					});
-				}
-				if (prev.rect.height !== rect.height) {
-					props.push({
-						prop: 'height',
-						from: [prev.rect.height],
-						to: [rect.height],
-						format: (values) => px(values[0])
-					});
+				} else {
+					if (prev.rect.left !== rect.left) {
+						props.push({
+							prop: 'left',
+							from: [prev.rect.left - origin.prev.left],
+							to: [finalLeft],
+							format: (values) => px(values[0])
+						});
+					}
+					if (prev.rect.top !== rect.top) {
+						props.push({
+							prop: 'top',
+							from: [prev.rect.top - origin.prev.top],
+							to: [finalTop],
+							format: (values) => px(values[0])
+						});
+					}
 				}
 				for (const prop of Object.keys(LAYOUT_PROPS)) {
-					const tween = createLayoutPropTween(
+					let tween = createLayoutPropTween(
 						prop,
 						prev.styles[prop],
 						styles[prop],
 						prop === 'border-radius' ? Math.min(rect.width, rect.height) / 2 : undefined
 					);
+					if (prop === 'border-radius' && scale) {
+						const radius = parseRadius(styles[prop]);
+						if (radius && radius.unit === 'px') {
+							// A scaling box stretches its border-radius with it,
+							// so emit an elliptical radius divided by the current
+							// scale to keep the corners at the tweened value.
+							const format = (values: number[]) => {
+								const horizontal = values.map((v) => `${v / scale!.x}px`);
+								const vertical = values.map((v) => `${v / scale!.y}px`);
+								return `${horizontal.join(' ')} / ${vertical.join(' ')}`;
+							};
+							tween = tween
+								? { ...tween, format }
+								: { prop, from: radius.values, to: radius.values, format };
+						}
+					}
 					if (tween) props.push(tween);
 				}
-				// Snap changed properties to their old values so the element stays
-				// visually at the start state until the first frame.
-				for (const prop of props) el.style.setProperty(prop.prop, prop.format(prop.from));
-				this.#tweens.push({ el, mode: 'flip', transition: 'none', props });
+				this.#tweens.push({
+					el,
+					mode: 'flip',
+					transition: 'none',
+					props,
+					scale,
+					parentScale: sizeChanged ? undefined : parentScaleOf(el),
+					localFinal: { x: finalLeft, y: finalTop }
+				});
 			} else {
 				// Pin newly added elements at their final spot, out of flow, so
 				// siblings re-flowing during the step can't shift them; animate
 				// in with the enter transition on top of that.
 				const origin = originOf(el);
+				const left = rect.left - origin.final.left;
+				const top = rect.top - origin.final.top;
 				el.style.position = 'absolute';
 				el.style.margin = '0';
-				el.style.left = px(rect.left - origin.final.left);
-				el.style.top = px(rect.top - origin.final.top);
+				el.style.left = px(left);
+				el.style.top = px(top);
 				el.style.width = px(rect.width);
 				el.style.height = px(rect.height);
 				this.#applyStart(el, this.#enter, 'enter');
-				this.#tweens.push({ el, mode: 'enter', transition: this.#enter, props: [] });
+				const parentScale = parentScaleOf(el);
+				if (parentScale) el.style.transformOrigin = 'top left';
+				this.#tweens.push({
+					el,
+					mode: 'enter',
+					transition: this.#enter,
+					props: [],
+					parentScale,
+					localFinal: { x: left, y: top }
+				});
 			}
 		}
 
@@ -593,6 +710,10 @@ export class LayoutStep implements Step {
 				props: []
 			});
 		}
+
+		// Snap every tween to its start state so the first painted frame shows
+		// the previous bounds (the transform pinning is only applied here).
+		this.setProgress(0);
 	}
 
 	#applyStart(el: HTMLElement, transition: LayoutTransition, direction: 'enter' | 'exit') {
