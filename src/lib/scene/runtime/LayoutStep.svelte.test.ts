@@ -149,12 +149,49 @@ describe('LayoutStep', () => {
 		const child = element('[data-layout="child"]');
 		expect(box.style.transform).toBe('translate(0px, 0px) scale(0.5, 0.5)');
 		// The box scales to half; the child cancels it with scale(2) so its
-		// rendered size stays 40px throughout.
+		// rendered size stays 40px and it stays anchored at the box's top-left.
 		expect(child.style.transform).toBe('translate(0px, 0px) scale(2, 2)');
 		expect(child.getBoundingClientRect().width).toBeCloseTo(40, 1);
+		expect(child.getBoundingClientRect().x).toBeCloseTo(box.getBoundingClientRect().x, 0);
 
 		step.setProgress(0.5);
 		expect(child.getBoundingClientRect().width).toBeCloseTo(40, 1);
+		expect(child.getBoundingClientRect().x).toBeCloseTo(box.getBoundingClientRect().x, 0);
+
+		step.setProgress(1);
+		expect(child.style.transform).toBe('translate(0px, 0px) scale(1, 1)');
+
+		step.end();
+		expect(child.style.transform).toBe('');
+	});
+
+	it('keeps a size-morphing child from inheriting its box scale', () => {
+		setBody(`
+			<div data-layout="box" style="width:100px;height:100px">
+				<div data-layout="child" style="width:80px;height:20px">text</div>
+			</div>
+		`);
+		const step = new LayoutStep(
+			{},
+			() => {
+				element('[data-layout="box"]').style.width = '200px';
+				element('[data-layout="child"]').style.width = '40px';
+			},
+			0.5
+		);
+		step.start();
+
+		const box = element('[data-layout="box"]');
+		const child = element('[data-layout="child"]');
+		expect(box.style.transform).toBe('translate(0px, 0px) scale(0.5, 1)');
+		// The child's own morph (80→40) is scale 2, divided by the box's 0.5
+		// so the box's scale isn't inherited on top: it renders at its old
+		// width (80), not 80 × 0.5.
+		expect(child.style.transform).toBe('translate(0px, 0px) scale(4, 1)');
+		expect(child.getBoundingClientRect().width).toBeCloseTo(80, 1);
+
+		step.setProgress(0.5);
+		expect(child.getBoundingClientRect().width).toBeCloseTo(60, 1);
 
 		step.setProgress(1);
 		expect(child.style.transform).toBe('translate(0px, 0px) scale(1, 1)');
