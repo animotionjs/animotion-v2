@@ -336,8 +336,8 @@ function createLayoutPropTween(
 	return { prop, from: cap(from.values), to: cap(to.values), format: from.format };
 }
 
-/** Serializes a pixel value rounded to one decimal. */
-const px = (value: number) => `${Math.round(value * 10) / 10}px`;
+/** Serializes a pixel value rounded to a whole pixel. */
+const px = (value: number) => `${Math.round(value)}px`;
 
 function transitionValue(
 	transition: LayoutTransition,
