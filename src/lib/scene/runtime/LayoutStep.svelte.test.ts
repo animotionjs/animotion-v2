@@ -47,22 +47,27 @@ describe('LayoutStep', () => {
 		step.start();
 
 		const el = element('[data-layout="a"]');
+		// Pinned at its final spot and transformed back to the previous one,
+		// so the position glides at float precision instead of stepping
+		// through device pixels.
 		expect(el.style.position).toBe('absolute');
-		expect(el.style.left).toBe('10px');
-		expect(el.style.top).toBe('10px');
+		expect(el.style.left).toBe('100px');
+		expect(el.style.top).toBe('100px');
+		expect(el.style.transform).toBe('translate(-90px, -90px)');
 
 		step.setProgress(0.5);
-		expect(el.style.left).toBe('55px');
-		expect(el.style.top).toBe('55px');
+		expect(el.style.transform).toBe('translate(-45px, -45px)');
 
 		step.setProgress(1);
+		expect(el.style.transform).toBe('translate(0px, 0px)');
+
 		step.end();
 		expect(el.style.left).toBe('');
 		expect(el.style.top).toBe('');
 		expect(el.style.width).toBe('');
 	});
 
-	it('morphs a resized element via a transform scale', () => {
+	it('morphs a resized element via width and height', () => {
 		setBody('<div data-layout="a" style="width:100px;height:50px"></div>');
 		const step = new LayoutStep(
 			{},
@@ -74,22 +79,25 @@ describe('LayoutStep', () => {
 		);
 		step.start();
 
-		// The box is pinned at its final size and transformed back to its
-		// previous one, so its edges scale at float precision (no stepping).
+		// The box is pinned at its final size and its width/height are lerped
+		// back to the previous bounds, so content (text, images) rasterizes at
+		// native size instead of being scaled and blurred.
 		const el = element('[data-layout="a"]');
-		expect(el.style.width).toBe('200px');
-		expect(el.style.height).toBe('80px');
-		expect(el.style.transformOrigin).toBe('left top');
-		expect(el.style.transform).toBe('translate(0px, 0px) scale(0.5, 0.625)');
+		expect(el.style.width).toBe('100px');
+		expect(el.style.height).toBe('50px');
+		expect(el.style.transform).toBe('');
 		expect(el.style.minWidth).toBe('auto');
 		expect(el.style.maxWidth).toBe('none');
 		expect(el.getBoundingClientRect().width).toBeCloseTo(100, 1);
+		expect(el.getBoundingClientRect().height).toBeCloseTo(50, 1);
 
 		step.setProgress(0.5);
-		expect(el.style.transform).toBe('translate(0px, 0px) scale(0.75, 0.8125)');
+		expect(el.style.width).toBe('150px');
+		expect(el.style.height).toBe('65px');
 
 		step.setProgress(1);
-		expect(el.style.transform).toBe('translate(0px, 0px) scale(1, 1)');
+		expect(el.style.width).toBe('200px');
+		expect(el.style.height).toBe('80px');
 
 		step.end();
 		expect(el.style.width).toBe('');
@@ -124,12 +132,12 @@ describe('LayoutStep', () => {
 		expect(el.style.position).toBe('absolute');
 		expect(el.style.left).toBe('100px');
 		expect(el.style.top).toBe('100px');
-		expect(el.style.transform).toBe('translate(50px, 25px) scale(0.5, 0.5)');
+		expect(el.style.transform).toBe('translate(50px, 25px)');
 
 		step.end();
 	});
 
-	it('counter-scales children so they stay crisp while their box grows', () => {
+	it('counter-scales children so they stay crisp while their box grows (scale: true)', () => {
 		setBody(`
 			<div data-layout="box" style="width:100px;height:100px">
 				<div data-layout="child" style="width:40px;height:20px">text</div>
@@ -141,7 +149,8 @@ describe('LayoutStep', () => {
 				element('[data-layout="box"]').style.width = '200px';
 				element('[data-layout="box"]').style.height = '200px';
 			},
-			0.5
+			0.5,
+			{ scale: true }
 		);
 		step.start();
 
@@ -165,7 +174,116 @@ describe('LayoutStep', () => {
 		expect(child.style.transform).toBe('');
 	});
 
-	it('keeps a size-morphing child from inheriting its box scale', () => {
+	it('keeps children crisp by morphing the box width and height', () => {
+		setBody(`
+			<div data-layout="box" style="width:100px;height:100px">
+				<div data-layout="child" style="width:40px;height:20px">text</div>
+			</div>
+		`);
+		const step = new LayoutStep(
+			{},
+			() => {
+				element('[data-layout="box"]').style.width = '200px';
+				element('[data-layout="box"]').style.height = '200px';
+			},
+			0.5
+		);
+		step.start();
+
+		const box = element('[data-layout="box"]');
+		const child = element('[data-layout="child"]');
+		// The box morphs its width/height (no scale), so the child never gets
+		// scaled or stretched and needs no counter-transform to stay crisp.
+		expect(box.style.width).toBe('100px');
+		expect(box.style.transform).toBe('');
+		expect(child.style.transform).toBe('');
+		expect(child.getBoundingClientRect().width).toBeCloseTo(40, 1);
+		expect(child.getBoundingClientRect().x).toBeCloseTo(box.getBoundingClientRect().x, 0);
+
+		step.setProgress(0.5);
+		expect(box.style.width).toBe('150px');
+		expect(child.getBoundingClientRect().width).toBeCloseTo(40, 1);
+		expect(child.getBoundingClientRect().x).toBeCloseTo(box.getBoundingClientRect().x, 0);
+
+		step.setProgress(1);
+		expect(box.style.width).toBe('200px');
+
+		step.end();
+		expect(box.style.transform).toBe('');
+		expect(child.style.transform).toBe('');
+	});
+
+	it('counter-scales direct text against an anisotropic scaling box (scale: true)', () => {
+		setBody(`
+			<div data-layout="box" style="width:100px;height:100px">
+				<div data-layout="title" style="font-size:20px">Title</div>
+			</div>
+		`);
+		const step = new LayoutStep(
+			{},
+			() => {
+				const box = element('[data-layout="box"]');
+				box.style.width = '200px';
+				box.style.height = '50px';
+			},
+			0.5,
+			{ scale: true }
+		);
+		step.start();
+
+		// Text is never scaled (that would distort its glyphs); instead it is
+		// pinned at its final bounds and counter-scaled against the box's
+		// anisotropic morph so its rendered size stays constant.
+		const title = element('[data-layout="title"]');
+		expect(ghosts('[data-layout="title"]').length).toBe(0);
+		expect(title.style.visibility).toBe('');
+		expect(title.style.width).toBe('200px');
+		expect(title.style.transform).toBe('translate(0px, 0px) scale(2, 0.5)');
+
+		step.setProgress(0.5);
+		step.setProgress(1);
+		expect(title.style.transform).toBe('translate(0px, 0px) scale(1, 1)');
+
+		step.end();
+		expect(title.style.transform).toBe('');
+		expect(title.style.width).toBe('');
+	});
+
+	it('keeps direct text unscaled while its box morphs', () => {
+		setBody(`
+			<div data-layout="box" style="width:100px;height:100px">
+				<div data-layout="title" style="font-size:20px">Title</div>
+			</div>
+		`);
+		const step = new LayoutStep(
+			{},
+			() => {
+				const box = element('[data-layout="box"]');
+				box.style.width = '200px';
+				box.style.height = '50px';
+			},
+			0.5
+		);
+		step.start();
+
+		// Text is never scaled or re-laid-out: it is pinned at its final bounds
+		// and doesn't move here, so its glyphs rasterize at native size.
+		const title = element('[data-layout="title"]');
+		expect(ghosts('[data-layout="title"]').length).toBe(0);
+		expect(title.style.visibility).toBe('');
+		expect(title.style.width).toBe('200px');
+		expect(title.style.transform).toBe('');
+
+		step.setProgress(0.5);
+		step.setProgress(1);
+		expect(title.style.transform).toBe('');
+
+		step.end();
+		expect(title.style.transform).toBe('');
+		expect(title.style.width).toBe('');
+	});
+
+	it('keeps a size-morphing child from inheriting its box scale (scale: true)', () => {
 		setBody(`
 			<div data-layout="box" style="width:100px;height:100px">
 				<div data-layout="child" style="width:80px;height:20px"></div>
@@ -177,7 +295,8 @@ describe('LayoutStep', () => {
 				element('[data-layout="box"]').style.width = '200px';
 				element('[data-layout="child"]').style.width = '40px';
 			},
-			0.5
+			0.5,
+			{ scale: true }
 		);
 		step.start();
 
@@ -200,7 +319,67 @@ describe('LayoutStep', () => {
 		expect(child.style.transform).toBe('');
 	});
 
-	it('counter-scales border-radius so corners stay put while the box grows', () => {
+	it('morphs a size-changing child via width and height', () => {
+		setBody(`
+			<div data-layout="box" style="width:100px;height:100px">
+				<div data-layout="child" style="width:80px;height:20px"></div>
+			</div>
+		`);
+		const step = new LayoutStep(
+			{},
+			() => {
+				element('[data-layout="box"]').style.width = '200px';
+				element('[data-layout="child"]').style.width = '40px';
+			},
+			0.5
+		);
+		step.start();
+
+		const box = element('[data-layout="box"]');
+		const child = element('[data-layout="child"]');
+		expect(box.style.transform).toBe('');
+		// Both boxes morph width; the child's own width goes 80 → 40 without
+		// any scale, so it renders at its previous width (80) at the start.
+		expect(child.style.transform).toBe('');
+		expect(child.style.width).toBe('80px');
+		expect(child.getBoundingClientRect().width).toBeCloseTo(80, 1);
+
+		step.setProgress(0.5);
+		expect(child.getBoundingClientRect().width).toBeCloseTo(60, 1);
+
+		step.setProgress(1);
+		expect(child.style.width).toBe('40px');
+		expect(child.getBoundingClientRect().width).toBeCloseTo(40, 1);
+
+		step.end();
+		expect(child.style.transform).toBe('');
+	});
+
+	it('counter-scales border-radius so corners stay put while the box grows (scale: true)', () => {
+		setBody('<div data-layout="a" style="width:100px;height:100px;border-radius:16px"></div>');
+		const step = new LayoutStep(
+			{},
+			() => {
+				element('[data-layout="a"]').style.width = '200px';
+			},
+			0.5,
+			{ scale: true }
+		);
+		step.start();
+
+		const el = element('[data-layout="a"]');
+		// Height doesn't change (y-scale 1), so only the horizontal radius is
+		// counter-scaled: 16px set in a box scaled 0.5 renders 16px.
+		expect(el.style.borderRadius).toBe('32px / 16px');
+
+		step.setProgress(1);
+		expect(el.style.borderRadius).toBe('16px');
+
+		step.end();
+		expect(el.style.borderRadius).toBe('');
+	});
+
+	it('keeps a constant border-radius while the box grows', () => {
 		setBody('<div data-layout="a" style="width:100px;height:100px;border-radius:16px"></div>');
 		const step = new LayoutStep(
 			{},
@@ -212,9 +391,10 @@ describe('LayoutStep', () => {
 		step.start();
 
 		const el = element('[data-layout="a"]');
-		// Height doesn't change (y-scale 1), so only the horizontal radius is
-		// counter-scaled: 16px set in a box scaled 0.5 renders 16px.
-		expect(el.style.borderRadius).toBe('32px / 16px');
+		expect(el.style.width).toBe('100px');
+		// No scale, so the radius isn't stretched (kept at its inline 16px)
+		// and needs no counter-scale.
+		expect(el.style.borderRadius).toBe('16px');
 
 		step.setProgress(1);
 		expect(el.style.borderRadius).toBe('16px');
@@ -833,12 +1013,15 @@ describe('LayoutStep', () => {
 
 		// The child is flex-end: 450 in the 400-wide box at 100 → local 350;
 		// after the box moves to 200 and shrinks, it sits at 350 → local 150.
-		// Both are relative to the box's previous and final positions.
+		// It is pinned at its final local spot and translated back (the box's
+		// own translate rides along) so it still lands where it was.
 		const child = element('[data-layout="child"]');
 		expect(child.style.position).toBe('absolute');
-		expect(child.style.left).toBe('350px');
+		expect(child.style.left).toBe('150px');
+		expect(child.style.transform).toBe('translate(200px, 0px)');
 
 		step.setProgress(1);
+		expect(child.style.transform).toBe('translate(0px, 0px)');
 		expect(child.style.left).toBe('150px');
 
 		step.end();

@@ -153,6 +153,14 @@ export interface LayoutOptions {
 	exit?: LayoutTransition;
 	/** Easing applied to every tween in the step. Defaults to `easeInOut`. */
 	ease?: Easing;
+	/**
+	 * Morph size changes with `transform: scale` instead of `width`/`height`.
+	 * Scale stays on the compositor and never triggers layout, but rasterizes
+	 * nested text and images at a changing scale (blurring or shimmering
+	 * them); `width`/`height` re-lays-out every frame but keeps content crisp.
+	 * Defaults to `false` (the GSAP Flip default).
+	 */
+	scale?: boolean;
 }
 
 const DEFAULT_ENTER: LayoutTransition = 'fade';
@@ -164,11 +172,24 @@ interface LayoutTween {
 	el: HTMLElement;
 	mode: LayoutMode;
 	transition: LayoutTransition;
-	/** flip-only: size and changed visual properties, each lerped by progress */
+	/** flip-only: changed visual properties, each lerped by progress */
 	props: LayoutPropTween[];
 	/**
-	 * Present when the element morphs between sizes: `x`/`y` track the current
-	 * frame's scale so the border-radius can be counter-scaled against it.
+	 * flip-only: the position offset (previous minus final local position).
+	 * Pinned at its final bounds, the element is transformed back to its
+	 * previous spot and glides forward; a transform keeps the motion at float
+	 * precision instead of stepping through device pixels like left/top.
+	 */
+	offset?: { x: number; y: number };
+	/**
+	 * flip-only (default mode): the box's previous and final bounds, lerped as
+	 * `width`/`height` so nested text and images rasterize at native size.
+	 */
+	size?: { fromW: number; fromH: number; toW: number; toH: number };
+	/**
+	 * flip-only (`scale: true`): present when the element morphs between sizes;
+	 * `x`/`y` track the current frame's scale so the border-radius can be
+	 * counter-scaled against it.
 	 */
 	scale?: { x0: number; y0: number; x: number; y: number };
 	/**
@@ -177,12 +198,6 @@ interface LayoutTween {
 	 * content never stretches with it.
 	 */
 	parentScale?: { x0: number; y0: number };
-	/**
-	 * Present when the element size-morphs inside a scaling parent: its own
-	 * translate/scale from-values, computed against the parent's scale each
-	 * frame instead of as a linear prop tween.
-	 */
-	morph?: { tx0: number; ty0: number; sx0: number; sy0: number };
 	/** this element's local left/top in the final layout, for the counter */
 	localFinal?: { x: number; y: number };
 }
@@ -407,6 +422,7 @@ export class LayoutStep implements Step {
 	#ease: Easing;
 	#enter: LayoutTransition;
 	#exit: LayoutTransition;
+	#scale: boolean;
 	#snapshot: Record<string, unknown> = {};
 	#tweens: LayoutTween[] = [];
 
@@ -422,6 +438,7 @@ export class LayoutStep implements Step {
 		this.#ease = options.ease ?? easeInOut;
 		this.#enter = options.enter ?? DEFAULT_ENTER;
 		this.#exit = options.exit ?? DEFAULT_EXIT;
+		this.#scale = options.scale ?? false;
 	}
 
 	get duration(): number {
@@ -433,44 +450,37 @@ export class LayoutStep implements Step {
 		const eased = this.#ease(progress);
 		for (const tween of this.#tweens) {
 			if (tween.mode === 'flip') {
+				const scaleX = tween.scale ? lerp(tween.scale.x0, 1, eased) : 1;
+				const scaleY = tween.scale ? lerp(tween.scale.y0, 1, eased) : 1;
 				if (tween.scale) {
-					tween.scale.x = lerp(tween.scale.x0, 1, eased);
-					tween.scale.y = lerp(tween.scale.y0, 1, eased);
+					tween.scale.x = scaleX;
+					tween.scale.y = scaleY;
 				}
-				let left: number | undefined;
-				let top: number | undefined;
+				const dx = tween.offset ? lerp(tween.offset.x, 0, eased) : 0;
+				const dy = tween.offset ? lerp(tween.offset.y, 0, eased) : 0;
 				for (const prop of tween.props) {
 					const values = prop.from.map((from, i) => from + (prop.to[i] - from) * eased);
 					tween.el.style.setProperty(prop.prop, prop.format(values));
-					if (prop.prop === 'left') left = values[0];
-					if (prop.prop === 'top') top = values[0];
+				}
+				if (tween.size) {
+					tween.el.style.width = `${lerp(tween.size.fromW, tween.size.toW, eased)}px`;
+					tween.el.style.height = `${lerp(tween.size.fromH, tween.size.toH, eased)}px`;
 				}
 				if (tween.parentScale) {
+					// The element is pinned at its final local spot; cancel the
+					// ancestor's scale (net scale 1) while the position glides
+					// inside the ancestor's scaled space.
 					const sPx = lerp(tween.parentScale.x0, 1, eased);
 					const sPy = lerp(tween.parentScale.y0, 1, eased);
-					if (tween.morph) {
-						// Size-morph inside a scaling parent: apply the own
-						// morph divided by the parent's current scale so the
-						// parent's scale isn't inherited on top of it.
-						const mTx = lerp(tween.morph.tx0, 0, eased);
-						const mTy = lerp(tween.morph.ty0, 0, eased);
-						const mSx = lerp(tween.morph.sx0, 1, eased);
-						const mSy = lerp(tween.morph.sy0, 1, eased);
-						const fx = tween.localFinal!.x;
-						const fy = tween.localFinal!.y;
-						tween.el.style.transform = `translate(${(fx + mTx) / sPx - fx}px, ${
-							(fy + mTy) / sPy - fy
-						}px) scale(${mSx / sPx}, ${mSy / sPy})`;
-					} else {
-						// Cancel the ancestor's scale (this element never
-						// size-morphs itself, so its own transform is free) so
-						// it keeps its crisp size while the ancestor morphs.
-						const lx = left ?? tween.localFinal!.x;
-						const ly = top ?? tween.localFinal!.y;
-						tween.el.style.transform = `translate(${lx * (1 / sPx - 1)}px, ${
-							ly * (1 / sPy - 1)
-						}px) scale(${1 / sPx}, ${1 / sPy})`;
-					}
+					const fx = tween.localFinal!.x;
+					const fy = tween.localFinal!.y;
+					const px = (fx + dx) / sPx - fx;
+					const py = (fy + dy) / sPy - fy;
+					tween.el.style.transform = `translate(${px}px, ${py}px) scale(${scaleX / sPx}, ${scaleY / sPy})`;
+				} else if (tween.scale) {
+					tween.el.style.transform = `translate(${dx}px, ${dy}px) scale(${scaleX}, ${scaleY})`;
+				} else if (tween.offset) {
+					tween.el.style.transform = `translate(${dx}px, ${dy}px)`;
 				}
 			} else {
 				const value = transitionValue(
@@ -570,7 +580,8 @@ export class LayoutStep implements Step {
 
 		// Retained elements that morph between sizes scale via a transform (see
 		// below); children look this map up to cancel the ancestor's scale so
-		// their content stays crisp while the ancestor morphs.
+		// their content stays crisp while the ancestor morphs. Only `scale: true`
+		// scales ancestors; the default width/height morph doesn't.
 		const scalingAncestors = new Map<string, { x0: number; y0: number }>();
 		for (const [key, { rect }] of lastBounds) {
 			const prev = firstBounds.get(key);
@@ -583,6 +594,7 @@ export class LayoutStep implements Step {
 		}
 
 		const parentScaleOf = (el: HTMLElement) => {
+			if (!this.#scale) return undefined;
 			// Skip the element itself, mirroring `originOf`.
 			const ancestor = el.parentElement?.closest('[data-layout]') as HTMLElement | null;
 			return ancestor ? scalingAncestors.get(ancestor.dataset.layout!) : undefined;
@@ -593,10 +605,9 @@ export class LayoutStep implements Step {
 			if (prev) {
 				// Take the element out of flow so the container's size tween
 				// can't re-lay-out it mid-animation (e.g. a flex row
-				// re-distributing). Position glides via left/top; size morphs
-				// via a transform so the box scales at float precision instead
-				// of re-laying-out fractional width/height each frame (which
-				// shimmers at slow durations).
+				// re-distributing). It is pinned at its final bounds and moved
+				// via a transform so position and size glide at float precision
+				// instead of re-laying-out fractional geometry each frame.
 				const origin = originOf(el);
 				el.style.position = 'absolute';
 				// `top`/`left` position the margin box, so margins would shift
@@ -607,9 +618,15 @@ export class LayoutStep implements Step {
 				el.style.minHeight = 'auto';
 				el.style.maxWidth = 'none';
 				el.style.maxHeight = 'none';
-				const props: LayoutPropTween[] = [];
 				const finalLeft = rect.left - origin.final.left;
 				const finalTop = rect.top - origin.final.top;
+				// Pin at the final bounds so a shrink-wrapped box (e.g. an
+				// absolutely-positioned text run that becomes a full-width block)
+				// doesn't snap to its final size when the step ends.
+				el.style.left = px(finalLeft);
+				el.style.top = px(finalTop);
+				el.style.width = px(rect.width);
+				el.style.height = px(rect.height);
 				// transform-scale stretches an element's own text, so a box whose
 				// size change comes from its content (a block filling the row vs.
 				// a shrink-wrapped flex item) is treated as position-only and
@@ -620,70 +637,37 @@ export class LayoutStep implements Step {
 				const sizeChanged =
 					(prev.rect.width !== rect.width || prev.rect.height !== rect.height) && !hasDirectText;
 				const parentScale = parentScaleOf(el);
-				let scale: { x0: number; y0: number; x: number; y: number } | undefined;
-				let morph: { tx0: number; ty0: number; sx0: number; sy0: number } | undefined;
-				if (sizeChanged) {
-					// Pin the box at its final bounds and transform it back to
-					// its previous ones: translate() covers the move, scale()
-					// the size, anchored at the top-left so the box grows from
-					// where it was. Children counter-scale via `parentScale`.
-					el.style.left = px(finalLeft);
-					el.style.top = px(finalTop);
-					el.style.width = px(rect.width);
-					el.style.height = px(rect.height);
-					el.style.transformOrigin = 'top left';
-					scale = {
-						x0: prev.rect.width / rect.width,
-						y0: prev.rect.height / rect.height,
-						x: 1,
-						y: 1
-					};
-					if (parentScale) {
-						// A size-morphing element inside a scaling parent would
-						// inherit the parent's scale on top of its own morph;
-						// its transform is recomputed against it each frame.
-						morph = {
-							tx0: prev.rect.left - origin.prev.left - finalLeft,
-							ty0: prev.rect.top - origin.prev.top - finalTop,
-							sx0: scale.x0,
-							sy0: scale.y0
-						};
-					} else {
-						props.push({
-							prop: 'transform',
-							from: [
-								prev.rect.left - origin.prev.left - finalLeft,
-								prev.rect.top - origin.prev.top - finalTop,
-								scale.x0,
-								scale.y0
-							],
-							to: [0, 0, 1, 1],
-							format: (values) =>
-								`translate(${values[0]}px, ${values[1]}px) scale(${values[2]}, ${values[3]})`
-						});
-					}
-				} else {
-					// A retained child of a scaling box gets the counter
-					// transform, whose scale must anchor at the top-left to
-					// cancel the parent's scale about the same point.
-					if (parentScale) el.style.transformOrigin = 'top left';
-					if (prev.rect.left !== rect.left) {
-						props.push({
-							prop: 'left',
-							from: [prev.rect.left - origin.prev.left],
-							to: [finalLeft],
-							format: (values) => px(values[0])
-						});
-					}
-					if (prev.rect.top !== rect.top) {
-						props.push({
-							prop: 'top',
-							from: [prev.rect.top - origin.prev.top],
-							to: [finalTop],
-							format: (values) => px(values[0])
-						});
-					}
-				}
+				const props: LayoutPropTween[] = [];
+				const offset =
+					prev.rect.left !== rect.left || prev.rect.top !== rect.top
+						? {
+								x: prev.rect.left - origin.prev.left - finalLeft,
+								y: prev.rect.top - origin.prev.top - finalTop
+							}
+						: undefined;
+				// Default mode morphs width/height so nested text and images
+				// rasterize at native size; `scale: true` pins the final size
+				// and scales the box back, keeping edges on the compositor but
+				// distorting its content.
+				const size =
+					!this.#scale && sizeChanged
+						? {
+								fromW: prev.rect.width,
+								fromH: prev.rect.height,
+								toW: rect.width,
+								toH: rect.height
+							}
+						: undefined;
+				const scale =
+					this.#scale && sizeChanged
+						? {
+								x0: prev.rect.width / rect.width,
+								y0: prev.rect.height / rect.height,
+								x: 1,
+								y: 1
+							}
+						: undefined;
+				if (this.#scale && (scale || parentScale)) el.style.transformOrigin = 'top left';
 				for (const prop of Object.keys(LAYOUT_PROPS)) {
 					let tween = createLayoutPropTween(
 						prop,
@@ -714,9 +698,10 @@ export class LayoutStep implements Step {
 					mode: 'flip',
 					transition: 'none',
 					props,
+					offset,
+					size,
 					scale,
 					parentScale,
-					morph,
 					localFinal: { x: finalLeft, y: finalTop }
 				});
 			} else {
