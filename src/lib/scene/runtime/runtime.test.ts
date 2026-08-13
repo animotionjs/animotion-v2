@@ -68,17 +68,19 @@ describe('SceneManager determinism for time slicing', () => {
 });
 
 describe('SceneManager resume after prev', () => {
-	it('restarts the current step when resuming after prev', () => {
+	it('starts the first step only when it is played', () => {
 		const manager = new SceneManager();
 		manager.enableRenderMode();
 
 		const step = new SpyStep();
 		manager.load({ steps: [step] });
 
-		expect(step.starts).toBe(1);
+		expect(step.starts).toBe(0);
 		expect(step.reverts).toBe(0);
 
 		manager.next();
+		expect(step.starts).toBe(1);
+
 		manager.advanceFrame(0.5);
 		expect(step.starts).toBe(1);
 
@@ -87,6 +89,17 @@ describe('SceneManager resume after prev', () => {
 
 		manager.next();
 		expect(step.starts).toBe(2);
+	});
+
+	it('starts the first step via play() when resumed in place', () => {
+		const manager = new SceneManager();
+		manager.enableRenderMode();
+
+		const step = new SpyStep();
+		manager.load({ steps: [step] });
+
+		manager.play();
+		expect(step.starts).toBe(1);
 	});
 });
 

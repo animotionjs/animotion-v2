@@ -139,7 +139,7 @@ export class TickStep implements Step {
 }
 
 /** Visual transition applied to entering/exiting `data-layout` elements. */
-export type LayoutTransition = 'fade' | 'scale' | 'clip' | 'wipe' | 'none';
+export type LayoutTransition = 'fade' | 'scale' | 'clip' | 'wipe' | 'slide' | 'none';
 
 /**
  * Enter/exit transitions for {@link LayoutStep}. Unset options default to
@@ -166,8 +166,176 @@ interface LayoutTween {
 	transition: LayoutTransition;
 	deltaX: number;
 	deltaY: number;
-	scaleX: number;
-	scaleY: number;
+	/** flip-only: size and changed visual properties, each lerped by progress */
+	props: LayoutPropTween[];
+}
+
+/** A single property interpolated between two computed values. */
+interface LayoutPropTween {
+	prop: string;
+	from: number[];
+	to: number[];
+	format: (values: number[]) => string;
+}
+
+/** Interpolatable view of a computed style value. */
+interface ParsedProp {
+	/** per-component numeric values (e.g. RGBA channels or radius corners) */
+	values: number[];
+	/** unit shared by every component; '' for unitless values (opacity, colors) */
+	unit: string;
+	/** serializes interpolated values back into a CSS string */
+	format: (values: number[]) => string;
+}
+
+function parseLength(value: string): ParsedProp | null {
+	// Computed styles can serialize large lengths in scientific notation
+	// (`rounded-full` resolves `calc(infinity * 1px)` to `3.35544e+07px`).
+	const match = value.match(/^(-?[\d.]+(?:e[+-]?\d+)?)(px|%|em|rem|cqi|cqw|ch|vh|vw)$/i);
+	if (!match) return null;
+	const unit = match[2];
+	return {
+		values: [Number(match[1])],
+		unit,
+		format: (values) => `${values[0]}${unit}`
+	};
+}
+
+/** Parses a color channel, mapping `%` to a 0-1 fraction. */
+function channel(value: string): number {
+	return value.endsWith('%') ? Number(value.slice(0, -1)) / 100 : Number(value);
+}
+
+/** Applies the sRGB transfer function and scales a channel to 0-255. */
+function toSrgb(c: number): number {
+	const v = Math.max(0, Math.min(1, c));
+	return Math.round((v <= 0.0031308 ? v * 12.92 : 1.055 * Math.pow(v, 1 / 2.4) - 0.055) * 255);
+}
+
+/** Converts OKLab coordinates (L in 0-1, a/b unbounded) to an sRGB triplet. */
+function oklabToRgb(lightness: number, a: number, b: number): [number, number, number] {
+	const l_ = lightness + 0.3963377774 * a + 0.2158037573 * b;
+	const m_ = lightness - 0.1055613458 * a - 0.0638541728 * b;
+	const s_ = lightness - 0.0894841775 * a - 1.291485548 * b;
+	const l = l_ * l_ * l_;
+	const m = m_ * m_ * m_;
+	const s = s_ * s_ * s_;
+	return [
+		toSrgb(4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s),
+		toSrgb(-1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s),
+		toSrgb(-0.0041960863 * l - 0.7034186147 * m + 1.707614701 * s)
+	];
+}
+
+function colorProp(rgb: [number, number, number], alpha: number): ParsedProp {
+	return {
+		values: [rgb[0], rgb[1], rgb[2], alpha],
+		unit: '',
+		format: (values) => `rgba(${values[0]}, ${values[1]}, ${values[2]}, ${values[3]})`
+	};
+}
+
+function parseColor(value: string): ParsedProp | null {
+	let match = value.match(
+		/^rgba?\(\s*([\d.]+)\s*[,/]\s*([\d.]+)\s*[,/]\s*([\d.]+)\s*(?:[,/]\s*([\d.]+)\s*)?\)$/i
+	);
+	if (match) {
+		const [, r, g, b, a] = match;
+		return colorProp([Number(r), Number(g), Number(b)], a === undefined ? 1 : Number(a));
+	}
+	// Tailwind's palette is OKLCH and its opacity modifiers resolve to OKLab,
+	// so both are normalized to sRGB before interpolating.
+	match = value.match(
+		/^oklch\(\s*(-?[\d.]+%?)\s+(-?[\d.]+%?)\s+(-?[\d.]+)\s*(?:\/\s*(-?[\d.]+%?)\s*)?\)$/i
+	);
+	if (match) {
+		const [, l, c, h, a] = match;
+		const hue = (Number(h) * Math.PI) / 180;
+		const chroma = channel(c);
+		return colorProp(
+			oklabToRgb(channel(l), chroma * Math.cos(hue), chroma * Math.sin(hue)),
+			a === undefined ? 1 : channel(a)
+		);
+	}
+	match = value.match(
+		/^oklab\(\s*(-?[\d.]+%?)\s+(-?[\d.]+)\s+(-?[\d.]+)\s*(?:\/\s*(-?[\d.]+%?)\s*)?\)$/i
+	);
+	if (match) {
+		const [, l, a_, b_, a] = match;
+		return colorProp(
+			oklabToRgb(channel(l), Number(a_), Number(b_)),
+			a === undefined ? 1 : channel(a)
+		);
+	}
+	return null;
+}
+
+function parseOpacity(value: string): ParsedProp | null {
+	const opacity = Number(value);
+	if (!Number.isFinite(opacity)) return null;
+	return {
+		values: [opacity],
+		unit: '',
+		format: (values) => `${values[0]}`
+	};
+}
+
+function parseRadius(value: string): ParsedProp | null {
+	const tokens = value.trim().split(/\s+/);
+	// Elliptical radii (e.g. `10px / 20px`) aren't interpolated.
+	if (tokens.includes('/')) return null;
+	const corners = tokens.map(parseLength);
+	if (corners.some((corner) => corner === null)) return null;
+	const unit = corners[0]!.unit;
+	if (corners.some((corner) => corner!.unit !== unit)) return null;
+	return {
+		values: corners.map((corner) => corner!.values[0]),
+		unit,
+		format: (values) => values.map((corner) => `${corner}${unit}`).join(' ')
+	};
+}
+
+/** Visual properties auto-tweened on retained elements when they change. */
+const LAYOUT_PROPS: Record<string, (value: string) => ParsedProp | null> = {
+	'background-color': parseColor,
+	color: parseColor,
+	'border-color': parseColor,
+	opacity: parseOpacity,
+	'font-size': parseLength,
+	'border-radius': parseRadius
+};
+
+/** Captures the tweenable properties of an element for later comparison. */
+function snapshotLayoutStyles(el: HTMLElement): Record<string, string> {
+	const computed = getComputedStyle(el);
+	const styles: Record<string, string> = {};
+	for (const prop of Object.keys(LAYOUT_PROPS)) {
+		styles[prop] = computed.getPropertyValue(prop);
+	}
+	return styles;
+}
+
+function createLayoutPropTween(
+	prop: string,
+	fromValue: string,
+	toValue: string,
+	capPx?: number
+): LayoutPropTween | null {
+	const parser = LAYOUT_PROPS[prop];
+	const from = parser(fromValue);
+	const to = parser(toValue);
+	if (!from || !to) return null;
+	if (from.unit !== to.unit || from.values.length !== to.values.length) return null;
+	if (from.values.every((value, i) => value === to.values[i])) return null;
+	// Radiuses above the box's fully-round size (like `rounded-full`, which
+	// resolves to an effectively-infinite value) render identically once CSS
+	// clamps them, so capping there keeps the tween from jumping to a huge
+	// number in the first frame and makes the morph visible instead.
+	const cap = (values: number[]) =>
+		capPx !== undefined && from.unit === 'px'
+			? values.map((value) => Math.min(value, capPx))
+			: values;
+	return { prop, from: cap(from.values), to: cap(to.values), format: from.format };
 }
 
 function transitionValue(
@@ -187,6 +355,16 @@ function transitionValue(
 		case 'wipe': {
 			const side = direction === 'enter' ? 100 * (1 - p) : 100 * p;
 			return { clipPath: `inset(0 ${side}% 0 0)` };
+		}
+		case 'slide': {
+			const offset = direction === 'enter' ? 100 * (1 - p) : 100 * p;
+			// Slide mostly into place first, then fade as the element settles,
+			// so the text is still translucent while it enters.
+			const fade = clampRemap(p, 0.4, 1, 0, 1);
+			return {
+				opacity: direction === 'enter' ? fade : 1 - fade,
+				transform: `translateY(${offset}%)`
+			};
 		}
 		case 'none':
 			return {};
@@ -235,7 +413,11 @@ export class LayoutStep implements Step {
 		const eased = this.#ease(progress);
 		for (const tween of this.#tweens) {
 			if (tween.mode === 'flip') {
-				tween.el.style.transform = `translate(${tween.deltaX * (1 - eased)}px, ${tween.deltaY * (1 - eased)}px) scale(${lerp(tween.scaleX, 1, eased)}, ${lerp(tween.scaleY, 1, eased)})`;
+				tween.el.style.transform = `translate(${tween.deltaX * (1 - eased)}px, ${tween.deltaY * (1 - eased)}px)`;
+				for (const prop of tween.props) {
+					const values = prop.from.map((from, i) => from + (prop.to[i] - from) * eased);
+					tween.el.style.setProperty(prop.prop, prop.format(values));
+				}
 			} else {
 				const value = transitionValue(
 					tween.transition,
@@ -261,11 +443,14 @@ export class LayoutStep implements Step {
 		}
 
 		const elements = [...document.querySelectorAll('[data-layout]')] as HTMLElement[];
-		const firstBounds = new Map<string, { el: HTMLElement; rect: DOMRect }>();
+		const firstBounds = new Map<
+			string,
+			{ el: HTMLElement; rect: DOMRect; styles: Record<string, string> }
+		>();
 		for (const el of elements) {
 			const rect = el.getBoundingClientRect();
 			if (rect.width > 0 && rect.height > 0) {
-				firstBounds.set(el.dataset.layout!, { el, rect });
+				firstBounds.set(el.dataset.layout!, { el, rect, styles: snapshotLayoutStyles(el) });
 			}
 		}
 
@@ -273,33 +458,75 @@ export class LayoutStep implements Step {
 		flushSync();
 
 		const lastElements = [...document.querySelectorAll('[data-layout]')] as HTMLElement[];
-		const lastBounds = new Map<string, { el: HTMLElement; rect: DOMRect }>();
+		const lastBounds = new Map<
+			string,
+			{ el: HTMLElement; rect: DOMRect; styles: Record<string, string> }
+		>();
 		for (const el of lastElements) {
 			const rect = el.getBoundingClientRect();
 			if (rect.width > 0 && rect.height > 0) {
-				lastBounds.set(el.dataset.layout!, { el, rect });
+				lastBounds.set(el.dataset.layout!, { el, rect, styles: snapshotLayoutStyles(el) });
 			}
 		}
 
 		this.#tweens = [];
 
-		for (const [key, { el, rect }] of lastBounds) {
+		for (const [key, { el, rect, styles }] of lastBounds) {
 			const prev = firstBounds.get(key);
 			if (prev) {
-				const deltaX = prev.rect.left - rect.left;
-				const deltaY = prev.rect.top - rect.top;
-				const scaleX = prev.rect.width / rect.width;
-				const scaleY = prev.rect.height / rect.height;
-				el.style.transformOrigin = 'top left';
-				el.style.transform = `translate(${deltaX}px, ${deltaY}px) scale(${scaleX}, ${scaleY})`;
+				// Apply the start state in place, then tween away from it. The
+				// element is squeezed to its previous size first so the
+				// translate below can be measured against the position that
+				// size produces: in centered containers shrinking the element
+				// re-centers it, and measuring after the squeeze keeps the
+				// translate from double-applying that shift.
+				el.style.width = `${prev.rect.width}px`;
+				el.style.height = `${prev.rect.height}px`;
+				// Override min/max so they can't clamp the animated width/height.
+				el.style.minWidth = 'auto';
+				el.style.minHeight = 'auto';
+				el.style.maxWidth = 'none';
+				el.style.maxHeight = 'none';
+				const squeezed = el.getBoundingClientRect();
+				const deltaX = prev.rect.left - squeezed.left;
+				const deltaY = prev.rect.top - squeezed.top;
+				el.style.transform = `translate(${deltaX}px, ${deltaY}px)`;
+				const props: LayoutPropTween[] = [];
+				if (prev.rect.width !== rect.width) {
+					props.push({
+						prop: 'width',
+						from: [prev.rect.width],
+						to: [rect.width],
+						format: (values) => `${Math.round(values[0] * 10) / 10}px`
+					});
+				}
+				if (prev.rect.height !== rect.height) {
+					props.push({
+						prop: 'height',
+						from: [prev.rect.height],
+						to: [rect.height],
+						format: (values) => `${Math.round(values[0] * 10) / 10}px`
+					});
+				}
+				for (const prop of Object.keys(LAYOUT_PROPS)) {
+					const tween = createLayoutPropTween(
+						prop,
+						prev.styles[prop],
+						styles[prop],
+						prop === 'border-radius' ? Math.min(rect.width, rect.height) / 2 : undefined
+					);
+					if (tween) props.push(tween);
+				}
+				// Snap changed properties to their old values so the element stays
+				// visually at the start state until the first frame.
+				for (const prop of props) el.style.setProperty(prop.prop, prop.format(prop.from));
 				this.#tweens.push({
 					el,
 					mode: 'flip',
 					transition: 'none',
 					deltaX,
 					deltaY,
-					scaleX,
-					scaleY
+					props
 				});
 			} else {
 				this.#applyStart(el, this.#enter, 'enter');
@@ -309,8 +536,7 @@ export class LayoutStep implements Step {
 					transition: this.#enter,
 					deltaX: 0,
 					deltaY: 0,
-					scaleX: 1,
-					scaleY: 1
+					props: []
 				});
 			}
 		}
@@ -326,8 +552,7 @@ export class LayoutStep implements Step {
 				transition: this.#exit,
 				deltaX: 0,
 				deltaY: 0,
-				scaleX: 1,
-				scaleY: 1
+				props: []
 			});
 		}
 	}
@@ -354,17 +579,26 @@ export class LayoutStep implements Step {
 		return ghost;
 	}
 
-	end() {
-		for (const tween of this.#tweens) {
-			if (tween.mode === 'exit') {
-				tween.el.remove();
-			} else {
-				tween.el.style.transform = '';
-				tween.el.style.opacity = '';
-				tween.el.style.clipPath = '';
-				tween.el.style.transformOrigin = '';
-			}
+	#clearStyles(tween: LayoutTween) {
+		if (tween.mode === 'exit') {
+			tween.el.remove();
+		} else {
+			tween.el.style.transform = '';
+			tween.el.style.opacity = '';
+			tween.el.style.clipPath = '';
+			tween.el.style.transformOrigin = '';
+			tween.el.style.width = '';
+			tween.el.style.height = '';
+			tween.el.style.minWidth = '';
+			tween.el.style.minHeight = '';
+			tween.el.style.maxWidth = '';
+			tween.el.style.maxHeight = '';
+			for (const prop of Object.keys(LAYOUT_PROPS)) tween.el.style.setProperty(prop, '');
 		}
+	}
+
+	end() {
+		for (const tween of this.#tweens) this.#clearStyles(tween);
 		this.#tweens = [];
 	}
 
@@ -372,16 +606,7 @@ export class LayoutStep implements Step {
 		for (const key of Object.keys(this.#snapshot)) {
 			this.#state[key] = this.#snapshot[key];
 		}
-		for (const tween of this.#tweens) {
-			if (tween.mode === 'exit') {
-				tween.el.remove();
-			} else {
-				tween.el.style.transform = '';
-				tween.el.style.opacity = '';
-				tween.el.style.clipPath = '';
-				tween.el.style.transformOrigin = '';
-			}
-		}
+		for (const tween of this.#tweens) this.#clearStyles(tween);
 		this.#tweens = [];
 		this.#snapshot = {};
 	}

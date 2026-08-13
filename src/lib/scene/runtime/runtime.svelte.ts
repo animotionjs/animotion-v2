@@ -295,7 +295,12 @@ export class SceneManager {
 				this.#stepCompleted = true;
 				this.#phase = 'paused';
 			} else {
-				this.#enterStep(this.#stepIndex);
+				// A fresh scene rests at its initial state; the first step is
+				// started on the first `next` (or a mirror's `play`). Starting
+				// it eagerly would show a layout step's mid-animation frame on
+				// load instead of the scene's true start.
+				this.#needsStart = true;
+				this.#phase = 'paused';
 			}
 		}
 
@@ -561,6 +566,10 @@ export class SceneManager {
 	 * a step change so the playing state propagates.
 	 */
 	play() {
+		if (this.#needsStart) {
+			this.#needsStart = false;
+			this.#enterStep(this.#stepIndex);
+		}
 		this.#playCurrent();
 	}
 

@@ -12,6 +12,14 @@ function element(selector: string): HTMLElement {
 	return document.querySelector(selector) as HTMLElement;
 }
 
+/** Parses a `rgb()`/`rgba()` string into channels, alpha defaulting to 1. */
+function parseRgba(value: string): number[] {
+	const match = value.match(/rgba?\(([\d.]+)[,\s/]+([\d.]+)[,\s/]+([\d.]+)(?:[,\s/]+([\d.]+))?\)/);
+	if (!match) return [];
+	const [, r, g, b, a] = match;
+	return [Number(r), Number(g), Number(b), a === undefined ? 1 : Number(a)];
+}
+
 function ghosts(selector: string): HTMLElement[] {
 	return [...document.querySelectorAll(selector)].filter(
 		(el) => (el as HTMLElement).style.position === 'fixed'
@@ -39,14 +47,291 @@ describe('LayoutStep', () => {
 		step.start();
 
 		const el = element('[data-layout="a"]');
-		expect(el.style.transform).toBe('translate(-90px, -90px) scale(1, 1)');
+		expect(el.style.transform).toBe('translate(-90px, -90px)');
 
 		step.setProgress(0.5);
-		expect(el.style.transform).toBe('translate(-45px, -45px) scale(1, 1)');
+		expect(el.style.transform).toBe('translate(-45px, -45px)');
 
 		step.setProgress(1);
 		step.end();
 		expect(el.style.transform).toBe('');
+		expect(el.style.width).toBe('');
+	});
+
+	it('tweens width and height for a resized element', () => {
+		setBody('<div data-layout="a" style="width:100px;height:50px"></div>');
+		const step = new LayoutStep(
+			{},
+			() => {
+				element('[data-layout="a"]').style.width = '200px';
+				element('[data-layout="a"]').style.height = '80px';
+			},
+			0.5
+		);
+		step.start();
+
+		const el = element('[data-layout="a"]');
+		expect(el.style.width).toBe('100px');
+		expect(el.style.height).toBe('50px');
+		expect(el.style.minWidth).toBe('auto');
+		expect(el.style.maxWidth).toBe('none');
+
+		step.setProgress(0.5);
+		expect(el.style.width).toBe('150px');
+		expect(el.style.height).toBe('65px');
+
+		step.setProgress(1);
+		step.end();
+		expect(el.style.width).toBe('');
+		expect(el.style.height).toBe('');
+		expect(el.style.minWidth).toBe('');
+	});
+
+	it('starts a resized centered element from its previous position', () => {
+		setBody(`
+			<div style="position:absolute;top:0;left:0;display:flex;align-items:center;justify-content:center;width:400px;height:300px">
+				<div data-layout="a" style="width:100px;height:50px"></div>
+			</div>
+		`);
+		const step = new LayoutStep(
+			{},
+			() => {
+				element('[data-layout="a"]').style.width = '200px';
+				element('[data-layout="a"]').style.height = '100px';
+			},
+			0.5
+		);
+		step.start();
+
+		// 100x50 centered in 400x300 sits at (150, 125); shrinking the grown
+		// element back to that size re-centers it, so the first frame must
+		// land there rather than being pushed further by the translate.
+		const el = element('[data-layout="a"]');
+		const rect = el.getBoundingClientRect();
+		expect(rect.x).toBe(150);
+		expect(rect.y).toBe(125);
+		expect(el.style.transform).toBe('translate(0px, 0px)');
+
+		step.end();
+	});
+
+	it('morphs border-radius when it changes', () => {
+		setBody('<div data-layout="a" style="width:100px;height:50px;border-radius:0px"></div>');
+		const step = new LayoutStep(
+			{},
+			() => {
+				element('[data-layout="a"]').style.borderRadius = '20px';
+			},
+			0.5
+		);
+		step.start();
+
+		const el = element('[data-layout="a"]');
+		expect(el.style.borderRadius).toBe('0px');
+
+		step.setProgress(0.5);
+		expect(parseFloat(el.style.borderRadius)).toBe(10);
+
+		step.setProgress(1);
+		step.end();
+		expect(el.style.borderRadius).toBe('');
+	});
+
+	it('clamps an oversized border-radius to the box size', () => {
+		setBody('<div data-layout="a" style="width:100px;height:50px;border-radius:0px"></div>');
+		const step = new LayoutStep(
+			{},
+			() => {
+				element('[data-layout="a"]').style.borderRadius = '9999px';
+			},
+			0.5
+		);
+		step.start();
+
+		// Anything above min(width, height) / 2 = 25px renders fully round
+		// anyway, so the tween is capped there to keep the morph visible.
+		const el = element('[data-layout="a"]');
+		expect(el.style.borderRadius).toBe('0px');
+
+		step.setProgress(0.5);
+		expect(parseFloat(el.style.borderRadius)).toBe(12.5);
+
+		step.setProgress(1);
+		expect(parseFloat(el.style.borderRadius)).toBe(25);
+
+		step.end();
+		expect(el.style.borderRadius).toBe('');
+	});
+
+	it('morphs a rounded-full radius reported in scientific notation', () => {
+		setBody('<div data-layout="a" style="width:100px;height:50px;border-radius:0px"></div>');
+		const step = new LayoutStep(
+			{},
+			() => {
+				// Chrome's computed value for `rounded-full` (calc(infinity * 1px)).
+				element('[data-layout="a"]').style.borderRadius = '3.35544e+07px';
+			},
+			0.5
+		);
+		step.start();
+
+		const el = element('[data-layout="a"]');
+		expect(el.style.borderRadius).toBe('0px');
+
+		step.setProgress(0.5);
+		expect(parseFloat(el.style.borderRadius)).toBe(12.5);
+
+		step.setProgress(1);
+		step.end();
+		expect(el.style.borderRadius).toBe('');
+	});
+
+	it('morphs background-color when it changes', () => {
+		setBody('<div data-layout="a" style="width:100px;height:50px;background-color:#000"></div>');
+		const step = new LayoutStep(
+			{},
+			() => {
+				element('[data-layout="a"]').style.backgroundColor = '#ffffff';
+			},
+			0.5
+		);
+		step.start();
+
+		const el = element('[data-layout="a"]');
+		expect(el.style.backgroundColor).toBe('rgb(0, 0, 0)');
+
+		step.setProgress(0.5);
+		expect(el.style.backgroundColor).toMatch(/^rgba?\(128, 128, 128/);
+
+		step.setProgress(1);
+		step.end();
+		expect(el.style.backgroundColor).toBe('');
+	});
+
+	it('morphs oklch colors (Tailwind palette)', () => {
+		setBody(
+			'<div data-layout="a" style="width:100px;height:50px;background-color:oklch(0.828 0.189 84.429)"></div>'
+		);
+		const step = new LayoutStep(
+			{},
+			() => {
+				element('[data-layout="a"]').style.backgroundColor = 'oklch(0.777 0.152 181.912)';
+			},
+			0.5
+		);
+		step.start();
+
+		const el = element('[data-layout="a"]');
+		// amber-400 (oklch) converts to rgb(255, 185, 0); teal-400 to
+		// rgb(0, 213, 190). Chromium reports teal as rgb(1, 212, 190) — the
+		// couple-unit gap is gamma rounding, invisible in practice.
+		expect(parseRgba(el.style.backgroundColor)).toEqual([255, 185, 0, 1]);
+
+		step.setProgress(0.5);
+		const mid = parseRgba(el.style.backgroundColor);
+		expect(mid[0]).toBe(Math.round((255 + 0) / 2));
+		expect(mid[1]).toBe(Math.round((185 + 213) / 2));
+		expect(mid[2]).toBe(Math.round((0 + 190) / 2));
+
+		step.setProgress(1);
+		expect(parseRgba(el.style.backgroundColor)).toEqual([0, 213, 190, 1]);
+
+		step.end();
+		expect(el.style.backgroundColor).toBe('');
+	});
+
+	it('morphs oklab colors with alpha (opacity modifiers)', () => {
+		setBody(
+			'<div data-layout="a" style="width:100px;height:50px;background-color:oklab(0.828 0.018 0.188 / 0.5)"></div>'
+		);
+		const step = new LayoutStep(
+			{},
+			() => {
+				element('[data-layout="a"]').style.backgroundColor = 'oklab(0.5 0 0 / 0.8)';
+			},
+			0.5
+		);
+		step.start();
+
+		const el = element('[data-layout="a"]');
+		const start = parseRgba(el.style.backgroundColor);
+		expect(start.slice(0, 3)).toEqual([255, 186, 0]);
+		expect(start[3]).toBe(0.5);
+
+		step.setProgress(1);
+		const end = parseRgba(el.style.backgroundColor);
+		expect(end.slice(0, 3)).toEqual([99, 99, 99]);
+		expect(end[3]).toBe(0.8);
+
+		step.end();
+		expect(el.style.backgroundColor).toBe('');
+	});
+
+	it('morphs between hex and oklch colors', () => {
+		setBody('<div data-layout="a" style="width:100px;height:50px;background-color:#fbbf24"></div>');
+		const step = new LayoutStep(
+			{},
+			() => {
+				element('[data-layout="a"]').style.backgroundColor = 'oklch(0.777 0.152 181.912)';
+			},
+			0.5
+		);
+		step.start();
+
+		const el = element('[data-layout="a"]');
+		expect(parseRgba(el.style.backgroundColor).slice(0, 3)).toEqual([251, 191, 36]);
+
+		step.setProgress(1);
+		expect(parseRgba(el.style.backgroundColor).slice(0, 3)).toEqual([0, 213, 190]);
+
+		step.end();
+		expect(el.style.backgroundColor).toBe('');
+	});
+
+	it('morphs border-color when it changes', () => {
+		setBody('<div data-layout="a" style="width:100px;height:50px;border:4px solid #000"></div>');
+		const step = new LayoutStep(
+			{},
+			() => {
+				element('[data-layout="a"]').style.borderColor = '#ffffff';
+			},
+			0.5
+		);
+		step.start();
+
+		const el = element('[data-layout="a"]');
+		expect(parseRgba(el.style.borderColor).slice(0, 3)).toEqual([0, 0, 0]);
+
+		step.setProgress(0.5);
+		expect(parseRgba(el.style.borderColor)[0]).toBe(128);
+
+		step.setProgress(1);
+		expect(parseRgba(el.style.borderColor).slice(0, 3)).toEqual([255, 255, 255]);
+
+		step.end();
+		expect(el.style.borderColor).toBe('');
+	});
+
+	it('morphs font-size when it changes', () => {
+		setBody('<div data-layout="a" style="font-size:16px">text</div>');
+		const step = new LayoutStep(
+			{},
+			() => {
+				element('[data-layout="a"]').style.fontSize = '32px';
+			},
+			0.5
+		);
+		step.start();
+
+		const el = element('[data-layout="a"]');
+		expect(el.style.fontSize).toBe('16px');
+
+		step.setProgress(0.5);
+		expect(el.style.fontSize).toBe('24px');
+
+		step.setProgress(1);
+		step.end();
+		expect(el.style.fontSize).toBe('');
 	});
 
 	it('fades in newly-appeared elements by default', () => {
@@ -275,6 +560,69 @@ describe('LayoutStep', () => {
 		expect(ghosts('[data-layout="a"]').length).toBe(0);
 	});
 
+	it('slides in from below when enter is slide', () => {
+		setBody('');
+		const step = new LayoutStep(
+			{},
+			() => {
+				setBody('<div data-layout="a" style="width:100px;height:50px"></div>');
+			},
+			0.5,
+			{ enter: 'slide' }
+		);
+		step.start();
+
+		const el = element('[data-layout="a"]');
+		expect(el.style.transform).toBe('translateY(100%)');
+		expect(el.style.opacity).toBe('0');
+
+		// The fade is delayed: still transparent through the first part of
+		// the slide (eased progress 0.08 < the 0.4 fade start).
+		step.setProgress(0.2);
+		expect(parseFloat(el.style.opacity)).toBe(0);
+
+		step.setProgress(0.5);
+		expect(el.style.transform).toBe('translateY(50%)');
+		expect(parseFloat(el.style.opacity)).toBeCloseTo(1 / 6);
+
+		step.setProgress(1);
+		step.end();
+		expect(el.style.transform).toBe('');
+		expect(el.style.opacity).toBe('');
+	});
+
+	it('slides out downward when exit is slide', () => {
+		setBody('<div data-layout="a" style="width:100px;height:50px"></div>');
+		const step = new LayoutStep(
+			{},
+			() => {
+				setBody('');
+			},
+			0.5,
+			{ exit: 'slide' }
+		);
+		step.start();
+
+		const ghost = ghosts('[data-layout="a"]')[0];
+		expect(ghost.style.transform).toBe('translateY(0%)');
+		expect(ghost.style.opacity).toBe('1');
+
+		// Stays opaque while it starts leaving; the fade happens near the end.
+		step.setProgress(0.2);
+		expect(parseFloat(ghost.style.opacity)).toBe(1);
+
+		step.setProgress(0.5);
+		expect(ghost.style.transform).toBe('translateY(50%)');
+		expect(parseFloat(ghost.style.opacity)).toBeCloseTo(5 / 6);
+
+		step.setProgress(1);
+		expect(ghost.style.transform).toBe('translateY(100%)');
+		expect(parseFloat(ghost.style.opacity)).toBe(0);
+
+		step.end();
+		expect(ghosts('[data-layout="a"]').length).toBe(0);
+	});
+
 	it('revert restores state, clears styles and removes ghosts', () => {
 		setBody('<div data-layout="a" style="width:100px;height:50px"></div>');
 		const state: Record<string, unknown> = { show: true };
@@ -315,7 +663,7 @@ describe('LayoutStep', () => {
 
 		const one = element('[data-layout="1"]');
 		expect(one.style.transform).not.toBe('');
-		expect(one.style.transformOrigin).not.toBe('');
+		expect(one.style.transformOrigin).toBe('');
 
 		const three = element('[data-layout="3"]');
 		expect(three.style.opacity).toBe('0');

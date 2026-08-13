@@ -49,7 +49,7 @@ layout(change, (duration = 0.5), { ease, enter, exit });
 
 For each element it decides what happened:
 
-- **Retained**: present in both states (like the title in the intro), glide from their old position and size to the new one via a translate + scale tween.
+- **Retained**: present in both states (like the title in the intro), glide from their old position and size to the new one — position via a translate tween, size via animated `width`/`height` (so text is never stretched the way a scale would). If their `border-radius`, `background-color`, `color`, `border-color`, `opacity`, or `font-size` changed, those morph along too.
 - **New**: added by the change (including `{#if}` and `{#each}` items), animate in with the `enter` transition.
 - **Removed**: dropped from the DOM by the change, cloned into a fixed-position "ghost" at their old spot, animated out with the `exit` transition, then removed.
 
@@ -65,7 +65,7 @@ Every animated element must carry a unique `data-layout` key so the step can mat
 
 FLIP motion and the `scale` transition are driven by `transform`, which browsers ignore on `display: inline` elements. The theme stylesheet automatically makes `span[data-layout]` `inline-block`, so animated spans work out of the box; other inline elements (`a`, `em`, `code`, …) need the same rule or a block-level element. `fade`, `clip`, and `wipe` work on plain inline elements since they only rely on `opacity`/`clip-path`.
 
-`enter` and `exit` accept `fade` (default), `scale`, `clip` (circle reveal), `wipe` (left-to-right), or `none`. `ease` defaults to `easeInOut`.
+`enter` and `exit` accept `fade` (default), `scale`, `clip` (circle reveal), `wipe` (left-to-right), `slide` (vertical: entering elements slide up in, exiting ones slide down out), or `none`. `ease` defaults to `easeInOut`.
 
 ## Scene transitions
 
