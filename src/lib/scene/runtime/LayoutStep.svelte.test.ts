@@ -168,7 +168,7 @@ describe('LayoutStep', () => {
 	it('keeps a size-morphing child from inheriting its box scale', () => {
 		setBody(`
 			<div data-layout="box" style="width:100px;height:100px">
-				<div data-layout="child" style="width:80px;height:20px">text</div>
+				<div data-layout="child" style="width:80px;height:20px"></div>
 			</div>
 		`);
 		const step = new LayoutStep(

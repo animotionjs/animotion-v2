@@ -610,7 +610,15 @@ export class LayoutStep implements Step {
 				const props: LayoutPropTween[] = [];
 				const finalLeft = rect.left - origin.final.left;
 				const finalTop = rect.top - origin.final.top;
-				const sizeChanged = prev.rect.width !== rect.width || prev.rect.height !== rect.height;
+				// transform-scale stretches an element's own text, so a box whose
+				// size change comes from its content (a block filling the row vs.
+				// a shrink-wrapped flex item) is treated as position-only and
+				// glides crisply instead of pixel-scaling its glyphs.
+				const hasDirectText = [...el.childNodes].some(
+					(node) => node.nodeType === Node.TEXT_NODE && node.textContent!.trim() !== ''
+				);
+				const sizeChanged =
+					(prev.rect.width !== rect.width || prev.rect.height !== rect.height) && !hasDirectText;
 				const parentScale = parentScaleOf(el);
 				let scale: { x0: number; y0: number; x: number; y: number } | undefined;
 				let morph: { tx0: number; ty0: number; sx0: number; sy0: number } | undefined;
