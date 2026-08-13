@@ -13,6 +13,7 @@ export type AspectRatio = keyof typeof ASPECT_RATIOS;
 const RESOLUTIONS = {
 	'720p': 720,
 	'1080p': 1080,
+	'2k': 1440,
 	'4k': 2160
 } as const;
 

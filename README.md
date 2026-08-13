@@ -228,7 +228,7 @@ configure({
   - `'video'` — 16:9, 1920×1080 (YouTube, X, presentations; default)
   - `'vertical'` — 9:16, 1080×1920 (Reels, TikTok, Shorts)
   - `'square'` — 1:1, 1080×1080 (Instagram feed)
-- `render` sets the default options used by `animotion render`. `resolution` picks a size tier — `'720p'`, `'1080p'`, `'4k'` — scaling the shape so its smaller side matches (e.g. `'4k'` gives 3840×2160 landscape, 2160×3840 vertical, 2160×2160 square). Explicit `width`/`height` override the tier; the remaining options fall back to their defaults.
+- `render` sets the default options used by `animotion render`. `resolution` picks a size tier — `'720p'`, `'1080p'`, `'2k'`, `'4k'` — scaling the shape so its smaller side matches (e.g. `'2k'` gives 2560×1440 landscape, `'4k'` gives 3840×2160 landscape, 2160×3840 vertical, 2160×2160 square). Explicit `width`/`height` override the tier; the remaining options fall back to their defaults.
 - `transition` sets the default scene transition: `{ type: 'slide' | 'fade' | 'zoom', duration?, ease?, distance?, scale? }` or `null` to disable. See [Default transition](#default-transition).
 
 Both highlighter options are typed against shiki's bundles, so editor autocomplete suggests the valid names.

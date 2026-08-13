@@ -7,6 +7,6 @@ configure({
 	aspectRatio: 'video',
 	render: {
 		fps: 60,
-		resolution: '1080p'
+		resolution: '2k'
 	}
 });

@@ -42,6 +42,9 @@ describe('options', () => {
 		setOptions({ aspectRatio: 'video', render: { resolution: '1080p' } });
 		expect(getOptions().render).toMatchObject({ width: 1920, height: 1080 });
 
+		setOptions({ aspectRatio: 'video', render: { resolution: '2k' } });
+		expect(getOptions().render).toMatchObject({ width: 2560, height: 1440 });
+
 		setOptions({ aspectRatio: 'video', render: { resolution: '4k' } });
 		expect(getOptions().render).toMatchObject({ width: 3840, height: 2160 });
 
