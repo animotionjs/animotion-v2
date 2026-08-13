@@ -685,4 +685,63 @@ describe('LayoutStep', () => {
 
 		unmount(app);
 	});
+
+	it('zeroes margins when pinning an entering element and restores them on end', () => {
+		setBody('<style>.my { margin: 16px 0; }</style>');
+		const step = new LayoutStep(
+			{},
+			() => {
+				setBody(
+					'<style>.my { margin: 16px 0; }</style><div data-layout="a" class="my" style="width:100px;height:10px"></div>'
+				);
+			},
+			0.5
+		);
+		step.start();
+
+		const el = element('[data-layout="a"]');
+		expect(el.style.position).toBe('absolute');
+		expect(el.style.margin).toBe('0px');
+		expect(getComputedStyle(el).marginTop).toBe('0px');
+
+		step.setProgress(0.5);
+		expect(el.style.opacity).toBe('0.5');
+
+		step.end();
+		expect(el.style.margin).toBe('');
+		expect(el.style.position).toBe('');
+		expect(getComputedStyle(el).marginTop).toBe('16px');
+	});
+
+	it('positions a nested element relative to its moving data-layout ancestor', () => {
+		setBody(`
+			<div data-layout="box" style="position:absolute;left:100px;top:100px;width:400px;height:100px;display:flex;justify-content:flex-end">
+				<div data-layout="child" style="width:50px;height:20px">child</div>
+			</div>
+		`);
+		const step = new LayoutStep(
+			{},
+			() => {
+				const box = element('[data-layout="box"]');
+				box.style.left = '200px';
+				box.style.width = '200px';
+			},
+			0.5
+		);
+		step.start();
+
+		// The child is flex-end: 450 in the 400-wide box at 100 → local 350;
+		// after the box moves to 200 and shrinks, it sits at 350 → local 150.
+		// Both are relative to the box's previous and final positions.
+		const child = element('[data-layout="child"]');
+		expect(child.style.position).toBe('absolute');
+		expect(child.style.left).toBe('350px');
+
+		step.setProgress(1);
+		expect(child.style.left).toBe('150px');
+
+		step.end();
+		expect(child.style.left).toBe('');
+		expect(child.style.position).toBe('');
+	});
 });

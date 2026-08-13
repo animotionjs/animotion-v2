@@ -511,6 +511,9 @@ export class LayoutStep implements Step {
 				// bounds to the final ones via left/top/width/height.
 				const origin = originOf(el);
 				el.style.position = 'absolute';
+				// `top`/`left` position the margin box, so margins would shift
+				// the border box; drop them and place the border box directly.
+				el.style.margin = '0';
 				// Override min/max so they can't clamp the animated width/height.
 				el.style.minWidth = 'auto';
 				el.style.minHeight = 'auto';
@@ -568,6 +571,7 @@ export class LayoutStep implements Step {
 				// in with the enter transition on top of that.
 				const origin = originOf(el);
 				el.style.position = 'absolute';
+				el.style.margin = '0';
 				el.style.left = px(rect.left - origin.final.left);
 				el.style.top = px(rect.top - origin.final.top);
 				el.style.width = px(rect.width);
@@ -622,6 +626,7 @@ export class LayoutStep implements Step {
 			tween.el.style.clipPath = '';
 			tween.el.style.transformOrigin = '';
 			tween.el.style.position = '';
+			tween.el.style.margin = '';
 			tween.el.style.left = '';
 			tween.el.style.top = '';
 			tween.el.style.width = '';
