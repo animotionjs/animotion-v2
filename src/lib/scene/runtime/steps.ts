@@ -164,8 +164,6 @@ interface LayoutTween {
 	el: HTMLElement;
 	mode: LayoutMode;
 	transition: LayoutTransition;
-	deltaX: number;
-	deltaY: number;
 	/** flip-only: size and changed visual properties, each lerped by progress */
 	props: LayoutPropTween[];
 }
@@ -338,6 +336,9 @@ function createLayoutPropTween(
 	return { prop, from: cap(from.values), to: cap(to.values), format: from.format };
 }
 
+/** Serializes a pixel value rounded to one decimal. */
+const px = (value: number) => `${Math.round(value * 10) / 10}px`;
+
 function transitionValue(
 	transition: LayoutTransition,
 	p: number,
@@ -413,7 +414,6 @@ export class LayoutStep implements Step {
 		const eased = this.#ease(progress);
 		for (const tween of this.#tweens) {
 			if (tween.mode === 'flip') {
-				tween.el.style.transform = `translate(${tween.deltaX * (1 - eased)}px, ${tween.deltaY * (1 - eased)}px)`;
 				for (const prop of tween.props) {
 					const values = prop.from.map((from, i) => from + (prop.to[i] - from) * eased);
 					tween.el.style.setProperty(prop.prop, prop.format(values));
@@ -471,33 +471,74 @@ export class LayoutStep implements Step {
 
 		this.#tweens = [];
 
+		// The containing block for an absolutely-positioned element: the
+		// nearest `data-layout` ancestor (so nested elements follow their
+		// animated parent), else the nearest positioned ancestor, else the
+		// viewport. Both states are returned because the ancestor itself
+		// glides from its old bounds to its final ones, and the child's local
+		// coordinates must be measured against each.
+		const originOf = (
+			el: HTMLElement
+		): { prev: { left: number; top: number }; final: { left: number; top: number } } => {
+			// Skip the element itself: `closest` includes self, and the
+			// coordinate space of an element is its ancestor's.
+			const ancestor = el.parentElement?.closest('[data-layout]');
+			if (ancestor) {
+				const prev = firstBounds.get((ancestor as HTMLElement).dataset.layout!);
+				const final = lastBounds.get((ancestor as HTMLElement).dataset.layout!);
+				return {
+					prev: prev ? { left: prev.rect.left, top: prev.rect.top } : { left: 0, top: 0 },
+					final: final ? { left: final.rect.left, top: final.rect.top } : { left: 0, top: 0 }
+				};
+			}
+			const offset = el.offsetParent;
+			if (offset) {
+				const rect = offset.getBoundingClientRect();
+				return {
+					prev: { left: rect.left, top: rect.top },
+					final: { left: rect.left, top: rect.top }
+				};
+			}
+			return { prev: { left: 0, top: 0 }, final: { left: 0, top: 0 } };
+		};
+
 		for (const [key, { el, rect, styles }] of lastBounds) {
 			const prev = firstBounds.get(key);
 			if (prev) {
-				// Apply the start state in place, then tween away from it. The
-				// element is squeezed to its previous size first so the
-				// translate below can be measured against the position that
-				// size produces: in centered containers shrinking the element
-				// re-centers it, and measuring after the squeeze keeps the
-				// translate from double-applying that shift.
-				el.style.width = `${prev.rect.width}px`;
-				el.style.height = `${prev.rect.height}px`;
+				// Take the element out of flow so the container's size tween
+				// can't re-lay-out it mid-animation (e.g. a flex row
+				// re-distributing), then glide position and size from the old
+				// bounds to the final ones via left/top/width/height.
+				const origin = originOf(el);
+				el.style.position = 'absolute';
 				// Override min/max so they can't clamp the animated width/height.
 				el.style.minWidth = 'auto';
 				el.style.minHeight = 'auto';
 				el.style.maxWidth = 'none';
 				el.style.maxHeight = 'none';
-				const squeezed = el.getBoundingClientRect();
-				const deltaX = prev.rect.left - squeezed.left;
-				const deltaY = prev.rect.top - squeezed.top;
-				el.style.transform = `translate(${deltaX}px, ${deltaY}px)`;
 				const props: LayoutPropTween[] = [];
+				if (prev.rect.left !== rect.left) {
+					props.push({
+						prop: 'left',
+						from: [prev.rect.left - origin.prev.left],
+						to: [rect.left - origin.final.left],
+						format: (values) => px(values[0])
+					});
+				}
+				if (prev.rect.top !== rect.top) {
+					props.push({
+						prop: 'top',
+						from: [prev.rect.top - origin.prev.top],
+						to: [rect.top - origin.final.top],
+						format: (values) => px(values[0])
+					});
+				}
 				if (prev.rect.width !== rect.width) {
 					props.push({
 						prop: 'width',
 						from: [prev.rect.width],
 						to: [rect.width],
-						format: (values) => `${Math.round(values[0] * 10) / 10}px`
+						format: (values) => px(values[0])
 					});
 				}
 				if (prev.rect.height !== rect.height) {
@@ -505,7 +546,7 @@ export class LayoutStep implements Step {
 						prop: 'height',
 						from: [prev.rect.height],
 						to: [rect.height],
-						format: (values) => `${Math.round(values[0] * 10) / 10}px`
+						format: (values) => px(values[0])
 					});
 				}
 				for (const prop of Object.keys(LAYOUT_PROPS)) {
@@ -520,24 +561,19 @@ export class LayoutStep implements Step {
 				// Snap changed properties to their old values so the element stays
 				// visually at the start state until the first frame.
 				for (const prop of props) el.style.setProperty(prop.prop, prop.format(prop.from));
-				this.#tweens.push({
-					el,
-					mode: 'flip',
-					transition: 'none',
-					deltaX,
-					deltaY,
-					props
-				});
+				this.#tweens.push({ el, mode: 'flip', transition: 'none', props });
 			} else {
+				// Pin newly added elements at their final spot, out of flow, so
+				// siblings re-flowing during the step can't shift them; animate
+				// in with the enter transition on top of that.
+				const origin = originOf(el);
+				el.style.position = 'absolute';
+				el.style.left = px(rect.left - origin.final.left);
+				el.style.top = px(rect.top - origin.final.top);
+				el.style.width = px(rect.width);
+				el.style.height = px(rect.height);
 				this.#applyStart(el, this.#enter, 'enter');
-				this.#tweens.push({
-					el,
-					mode: 'enter',
-					transition: this.#enter,
-					deltaX: 0,
-					deltaY: 0,
-					props: []
-				});
+				this.#tweens.push({ el, mode: 'enter', transition: this.#enter, props: [] });
 			}
 		}
 
@@ -550,8 +586,6 @@ export class LayoutStep implements Step {
 				el: ghost,
 				mode: 'exit',
 				transition: this.#exit,
-				deltaX: 0,
-				deltaY: 0,
 				props: []
 			});
 		}
@@ -587,6 +621,9 @@ export class LayoutStep implements Step {
 			tween.el.style.opacity = '';
 			tween.el.style.clipPath = '';
 			tween.el.style.transformOrigin = '';
+			tween.el.style.position = '';
+			tween.el.style.left = '';
+			tween.el.style.top = '';
 			tween.el.style.width = '';
 			tween.el.style.height = '';
 			tween.el.style.minWidth = '';

@@ -47,14 +47,18 @@ describe('LayoutStep', () => {
 		step.start();
 
 		const el = element('[data-layout="a"]');
-		expect(el.style.transform).toBe('translate(-90px, -90px)');
+		expect(el.style.position).toBe('absolute');
+		expect(el.style.left).toBe('10px');
+		expect(el.style.top).toBe('10px');
 
 		step.setProgress(0.5);
-		expect(el.style.transform).toBe('translate(-45px, -45px)');
+		expect(el.style.left).toBe('55px');
+		expect(el.style.top).toBe('55px');
 
 		step.setProgress(1);
 		step.end();
-		expect(el.style.transform).toBe('');
+		expect(el.style.left).toBe('');
+		expect(el.style.top).toBe('');
 		expect(el.style.width).toBe('');
 	});
 
@@ -103,14 +107,17 @@ describe('LayoutStep', () => {
 		);
 		step.start();
 
-		// 100x50 centered in 400x300 sits at (150, 125); shrinking the grown
-		// element back to that size re-centers it, so the first frame must
-		// land there rather than being pushed further by the translate.
+		// The element is pinned out of flow at its previous bounds via
+		// left/top, so the first frame must land there rather than being
+		// pushed further by a translate.
 		const el = element('[data-layout="a"]');
 		const rect = el.getBoundingClientRect();
 		expect(rect.x).toBe(150);
 		expect(rect.y).toBe(125);
-		expect(el.style.transform).toBe('translate(0px, 0px)');
+		expect(el.style.position).toBe('absolute');
+		expect(el.style.left).toBe('150px');
+		expect(el.style.top).toBe('125px');
+		expect(el.style.transform).toBe('');
 
 		step.end();
 	});
@@ -662,7 +669,8 @@ describe('LayoutStep', () => {
 		expect(ghosts('[data-layout="2"]')[0].style.opacity).toBe('1');
 
 		const one = element('[data-layout="1"]');
-		expect(one.style.transform).not.toBe('');
+		expect(one.style.position).toBe('absolute');
+		expect(one.style.minWidth).toBe('auto');
 		expect(one.style.transformOrigin).toBe('');
 
 		const three = element('[data-layout="3"]');
