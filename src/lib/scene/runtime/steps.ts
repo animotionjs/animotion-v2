@@ -565,7 +565,7 @@ export class LayoutStep implements Step {
 					tween.el.style.transform = `translate(${px}px, ${py}px) scale(${scaleX / sPx}, ${scaleY / sPy})`;
 				} else if (tween.scale) {
 					tween.el.style.transform = `translate(${dx}px, ${dy}px) scale(${scaleX}, ${scaleY})`;
-				} else if (tween.offset) {
+				} else if (tween.offset && (tween.offset.x !== 0 || tween.offset.y !== 0)) {
 					tween.el.style.transform = `translate(${dx}px, ${dy}px)`;
 				}
 			} else {
@@ -744,13 +744,15 @@ export class LayoutStep implements Step {
 				const scale = scaling.get(key);
 				const parentScale = parentScaleOf(el);
 				const props: LayoutPropTween[] = [];
-				let offset =
-					prev.rect.left !== rect.left || prev.rect.top !== rect.top
-						? {
-								x: prev.rect.left - origin.prev.left - finalLeft,
-								y: prev.rect.top - origin.prev.top - finalTop
-							}
-						: undefined;
+				// Measured as a local delta, not absolute: an ancestor that moves
+				// exactly as much as the element's own reflow (leaving its
+				// absolute spot unchanged) still needs the parent-scale
+				// compensation computed from the local shift, or the child
+				// glides under the counter-scale.
+				const offset = {
+					x: prev.rect.left - origin.prev.left - finalLeft,
+					y: prev.rect.top - origin.prev.top - finalTop
+				};
 				if (scale && fontChanged && prev.ink && ink) {
 					// The glyph ink sits at a different offset within the box at
 					// each font size, so aligning the boxes leaves the text a few
@@ -759,7 +761,6 @@ export class LayoutStep implements Step {
 					const finalFont = parseFloat(text.fontSize);
 					if (finalFont > 0) {
 						const r = parseFloat(prev.text.fontSize) / finalFont;
-						offset ??= { x: 0, y: 0 };
 						offset.x += prev.ink.left - prev.rect.left - (ink.left - rect.left) * r;
 						offset.y += prev.ink.top - prev.rect.top - (ink.top - rect.top) * r;
 					}

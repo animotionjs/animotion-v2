@@ -324,6 +324,51 @@ describe('LayoutStep', () => {
 		expect(title.style.width).toBe('');
 	});
 
+	it('keeps a child pinned to its previous absolute spot while its box flies and scales', () => {
+		setBody(`
+			<div data-layout="box" style="position:absolute;top:100px;left:100px;width:100px;height:100px">
+				<div data-layout="title" style="font-size:20px">Title</div>
+			</div>
+		`);
+		const title = element('[data-layout="title"]');
+		const before = title.getBoundingClientRect();
+		const step = new LayoutStep(
+			{},
+			() => {
+				const box = element('[data-layout="box"]');
+				box.style.top = '10px';
+				box.style.left = '10px';
+				box.style.width = '200px';
+				box.style.height = '200px';
+				// The title reflows so it ends up at the same absolute spot it
+				// was in before: only the box itself moved (100 → 10), so the
+				// title must compensate for the box's movement on its own.
+				const titleEl = element('[data-layout="title"]');
+				titleEl.style.position = 'absolute';
+				titleEl.style.top = '90px';
+				titleEl.style.left = '90px';
+			},
+			0.5
+		);
+		step.start();
+
+		const box = element('[data-layout="box"]');
+		expect(box.style.transform).toBe('translate(90px, 90px) scale(0.5, 0.5)');
+		// The local offset (the box moved 90px) feeds the counter-scale so the
+		// text lands exactly on its previous absolute spot instead of gliding
+		// under the box's movement.
+		expect(title.style.transform).toBe('translate(-90px, -90px) scale(2, 2)');
+		expect(title.getBoundingClientRect().left).toBeCloseTo(before.left, 1);
+		expect(title.getBoundingClientRect().top).toBeCloseTo(before.top, 1);
+
+		step.setProgress(1);
+		expect(title.style.transform).toBe('translate(0px, 0px) scale(1, 1)');
+		expect(title.getBoundingClientRect().left).toBeCloseTo(before.left, 1);
+		expect(title.getBoundingClientRect().top).toBeCloseTo(before.top, 1);
+
+		step.end();
+	});
+
 	it('keeps a size-morphing child from inheriting its box scale (scale: true)', () => {
 		setBody(`
 			<div data-layout="box" style="width:100px;height:100px">
