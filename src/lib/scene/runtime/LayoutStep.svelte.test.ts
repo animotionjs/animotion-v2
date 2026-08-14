@@ -771,6 +771,29 @@ describe('LayoutStep', () => {
 		expect(ghosts('[data-layout="a"]').length).toBe(0);
 	});
 
+	it('pins the source text metrics on the ghost so exiting text keeps its size', () => {
+		// The font resolves against the parent (0.5em of 24px = 12px); as a
+		// body child the clone would compute 0.5em of 16px = 8px instead.
+		setBody(
+			'<div style="font-size:24px"><div data-layout="a" style="font-size:0.5em">Text</div></div>'
+		);
+		const step = new LayoutStep(
+			{},
+			() => {
+				setBody('');
+			},
+			0.5
+		);
+		step.start();
+
+		const ghost = ghosts('[data-layout="a"]')[0];
+		expect(parseFloat(getComputedStyle(ghost).fontSize)).toBe(12);
+		expect(ghost.style.fontSize).toBe('12px');
+
+		step.end();
+		expect(ghosts('[data-layout="a"]').length).toBe(0);
+	});
+
 	it('spawns a ghost when an element is hidden with display:none', () => {
 		setBody('<div data-layout="a" style="width:100px;height:50px"></div>');
 		const step = new LayoutStep(

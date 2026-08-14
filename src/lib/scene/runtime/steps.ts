@@ -347,6 +347,40 @@ function snapshotLayoutStyles(el: HTMLElement): Record<string, string> {
 	return styles;
 }
 
+/**
+ * The resolved text metrics an exit ghost needs to render identically outside
+ * the element's flow context (see {@link LayoutStep.#createGhost}).
+ */
+interface LayoutTextMetrics {
+	fontFamily: string;
+	fontSize: string;
+	fontWeight: string;
+	fontStyle: string;
+	fontVariant: string;
+	lineHeight: string;
+	letterSpacing: string;
+	wordSpacing: string;
+}
+
+/**
+ * Captures the resolved text metrics. Must run while the element is still in
+ * the DOM: computed styles on a detached node resolve `em`/container-based
+ * sizes against the initial values instead of the element's ancestors.
+ */
+function snapshotTextMetrics(el: HTMLElement): LayoutTextMetrics {
+	const computed = getComputedStyle(el);
+	return {
+		fontFamily: computed.fontFamily,
+		fontSize: computed.fontSize,
+		fontWeight: computed.fontWeight,
+		fontStyle: computed.fontStyle,
+		fontVariant: computed.fontVariant,
+		lineHeight: computed.lineHeight,
+		letterSpacing: computed.letterSpacing,
+		wordSpacing: computed.wordSpacing
+	};
+}
+
 function createLayoutPropTween(
 	prop: string,
 	fromValue: string,
@@ -521,12 +555,17 @@ export class LayoutStep implements Step {
 		const elements = [...document.querySelectorAll('[data-layout]')] as HTMLElement[];
 		const firstBounds = new Map<
 			string,
-			{ el: HTMLElement; rect: DOMRect; styles: Record<string, string> }
+			{ el: HTMLElement; rect: DOMRect; styles: Record<string, string>; text: LayoutTextMetrics }
 		>();
 		for (const el of elements) {
 			const rect = el.getBoundingClientRect();
 			if (rect.width > 0 && rect.height > 0) {
-				firstBounds.set(el.dataset.layout!, { el, rect, styles: snapshotLayoutStyles(el) });
+				firstBounds.set(el.dataset.layout!, {
+					el,
+					rect,
+					styles: snapshotLayoutStyles(el),
+					text: snapshotTextMetrics(el)
+				});
 			}
 		}
 
@@ -731,10 +770,10 @@ export class LayoutStep implements Step {
 			}
 		}
 
-		for (const [key, { el, rect }] of firstBounds) {
+		for (const [key, { el, rect, text }] of firstBounds) {
 			if (lastBounds.has(key)) continue;
 			if (this.#exit === 'none') continue;
-			const ghost = this.#createGhost(el, rect);
+			const ghost = this.#createGhost(el, rect, text);
 			this.#applyStart(ghost, this.#exit, 'exit');
 			this.#tweens.push({
 				el: ghost,
@@ -757,8 +796,20 @@ export class LayoutStep implements Step {
 		if (value.clipPath !== undefined) el.style.clipPath = value.clipPath;
 	}
 
-	#createGhost(el: HTMLElement, rect: DOMRect): HTMLElement {
+	#createGhost(el: HTMLElement, rect: DOMRect, text: LayoutTextMetrics): HTMLElement {
 		const ghost = el.cloneNode(true) as HTMLElement;
+		// The ghost leaves the element's flow context (it is appended to
+		// <body>), so class-relative text sizing — em/rem against a scaled
+		// ancestor, container-query fonts — would resolve differently and the
+		// exiting text would jump size. Pin the source's resolved text metrics.
+		ghost.style.fontFamily = text.fontFamily;
+		ghost.style.fontSize = text.fontSize;
+		ghost.style.fontWeight = text.fontWeight;
+		ghost.style.fontStyle = text.fontStyle;
+		ghost.style.fontVariant = text.fontVariant;
+		ghost.style.lineHeight = text.lineHeight;
+		ghost.style.letterSpacing = text.letterSpacing;
+		ghost.style.wordSpacing = text.wordSpacing;
 		ghost.style.position = 'fixed';
 		ghost.style.left = `${rect.left}px`;
 		ghost.style.top = `${rect.top}px`;
