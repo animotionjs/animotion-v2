@@ -404,8 +404,12 @@ function createLayoutPropTween(
 	return { prop, from: cap(from.values), to: cap(to.values), format: from.format };
 }
 
-/** Serializes a pixel value rounded to one decimal. */
-const px = (value: number) => `${Math.round(value * 10) / 10}px`;
+/**
+ * Serializes a pixel value at full precision. The FLIP pinning must match the
+ * element's natural flow position exactly, or clearing the inline styles at
+ * the end of the step would snap it by the rounding error.
+ */
+const px = (value: number) => `${value}px`;
 
 function transitionValue(
 	transition: LayoutTransition,
