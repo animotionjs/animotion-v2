@@ -155,10 +155,11 @@ export interface LayoutOptions {
 	ease?: Easing;
 	/**
 	 * Morph size changes with `transform: scale` instead of `width`/`height`.
-	 * Scale stays on the compositor and never triggers layout, but rasterizes
-	 * nested text and images at a changing scale (blurring or shimmering
-	 * them); `width`/`height` re-lays-out every frame but keeps content crisp.
-	 * Defaults to `false` (the GSAP Flip default).
+	 * Scale stays on the compositor and never triggers layout, so the motion
+	 * is smooth and the endpoint is pixel-perfect by construction, but glyphs
+	 * rasterize at a changing scale (soft mid-flight). `width`/`height`
+	 * re-lays-out every frame — keeping text and images crisp — at the cost
+	 * of per-frame re-layout. Defaults to `true`.
 	 */
 	scale?: boolean;
 	/**
@@ -193,12 +194,12 @@ interface LayoutTween {
 	 */
 	offset?: { x: number; y: number };
 	/**
-	 * flip-only (default mode): the box's previous and final bounds, lerped as
-	 * `width`/`height` so nested text and images rasterize at native size.
+	 * flip-only (`scale: false`): the box's previous and final bounds, lerped
+	 * as `width`/`height` so nested text and images rasterize at native size.
 	 */
 	size?: { fromW: number; fromH: number; toW: number; toH: number };
 	/**
-	 * flip-only (`scale: true`): present when the element morphs between sizes;
+	 * flip-only (default mode): present when the element morphs between sizes;
 	 * `x`/`y` track the current frame's scale so the border-radius can be
 	 * counter-scaled against it.
 	 */
@@ -344,7 +345,6 @@ const LAYOUT_PROPS: Record<string, (value: string) => ParsedProp | null> = {
 	color: parseColor,
 	'border-color': parseColor,
 	opacity: parseOpacity,
-	'font-size': parseLength,
 	'border-radius': parseRadius
 };
 
@@ -373,6 +373,20 @@ interface LayoutTextMetrics {
 	wordSpacing: string;
 }
 
+/** Measured state of one `data-layout` element in a step's two snapshots. */
+interface LayoutBounds {
+	el: HTMLElement;
+	rect: DOMRect;
+	styles: Record<string, string>;
+	text: LayoutTextMetrics;
+	/**
+	 * The text glyph ink position (Range over the contents), distinct from the
+	 * layout box because the ink sits at a different offset within the box at
+	 * different font sizes. Only present for direct-text elements.
+	 */
+	ink?: { left: number; top: number };
+}
+
 /**
  * Captures the resolved text metrics. Must run while the element is still in
  * the DOM: computed styles on a detached node resolve `em`/container-based
@@ -390,6 +404,25 @@ function snapshotTextMetrics(el: HTMLElement): LayoutTextMetrics {
 		letterSpacing: computed.letterSpacing,
 		wordSpacing: computed.wordSpacing
 	};
+}
+
+/** Whether the element's box is sized by its own text (direct text nodes). */
+function hasDirectText(el: HTMLElement): boolean {
+	return [...el.childNodes].some(
+		(node) => node.nodeType === Node.TEXT_NODE && node.textContent!.trim() !== ''
+	);
+}
+
+/**
+ * The top-left of the element's text glyph ink, as opposed to its layout box.
+ * Must run while the element is untransformed.
+ */
+function textInkRect(el: HTMLElement): { left: number; top: number } | undefined {
+	if (!hasDirectText(el)) return undefined;
+	const range = document.createRange();
+	range.selectNodeContents(el);
+	const rect = range.getBoundingClientRect();
+	return rect.width > 0 && rect.height > 0 ? { left: rect.left, top: rect.top } : undefined;
 }
 
 function createLayoutPropTween(
@@ -489,7 +522,7 @@ export class LayoutStep implements Step {
 		this.#ease = options.ease ?? easeInOut;
 		this.#enter = options.enter ?? DEFAULT_ENTER;
 		this.#exit = options.exit ?? DEFAULT_EXIT;
-		this.#scale = options.scale ?? false;
+		this.#scale = options.scale ?? true;
 		this.#enterEnd = clamp(options.enterEnd ?? 1, 0, 1);
 		this.#exitEnd = clamp(options.exitEnd ?? 0.1, 0, 1);
 	}
@@ -573,10 +606,7 @@ export class LayoutStep implements Step {
 		}
 
 		const elements = [...document.querySelectorAll('[data-layout]')] as HTMLElement[];
-		const firstBounds = new Map<
-			string,
-			{ el: HTMLElement; rect: DOMRect; styles: Record<string, string>; text: LayoutTextMetrics }
-		>();
+		const firstBounds = new Map<string, LayoutBounds>();
 		for (const el of elements) {
 			const rect = el.getBoundingClientRect();
 			if (rect.width > 0 && rect.height > 0) {
@@ -584,7 +614,8 @@ export class LayoutStep implements Step {
 					el,
 					rect,
 					styles: snapshotLayoutStyles(el),
-					text: snapshotTextMetrics(el)
+					text: snapshotTextMetrics(el),
+					ink: textInkRect(el)
 				});
 			}
 		}
@@ -593,14 +624,17 @@ export class LayoutStep implements Step {
 		flushSync();
 
 		const lastElements = [...document.querySelectorAll('[data-layout]')] as HTMLElement[];
-		const lastBounds = new Map<
-			string,
-			{ el: HTMLElement; rect: DOMRect; styles: Record<string, string> }
-		>();
+		const lastBounds = new Map<string, LayoutBounds>();
 		for (const el of lastElements) {
 			const rect = el.getBoundingClientRect();
 			if (rect.width > 0 && rect.height > 0) {
-				lastBounds.set(el.dataset.layout!, { el, rect, styles: snapshotLayoutStyles(el) });
+				lastBounds.set(el.dataset.layout!, {
+					el,
+					rect,
+					styles: snapshotLayoutStyles(el),
+					text: snapshotTextMetrics(el),
+					ink: textInkRect(el)
+				});
 			}
 		}
 
@@ -639,27 +673,38 @@ export class LayoutStep implements Step {
 
 		// Retained elements that morph between sizes scale via a transform (see
 		// below); children look this map up to cancel the ancestor's scale so
-		// their content stays crisp while the ancestor morphs. Only `scale: true`
-		// scales ancestors; the default width/height morph doesn't.
-		const scalingAncestors = new Map<string, { x0: number; y0: number }>();
-		for (const [key, { rect }] of lastBounds) {
+		// their content stays crisp while the ancestor morphs. Font-changed text
+		// scales uniformly by its font ratio — a uniform scale is what reads as
+		// the text genuinely growing — while boxes scale by their bounds.
+		const scaling = new Map<string, { x0: number; y0: number; x: number; y: number }>();
+		for (const [key, { el, rect, text }] of lastBounds) {
 			const prev = firstBounds.get(key);
-			if (prev && (prev.rect.width !== rect.width || prev.rect.height !== rect.height)) {
-				scalingAncestors.set(key, {
-					x0: prev.rect.width / rect.width,
-					y0: prev.rect.height / rect.height
-				});
-			}
+			if (!prev) continue;
+			const fontChanged = prev.text.fontSize !== text.fontSize;
+			const sizeChanged =
+				(prev.rect.width !== rect.width || prev.rect.height !== rect.height) &&
+				!(hasDirectText(el) && !fontChanged);
+			if (!((this.#scale || (hasDirectText(el) && fontChanged)) && sizeChanged)) continue;
+			const finalFont = parseFloat(text.fontSize);
+			const uniform =
+				hasDirectText(el) && fontChanged && finalFont > 0
+					? parseFloat(prev.text.fontSize) / finalFont
+					: undefined;
+			scaling.set(key, {
+				x0: uniform ?? prev.rect.width / rect.width,
+				y0: uniform ?? prev.rect.height / rect.height,
+				x: 1,
+				y: 1
+			});
 		}
 
 		const parentScaleOf = (el: HTMLElement) => {
-			if (!this.#scale) return undefined;
 			// Skip the element itself, mirroring `originOf`.
 			const ancestor = el.parentElement?.closest('[data-layout]') as HTMLElement | null;
-			return ancestor ? scalingAncestors.get(ancestor.dataset.layout!) : undefined;
+			return ancestor ? scaling.get(ancestor.dataset.layout!) : undefined;
 		};
 
-		for (const [key, { el, rect, styles }] of lastBounds) {
+		for (const [key, { el, rect, styles, text, ink }] of lastBounds) {
 			const prev = firstBounds.get(key);
 			if (prev) {
 				// Take the element out of flow so the container's size tween
@@ -687,29 +732,44 @@ export class LayoutStep implements Step {
 				el.style.width = px(rect.width);
 				el.style.height = px(rect.height);
 				// transform-scale stretches an element's own text, so a box whose
-				// size change comes from its content (a block filling the row vs.
-				// a shrink-wrapped flex item) is treated as position-only and
-				// glides crisply instead of pixel-scaling its glyphs.
-				const hasDirectText = [...el.childNodes].some(
-					(node) => node.nodeType === Node.TEXT_NODE && node.textContent!.trim() !== ''
-				);
+				// size change comes from its content (a shrink-wrapped text run
+				// that becomes a full-width block) is treated as position-only and
+				// glides crisply — unless the font-size itself changed, in which
+				// case the text element scales its own glyphs (the one way a
+				// text-size change animates) regardless of the `scale` option.
+				const fontChanged = prev.text.fontSize !== text.fontSize;
 				const sizeChanged =
-					(prev.rect.width !== rect.width || prev.rect.height !== rect.height) && !hasDirectText;
+					(prev.rect.width !== rect.width || prev.rect.height !== rect.height) &&
+					!(hasDirectText(el) && !fontChanged);
+				const scale = scaling.get(key);
 				const parentScale = parentScaleOf(el);
 				const props: LayoutPropTween[] = [];
-				const offset =
+				let offset =
 					prev.rect.left !== rect.left || prev.rect.top !== rect.top
 						? {
 								x: prev.rect.left - origin.prev.left - finalLeft,
 								y: prev.rect.top - origin.prev.top - finalTop
 							}
 						: undefined;
-				// Default mode morphs width/height so nested text and images
-				// rasterize at native size; `scale: true` pins the final size
-				// and scales the box back, keeping edges on the compositor but
-				// distorting its content.
+				if (scale && fontChanged && prev.ink && ink) {
+					// The glyph ink sits at a different offset within the box at
+					// each font size, so aligning the boxes leaves the text a few
+					// pixels off on the first frame. Shift the offset so the
+					// uniformly-scaled text lands on the previous ink instead.
+					const finalFont = parseFloat(text.fontSize);
+					if (finalFont > 0) {
+						const r = parseFloat(prev.text.fontSize) / finalFont;
+						offset ??= { x: 0, y: 0 };
+						offset.x += prev.ink.left - prev.rect.left - (ink.left - rect.left) * r;
+						offset.y += prev.ink.top - prev.rect.top - (ink.top - rect.top) * r;
+					}
+				}
+				// `scale: false` opts into morphing width/height so nested text
+				// and images rasterize at native size at the cost of per-frame
+				// re-layout; the default pins the final size and scales the box
+				// back, keeping the motion on the compositor.
 				const size =
-					!this.#scale && sizeChanged
+					!scale && sizeChanged
 						? {
 								fromW: prev.rect.width,
 								fromH: prev.rect.height,
@@ -717,16 +777,7 @@ export class LayoutStep implements Step {
 								toH: rect.height
 							}
 						: undefined;
-				const scale =
-					this.#scale && sizeChanged
-						? {
-								x0: prev.rect.width / rect.width,
-								y0: prev.rect.height / rect.height,
-								x: 1,
-								y: 1
-							}
-						: undefined;
-				if (this.#scale && (scale || parentScale)) el.style.transformOrigin = 'top left';
+				if (scale || parentScale) el.style.transformOrigin = 'top left';
 				for (const prop of Object.keys(LAYOUT_PROPS)) {
 					let tween = createLayoutPropTween(
 						prop,

@@ -27,6 +27,14 @@ function ghosts(selector: string): HTMLElement[] {
 	) as HTMLElement[];
 }
 
+/** The top-left of the text glyph ink, as it visually appears on screen. */
+function inkRect(el: HTMLElement): { left: number; top: number } {
+	const range = document.createRange();
+	range.selectNodeContents(el);
+	const rect = range.getBoundingClientRect();
+	return { left: rect.left, top: rect.top };
+}
+
 beforeEach(() => {
 	document.body.innerHTML = '';
 });
@@ -76,7 +84,8 @@ describe('LayoutStep', () => {
 				element('[data-layout="a"]').style.width = '200px';
 				element('[data-layout="a"]').style.height = '80px';
 			},
-			0.5
+			0.5,
+			{ scale: false }
 		);
 		step.start();
 
@@ -107,6 +116,69 @@ describe('LayoutStep', () => {
 		expect(el.style.minWidth).toBe('');
 	});
 
+	it('morphs a resized element via transform scale by default', () => {
+		setBody('<div data-layout="a" style="width:100px;height:50px"></div>');
+		const step = new LayoutStep(
+			{},
+			() => {
+				element('[data-layout="a"]').style.width = '200px';
+				element('[data-layout="a"]').style.height = '80px';
+			},
+			0.5
+		);
+		step.start();
+
+		// The default morph pins the final size and scales the box back to the
+		// previous bounds, gliding to identity — no width/height re-layout.
+		const el = element('[data-layout="a"]');
+		expect(el.style.width).toBe('200px');
+		expect(el.style.transform).toBe('translate(0px, 0px) scale(0.5, 0.625)');
+
+		step.setProgress(0.5);
+		expect(el.style.transform).toBe('translate(0px, 0px) scale(0.75, 0.8125)');
+
+		step.setProgress(1);
+		expect(el.style.transform).toBe('translate(0px, 0px) scale(1, 1)');
+
+		step.end();
+		expect(el.style.transform).toBe('');
+	});
+
+	it('lands pixel-exact at the natural layout when the step ends', () => {
+		setBody(`
+			<div data-layout="b">b</div>
+			<div data-layout="a">a</div>
+		`);
+		const step = new LayoutStep(
+			{},
+			() => {
+				// Removing the sibling is a persistent DOM change: after end()
+				// clears the pinning, the element's natural layout is exactly
+				// where the FLIP left it.
+				element('[data-layout="b"]').remove();
+			},
+			0.5
+		);
+		step.start();
+
+		// The element glides up to its final spot; at progress 1 the transform
+		// is identity and the pinned geometry equals the natural layout, so
+		// clearing the styles in end() must not move or resize it by even a
+		// sub-pixel.
+		const el = element('[data-layout="a"]');
+		expect(el.style.transform).not.toBe('');
+		step.setProgress(1);
+		const pinned = el.getBoundingClientRect();
+		step.end();
+		const settled = el.getBoundingClientRect();
+		expect(settled.x).toBeCloseTo(pinned.x, 6);
+		expect(settled.y).toBeCloseTo(pinned.y, 6);
+		expect(settled.width).toBeCloseTo(pinned.width, 6);
+		expect(settled.height).toBeCloseTo(pinned.height, 6);
+		expect(el.style.transform).toBe('');
+		expect(el.style.position).toBe('');
+	});
+
 	it('starts a resized centered element from its previous position', () => {
 		setBody(`
 			<div style="position:absolute;top:0;left:0;display:flex;align-items:center;justify-content:center;width:400px;height:300px">
@@ -123,9 +195,9 @@ describe('LayoutStep', () => {
 		);
 		step.start();
 
-		// Pinned at the final (centered) bounds, with the transform translating
-		// back to the previous (also centered) bounds, so the first frame lands
-		// where the element was rather than being pushed further.
+		// Pinned at the final (centered) bounds, with the transform scaling
+		// and translating back to the previous (also centered) bounds, so the
+		// first frame lands where the element was rather than being pushed.
 		const el = element('[data-layout="a"]');
 		const rect = el.getBoundingClientRect();
 		expect(rect.x).toBe(150);
@@ -133,7 +205,7 @@ describe('LayoutStep', () => {
 		expect(el.style.position).toBe('absolute');
 		expect(el.style.left).toBe('100px');
 		expect(el.style.top).toBe('100px');
-		expect(el.style.transform).toBe('translate(50px, 25px)');
+		expect(el.style.transform).toBe('translate(50px, 25px) scale(0.5, 0.5)');
 
 		step.end();
 	});
@@ -187,7 +259,8 @@ describe('LayoutStep', () => {
 				element('[data-layout="box"]').style.width = '200px';
 				element('[data-layout="box"]').style.height = '200px';
 			},
-			0.5
+			0.5,
+			{ scale: false }
 		);
 		step.start();
 
@@ -214,7 +287,7 @@ describe('LayoutStep', () => {
 		expect(child.style.transform).toBe('');
 	});
 
-	it('counter-scales direct text against an anisotropic scaling box (scale: true)', () => {
+	it('keeps a constant-font direct-text child crisp against its anisotropic box (scale: true)', () => {
 		setBody(`
 			<div data-layout="box" style="width:100px;height:100px">
 				<div data-layout="title" style="font-size:20px">Title</div>
@@ -232,9 +305,10 @@ describe('LayoutStep', () => {
 		);
 		step.start();
 
-		// Text is never scaled (that would distort its glyphs); instead it is
-		// pinned at its final bounds and counter-scaled against the box's
-		// anisotropic morph so its rendered size stays constant.
+		// The title's box resizes with the box, but its font-size is unchanged,
+		// so it is treated as position-only: it never gets its own scale, only
+		// the counter-scale against the box's anisotropic morph (net scale 1),
+		// keeping its glyphs crisp the whole way through.
 		const title = element('[data-layout="title"]');
 		expect(ghosts('[data-layout="title"]').length).toBe(0);
 		expect(title.style.visibility).toBe('');
@@ -244,40 +318,6 @@ describe('LayoutStep', () => {
 		step.setProgress(0.5);
 		step.setProgress(1);
 		expect(title.style.transform).toBe('translate(0px, 0px) scale(1, 1)');
-
-		step.end();
-		expect(title.style.transform).toBe('');
-		expect(title.style.width).toBe('');
-	});
-
-	it('keeps direct text unscaled while its box morphs', () => {
-		setBody(`
-			<div data-layout="box" style="width:100px;height:100px">
-				<div data-layout="title" style="font-size:20px">Title</div>
-			</div>
-		`);
-		const step = new LayoutStep(
-			{},
-			() => {
-				const box = element('[data-layout="box"]');
-				box.style.width = '200px';
-				box.style.height = '50px';
-			},
-			0.5
-		);
-		step.start();
-
-		// Text is never scaled or re-laid-out: it is pinned at its final bounds
-		// and doesn't move here, so its glyphs rasterize at native size.
-		const title = element('[data-layout="title"]');
-		expect(ghosts('[data-layout="title"]').length).toBe(0);
-		expect(title.style.visibility).toBe('');
-		expect(title.style.width).toBe('200px');
-		expect(title.style.transform).toBe('');
-
-		step.setProgress(0.5);
-		step.setProgress(1);
-		expect(title.style.transform).toBe('');
 
 		step.end();
 		expect(title.style.transform).toBe('');
@@ -332,7 +372,8 @@ describe('LayoutStep', () => {
 				element('[data-layout="box"]').style.width = '200px';
 				element('[data-layout="child"]').style.width = '40px';
 			},
-			0.5
+			0.5,
+			{ scale: false }
 		);
 		step.start();
 
@@ -387,7 +428,8 @@ describe('LayoutStep', () => {
 			() => {
 				element('[data-layout="a"]').style.width = '200px';
 			},
-			0.5
+			0.5,
+			{ scale: false }
 		);
 		step.start();
 
@@ -601,7 +643,7 @@ describe('LayoutStep', () => {
 		expect(el.style.borderColor).toBe('');
 	});
 
-	it('morphs font-size when it changes', () => {
+	it('sets font-size to its final value and scales the box instead of tweening it', () => {
 		setBody('<div data-layout="a" style="font-size:16px">text</div>');
 		const step = new LayoutStep(
 			{},
@@ -612,15 +654,59 @@ describe('LayoutStep', () => {
 		);
 		step.start();
 
+		// font-size jumps to its final value (rasterized once, natively) while
+		// the box scales back; it is never re-rasterized at intermediate sizes.
 		const el = element('[data-layout="a"]');
-		expect(el.style.fontSize).toBe('16px');
+		const [, sx, sy] = el.style.transform.match(/scale\(([-\d.]+), ([-\d.]+)\)/)!;
+		// The scale is the uniform font ratio (16/32), so the glyphs grow
+		// without being squashed. Chromium serializes transforms to 6
+		// significant figures, hence the parsed closeTo comparison.
+		expect(parseFloat(sx)).toBeCloseTo(0.5, 6);
+		expect(parseFloat(sy)).toBeCloseTo(0.5, 6);
+		expect(el.style.fontSize).toBe('32px');
 
 		step.setProgress(0.5);
-		expect(el.style.fontSize).toBe('24px');
+		expect(el.style.fontSize).toBe('32px');
 
 		step.setProgress(1);
+		expect(el.style.transform).toBe('translate(0px, 0px) scale(1, 1)');
+
 		step.end();
-		expect(el.style.fontSize).toBe('');
+		// font-size isn't animation-managed anymore, so its final value
+		// persists after the step (end() only clears the pinned styles).
+		expect(el.style.fontSize).toBe('32px');
+	});
+
+	it('starts font-changing text on its previous glyph ink', () => {
+		// A fixed line-height makes the ink sit at a different offset within
+		// the box at each font size, so box alignment alone would leave the
+		// glyphs off by a few pixels on the first frame. Inline-block makes the
+		// box shrink-wrap the text, so the font change also changes its size
+		// and the element scales.
+		setBody(
+			'<div data-layout="a" style="font-size:16px;line-height:60px;display:inline-block">text</div>'
+		);
+		const el = element('[data-layout="a"]');
+		const before = inkRect(el);
+		const step = new LayoutStep(
+			{},
+			() => {
+				el.style.fontSize = '32px';
+			},
+			0.5
+		);
+		step.start();
+
+		// The pinned text is scaled back to its previous size and offset so
+		// its ink lands exactly where the smaller text was.
+		const atStart = inkRect(el);
+		expect(atStart.left).toBeCloseTo(before.left, 1);
+		expect(atStart.top).toBeCloseTo(before.top, 1);
+
+		step.setProgress(1);
+		expect(el.style.transform).toBe('translate(0px, 0px) scale(1, 1)');
+
+		step.end();
 	});
 
 	it('fades in newly-appeared elements by default', () => {
@@ -1104,15 +1190,16 @@ describe('LayoutStep', () => {
 
 		// The child is flex-end: 450 in the 400-wide box at 100 → local 350;
 		// after the box moves to 200 and shrinks, it sits at 350 → local 150.
-		// It is pinned at its final local spot and translated back (the box's
-		// own translate rides along) so it still lands where it was.
+		// It is pinned at its final local spot and counter-transformed against
+		// the box's own scale-and-translate so it still lands where it was.
 		const child = element('[data-layout="child"]');
 		expect(child.style.position).toBe('absolute');
 		expect(child.style.left).toBe('150px');
-		expect(child.style.transform).toBe('translate(200px, 0px)');
+		expect(child.style.transform).toBe('translate(25px, 0px) scale(0.5, 1)');
+		expect(child.getBoundingClientRect().x).toBe(450);
 
 		step.setProgress(1);
-		expect(child.style.transform).toBe('translate(0px, 0px)');
+		expect(child.style.transform).toBe('translate(0px, 0px) scale(1, 1)');
 		expect(child.style.left).toBe('150px');
 
 		step.end();

@@ -44,12 +44,12 @@ Scenes live in `src/scenes/`. A scene is either a file (`04-code.svelte`) or a f
 `layout()` animates the DOM between two states with a FLIP animation. It snapshots the position and size of every element tagged with a `data-layout` attribute, calls the `change` function (which mutates scene state), and then animates the differences:
 
 ```ts
-layout(change, (duration = 0.5), { ease, enter, exit, enterEnd, exitEnd });
+layout(change, (duration = 0.5), { scale, ease, enter, exit, enterEnd, exitEnd });
 ```
 
 For each element it decides what happened:
 
-- **Retained**: present in both states (like the title in the intro), glide from their old position and size to the new one — position via a translate tween, size via animated `width`/`height` (so text is never stretched the way a scale would). If their `border-radius`, `background-color`, `color`, `border-color`, `opacity`, or `font-size` changed, those morph along too.
+- **Retained**: present in both states (like the title in the intro), glide from their old position and size to the new one — position via a translate tween, size via `transform: scale` (the motion stays on the compositor and the endpoint is pixel-perfect by construction). Elements whose size change is a font-size change scale uniformly by the font ratio (that's how text-size morphs animate), and are offset so they start on their previous glyph ink — glyphs are rasterized once at the final size, so the shape of the letters animates, not their rendering. Text that stays the same size is kept crisp and only glides. Set `scale: false` to morph `width`/`height` instead, keeping nested text and images crisp at the cost of per-frame re-layout. If their `border-radius`, `background-color`, `color`, `border-color`, or `opacity` changed, those morph along too.
 - **New**: added by the change (including `{#if}` and `{#each}` items), animate in with the `enter` transition.
 - **Removed**: dropped from the DOM by the change, cloned into a fixed-position "ghost" at their old spot, animated out with the `exit` transition, then removed.
 
