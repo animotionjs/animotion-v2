@@ -44,7 +44,7 @@ Scenes live in `src/scenes/`. A scene is either a file (`04-code.svelte`) or a f
 `layout()` animates the DOM between two states with a FLIP animation. It snapshots the position and size of every element tagged with a `data-layout` attribute, calls the `change` function (which mutates scene state), and then animates the differences:
 
 ```ts
-layout(change, (duration = 0.5), { ease, enter, exit });
+layout(change, (duration = 0.5), { ease, enter, exit, enterEnd, exitEnd });
 ```
 
 For each element it decides what happened:
@@ -65,7 +65,7 @@ Every animated element must carry a unique `data-layout` key so the step can mat
 
 FLIP motion and the `scale` transition are driven by `transform`, which browsers ignore on `display: inline` elements. The theme stylesheet automatically makes `span[data-layout]` `inline-block`, so animated spans work out of the box; other inline elements (`a`, `em`, `code`, …) need the same rule or a block-level element. `fade`, `clip`, and `wipe` work on plain inline elements since they only rely on `opacity`/`clip-path`.
 
-`enter` and `exit` accept `fade` (default), `scale`, `clip` (circle reveal), `wipe` (left-to-right), `slide` (vertical: entering elements slide up in, exiting ones slide down out), or `none`. `ease` defaults to `easeInOut`.
+`enter` and `exit` accept `fade` (default), `scale`, `clip` (circle reveal), `wipe` (left-to-right), `slide` (vertical: entering elements slide up in, exiting ones slide down out), or `none`. `ease` defaults to `easeInOut`. `enterEnd` and `exitEnd` set the fraction of the step at which the enter/exit transition completes (defaults `1` and `0.1`): the exit finishes quickly so removed elements are gone while the retained layout keeps settling, while entering elements animate in for the whole step.
 
 ## Scene transitions
 

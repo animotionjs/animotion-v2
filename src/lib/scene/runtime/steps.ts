@@ -161,6 +161,17 @@ export interface LayoutOptions {
 	 * Defaults to `false` (the GSAP Flip default).
 	 */
 	scale?: boolean;
+	/**
+	 * The fraction of the step by which the enter transition completes.
+	 * Defaults to `1` (the full step, as the layout settles).
+	 */
+	enterEnd?: number;
+	/**
+	 * The fraction of the step by which the exit transition completes.
+	 * Removed elements finish leaving quickly instead of lingering
+	 * half-visible for the rest of the step. Defaults to `0.1`.
+	 */
+	exitEnd?: number;
 }
 
 const DEFAULT_ENTER: LayoutTransition = 'fade';
@@ -461,6 +472,8 @@ export class LayoutStep implements Step {
 	#enter: LayoutTransition;
 	#exit: LayoutTransition;
 	#scale: boolean;
+	#enterEnd: number;
+	#exitEnd: number;
 	#snapshot: Record<string, unknown> = {};
 	#tweens: LayoutTween[] = [];
 
@@ -477,6 +490,8 @@ export class LayoutStep implements Step {
 		this.#enter = options.enter ?? DEFAULT_ENTER;
 		this.#exit = options.exit ?? DEFAULT_EXIT;
 		this.#scale = options.scale ?? false;
+		this.#enterEnd = clamp(options.enterEnd ?? 1, 0, 1);
+		this.#exitEnd = clamp(options.exitEnd ?? 0.1, 0, 1);
 	}
 
 	get duration(): number {
@@ -521,11 +536,12 @@ export class LayoutStep implements Step {
 					tween.el.style.transform = `translate(${dx}px, ${dy}px)`;
 				}
 			} else {
-				const value = transitionValue(
-					tween.transition,
-					eased,
-					tween.mode === 'enter' ? 'enter' : 'exit'
-				);
+				const direction = tween.mode === 'enter' ? 'enter' : 'exit';
+				// Exit transitions finish by `exitEnd` so removed elements are
+				// gone before the layout settles; the enter runs for the whole
+				// step (`enterEnd` defaults to 1).
+				const end = direction === 'enter' ? this.#enterEnd : this.#exitEnd;
+				const value = transitionValue(tween.transition, clampRemap(eased, 0, end, 0, 1), direction);
 				if (value.opacity !== undefined) tween.el.style.opacity = String(value.opacity);
 				if (value.transform !== undefined) tween.el.style.transform = value.transform;
 				if (value.clipPath !== undefined) tween.el.style.clipPath = value.clipPath;

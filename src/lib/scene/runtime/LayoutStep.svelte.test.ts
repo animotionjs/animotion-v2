@@ -1,6 +1,7 @@
 import { describe, expect, it, beforeEach } from 'vitest';
 import { flushSync, mount, unmount } from 'svelte';
 import { LayoutStep } from './steps';
+import { linear } from '../easing';
 import LayoutEach from './fixtures/LayoutEach.svelte';
 import { addThree, removeTwo, resetItems } from './fixtures/items.svelte.js';
 
@@ -753,7 +754,8 @@ describe('LayoutStep', () => {
 			() => {
 				setBody('');
 			},
-			0.5
+			0.5,
+			{ ease: linear }
 		);
 		step.start();
 
@@ -761,8 +763,13 @@ describe('LayoutStep', () => {
 		const ghost = ghosts('[data-layout="a"]')[0];
 		expect(ghost.style.opacity).toBe('1');
 
-		step.setProgress(0.5);
+		// The exit completes by `exitEnd` (default 0.1): at the step's 5%
+		// mark the ghost is half-faded, and gone by the 10% mark.
+		step.setProgress(0.05);
 		expect(ghost.style.opacity).toBe('0.5');
+
+		step.setProgress(0.1);
+		expect(ghost.style.opacity).toBe('0');
 
 		step.setProgress(1);
 		expect(ghost.style.opacity).toBe('0');
@@ -818,12 +825,17 @@ describe('LayoutStep', () => {
 				setBody('');
 			},
 			0.5,
-			{ exit: 'scale' }
+			{ exit: 'scale', ease: linear }
 		);
 		step.start();
 
 		const ghost = ghosts('[data-layout="a"]')[0];
 		expect(ghost.style.transform).toBe('scale(1)');
+
+		// The exit completes by `exitEnd` (default 0.1), so it is fully
+		// scaled away by the step's 10% mark.
+		step.setProgress(0.1);
+		expect(ghost.style.transform).toBe('scale(0)');
 
 		step.setProgress(1);
 		expect(ghost.style.transform).toBe('scale(0)');
@@ -840,15 +852,16 @@ describe('LayoutStep', () => {
 				setBody('');
 			},
 			0.5,
-			{ exit: 'clip' }
+			{ exit: 'clip', ease: linear }
 		);
 		step.start();
 
 		const ghost = ghosts('[data-layout="a"]')[0];
 		expect(ghost.style.clipPath).toBe('circle(100% at 50% 50%)');
 
-		step.setProgress(0.5);
-		expect(ghost.style.clipPath).toBe('circle(50% at 50% 50%)');
+		// Fully clipped away by the step's 10% mark (`exitEnd` default 0.1).
+		step.setProgress(0.1);
+		expect(ghost.style.clipPath).toBe('circle(0% at 50% 50%)');
 
 		step.setProgress(1);
 		expect(ghost.style.clipPath).toBe('circle(0% at 50% 50%)');
@@ -910,7 +923,7 @@ describe('LayoutStep', () => {
 				setBody('');
 			},
 			0.5,
-			{ exit: 'slide' }
+			{ exit: 'slide', ease: linear }
 		);
 		step.start();
 
@@ -918,13 +931,15 @@ describe('LayoutStep', () => {
 		expect(ghost.style.transform).toBe('translateY(0%)');
 		expect(ghost.style.opacity).toBe('1');
 
-		// Stays opaque while it starts leaving; the fade happens near the end.
-		step.setProgress(0.2);
-		expect(parseFloat(ghost.style.opacity)).toBe(1);
-
-		step.setProgress(0.5);
+		// Stays mostly opaque while it starts leaving; the slide and fade
+		// finish by `exitEnd` (default 0.1), so it is gone by the 10% mark.
+		step.setProgress(0.05);
 		expect(ghost.style.transform).toBe('translateY(50%)');
 		expect(parseFloat(ghost.style.opacity)).toBeCloseTo(5 / 6);
+
+		step.setProgress(0.1);
+		expect(ghost.style.transform).toBe('translateY(100%)');
+		expect(parseFloat(ghost.style.opacity)).toBe(0);
 
 		step.setProgress(1);
 		expect(ghost.style.transform).toBe('translateY(100%)');
@@ -932,6 +947,59 @@ describe('LayoutStep', () => {
 
 		step.end();
 		expect(ghosts('[data-layout="a"]').length).toBe(0);
+	});
+
+	it('completes the exit by a custom exitEnd and holds the finished state', () => {
+		setBody('<div data-layout="a" style="width:100px;height:50px"></div>');
+		const step = new LayoutStep(
+			{},
+			() => {
+				setBody('');
+			},
+			0.5,
+			{ exitEnd: 0.25, ease: linear }
+		);
+		step.start();
+
+		const ghost = ghosts('[data-layout="a"]')[0];
+		expect(ghost.style.opacity).toBe('1');
+
+		step.setProgress(0.125);
+		expect(parseFloat(ghost.style.opacity)).toBeCloseTo(0.5);
+
+		step.setProgress(0.25);
+		expect(ghost.style.opacity).toBe('0');
+
+		step.setProgress(1);
+		expect(ghost.style.opacity).toBe('0');
+
+		step.end();
+		expect(ghosts('[data-layout="a"]').length).toBe(0);
+	});
+
+	it('completes the enter by a custom enterEnd and holds the finished state', () => {
+		setBody('');
+		const step = new LayoutStep(
+			{},
+			() => {
+				setBody('<div data-layout="a" style="width:100px;height:50px"></div>');
+			},
+			0.5,
+			{ enter: 'fade', enterEnd: 0.25, ease: linear }
+		);
+		step.start();
+
+		const el = element('[data-layout="a"]');
+		expect(el.style.opacity).toBe('0');
+
+		step.setProgress(0.25);
+		expect(el.style.opacity).toBe('1');
+
+		step.setProgress(1);
+		expect(el.style.opacity).toBe('1');
+
+		step.end();
+		expect(el.style.opacity).toBe('');
 	});
 
 	it('revert restores state, clears styles and removes ghosts', () => {
