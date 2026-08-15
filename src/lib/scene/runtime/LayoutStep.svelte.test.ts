@@ -894,13 +894,13 @@ describe('LayoutStep', () => {
 		const ghost = ghosts('[data-layout="a"]')[0];
 		expect(ghost.style.opacity).toBe('1');
 
-		// The exit completes by `exitEnd` (default 0.1): at the step's 5%
-		// mark the ghost is half-faded, and gone by the 10% mark.
+		// The exit completes by `exitEnd` (default 1): the ghost fades out
+		// across the whole step.
 		step.setProgress(0.05);
-		expect(ghost.style.opacity).toBe('0.5');
+		expect(ghost.style.opacity).toBe('0.95');
 
 		step.setProgress(0.1);
-		expect(ghost.style.opacity).toBe('0');
+		expect(ghost.style.opacity).toBe('0.9');
 
 		step.setProgress(1);
 		expect(ghost.style.opacity).toBe('0');
@@ -1003,10 +1003,10 @@ describe('LayoutStep', () => {
 		const ghost = ghosts('[data-layout="a"]')[0];
 		expect(ghost.style.transform).toBe('scale(1)');
 
-		// The exit completes by `exitEnd` (default 0.1), so it is fully
-		// scaled away by the step's 10% mark.
+		// The exit completes by `exitEnd` (default 1), so it is fully
+		// scaled away only at the step's end.
 		step.setProgress(0.1);
-		expect(ghost.style.transform).toBe('scale(0)');
+		expect(ghost.style.transform).toBe('scale(0.9)');
 
 		step.setProgress(1);
 		expect(ghost.style.transform).toBe('scale(0)');
@@ -1030,9 +1030,9 @@ describe('LayoutStep', () => {
 		const ghost = ghosts('[data-layout="a"]')[0];
 		expect(ghost.style.clipPath).toBe('circle(100% at 50% 50%)');
 
-		// Fully clipped away by the step's 10% mark (`exitEnd` default 0.1).
+		// Fully clipped away by the step's end (`exitEnd` default 1).
 		step.setProgress(0.1);
-		expect(ghost.style.clipPath).toBe('circle(0% at 50% 50%)');
+		expect(ghost.style.clipPath).toBe('circle(90% at 50% 50%)');
 
 		step.setProgress(1);
 		expect(ghost.style.clipPath).toBe('circle(0% at 50% 50%)');
@@ -1102,15 +1102,15 @@ describe('LayoutStep', () => {
 		expect(ghost.style.transform).toBe('translateY(0%)');
 		expect(ghost.style.opacity).toBe('1');
 
-		// Stays mostly opaque while it starts leaving; the slide and fade
-		// finish by `exitEnd` (default 0.1), so it is gone by the 10% mark.
+		// The slide and fade finish by `exitEnd` (default 1), so the ghost
+		// is fully gone only at the step's end.
 		step.setProgress(0.05);
-		expect(ghost.style.transform).toBe('translateY(50%)');
-		expect(parseFloat(ghost.style.opacity)).toBeCloseTo(5 / 6);
+		expect(ghost.style.transform).toBe('translateY(5%)');
+		expect(parseFloat(ghost.style.opacity)).toBe(1);
 
 		step.setProgress(0.1);
-		expect(ghost.style.transform).toBe('translateY(100%)');
-		expect(parseFloat(ghost.style.opacity)).toBe(0);
+		expect(ghost.style.transform).toBe('translateY(10%)');
+		expect(parseFloat(ghost.style.opacity)).toBe(1);
 
 		step.setProgress(1);
 		expect(ghost.style.transform).toBe('translateY(100%)');

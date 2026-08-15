@@ -203,8 +203,7 @@ export interface LayoutOptions {
 	enterEnd?: number;
 	/**
 	 * The fraction of the step by which the exit transition completes.
-	 * Removed elements finish leaving quickly instead of lingering
-	 * half-visible for the rest of the step. Defaults to `0.1`.
+	 * Removed elements finish leaving by the step's end. Defaults to `1`.
 	 */
 	exitEnd?: number;
 	/**
@@ -659,7 +658,7 @@ export class LayoutStep implements Step {
 		this.#exit = options.exit ?? DEFAULT_EXIT;
 		this.#scale = options.scale ?? true;
 		this.#enterEnd = clamp(options.enterEnd ?? 1, 0, 1);
-		this.#exitEnd = clamp(options.exitEnd ?? 0.1, 0, 1);
+		this.#exitEnd = clamp(options.exitEnd ?? 1, 0, 1);
 		this.#stagger = clamp(options.stagger ?? 0, 0, 1);
 	}
 
