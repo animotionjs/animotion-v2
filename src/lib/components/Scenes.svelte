@@ -33,6 +33,15 @@
 
 	const index = $derived(sequence.findIndex((s) => s.id === id));
 	const scene = $derived(sequence.find((s) => s.id === id) ?? sequence[0]);
+
+	// Force every declared webfont to load before the scenes render, so the
+	// layout engine never measures glyphs at a fallback width and reflows text
+	// mid-animation when the real font swaps in.
+	if (typeof document !== 'undefined') {
+		await Promise.all([...document.fonts].map((font) => font.load()));
+		await document.fonts.ready;
+	}
+
 	const Content = $derived((await scene.component()).default);
 	const progress = $derived(((index + manager.completion) / sequence.length) * 100);
 	const showProgressBar = $derived(
