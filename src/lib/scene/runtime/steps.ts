@@ -149,7 +149,31 @@ export class TickStep implements Step {
 }
 
 /** Visual transition applied to entering/exiting `data-layout` elements. */
-export type LayoutTransition = 'fade' | 'scale' | 'clip' | 'wipe' | 'slide' | 'none';
+export type LayoutTransition =
+	| 'fade'
+	| 'scale'
+	| 'clip'
+	| 'wipe'
+	| 'slide'
+	| 'none'
+	| ((
+			p: number,
+			direction: 'enter' | 'exit',
+			el: HTMLElement
+		) => LayoutTransitionValue);
+
+/**
+ * The per-frame styles a layout transition yields, keyed by progress `p`
+ * (already eased and stagger/enter-end remapped). Returned by both the
+ * built-in transitions and custom function transitions.
+ */
+export interface LayoutTransitionValue {
+	opacity?: number;
+	transform?: string;
+	clipPath?: string;
+	/** The transform pivot; only honored when returned by a custom transition. */
+	transformOrigin?: string;
+}
 
 /**
  * Enter/exit transitions for {@link LayoutStep}. Unset options default to
@@ -528,8 +552,10 @@ const px = (value: number) => `${value}px`;
 function transitionValue(
 	transition: LayoutTransition,
 	p: number,
-	direction: 'enter' | 'exit'
-): { opacity?: number; transform?: string; clipPath?: string } {
+	direction: 'enter' | 'exit',
+	el: HTMLElement
+): LayoutTransitionValue {
+	if (typeof transition === 'function') return transition(p, direction, el);
 	switch (transition) {
 		case 'fade':
 			return { opacity: direction === 'enter' ? p : 1 - p };
@@ -692,10 +718,11 @@ export class LayoutStep implements Step {
 				// by zero into NaN on the first frame; the transition is already
 				// complete for that element.
 				const p = end === 0 || end <= start ? 1 : clampRemap(eased, start, end, 0, 1);
-				const value = transitionValue(tween.transition, p, direction);
+				const value = transitionValue(tween.transition, p, direction, tween.el);
 				if (value.opacity !== undefined) tween.el.style.opacity = String(value.opacity);
 				if (value.transform !== undefined) tween.el.style.transform = value.transform;
 				if (value.clipPath !== undefined) tween.el.style.clipPath = value.clipPath;
+				if (value.transformOrigin !== undefined) tween.el.style.transformOrigin = value.transformOrigin;
 				// Exit ghosts leave the layout tree, so only entered elements
 				// can sit under a scaling ancestor that needs counter-scaling.
 				if (tween.mode === 'enter' && tween.parentScale) {
@@ -1009,10 +1036,11 @@ export class LayoutStep implements Step {
 
 	#applyStart(el: HTMLElement, transition: LayoutTransition, direction: 'enter' | 'exit') {
 		if (transition === 'scale') el.style.transformOrigin = 'center';
-		const value = transitionValue(transition, 0, direction);
+		const value = transitionValue(transition, 0, direction, el);
 		if (value.opacity !== undefined) el.style.opacity = String(value.opacity);
 		if (value.transform !== undefined) el.style.transform = value.transform;
 		if (value.clipPath !== undefined) el.style.clipPath = value.clipPath;
+		if (value.transformOrigin !== undefined) el.style.transformOrigin = value.transformOrigin;
 	}
 
 	#createGhost(

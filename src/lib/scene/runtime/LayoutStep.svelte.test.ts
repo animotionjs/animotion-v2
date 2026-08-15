@@ -1257,6 +1257,79 @@ describe('LayoutStep', () => {
 		expect(ghosts('[data-layout="b"]').length).toBe(0);
 	});
 
+	it('runs a custom enter function, passing the element, and applies transformOrigin', () => {
+		let received: HTMLElement | null = null;
+		const step = new LayoutStep(
+			{},
+			() => {
+				setBody('<div data-layout="a" style="width:100px;height:40px"></div>');
+			},
+			1,
+			{
+				enter: (p, _direction, el) => {
+					received = el;
+					return {
+						opacity: p,
+						transform: `translateX(${(1 - p) * 100}%)`,
+						transformOrigin: '0% 100%'
+					};
+				},
+				ease: linear
+			}
+		);
+		step.start();
+
+		const el = element('[data-layout="a"]');
+		expect(received).toBe(el);
+		expect(parseFloat(el.style.opacity)).toBeCloseTo(0);
+		expect(el.style.transform).toBe('translateX(100%)');
+		expect(el.style.transformOrigin).toBe('0% 100%');
+
+		step.setProgress(0.5);
+		expect(parseFloat(el.style.opacity)).toBeCloseTo(0.5);
+		expect(el.style.transform).toBe('translateX(50%)');
+
+		step.setProgress(1);
+		expect(el.style.opacity).toBe('1');
+		expect(el.style.transform).toBe('translateX(0%)');
+
+		step.end();
+		expect(el.style.opacity).toBe('');
+		expect(el.style.transform).toBe('');
+	});
+
+	it('runs a custom exit function on the ghost', () => {
+		setBody('<div data-layout="a" style="width:100px;height:40px"></div>');
+		const step = new LayoutStep(
+			{},
+			() => {
+				setBody('');
+			},
+			1,
+			{
+				exit: (p) => ({ opacity: 1 - p, transform: `translateX(${p * 100}px)` }),
+				exitEnd: 1,
+				ease: linear
+			}
+		);
+		step.start();
+
+		const ghost = ghosts('[data-layout="a"]')[0];
+		expect(parseFloat(ghost.style.opacity)).toBeCloseTo(1);
+		expect(ghost.style.transform).toBe('translateX(0px)');
+
+		step.setProgress(0.5);
+		expect(parseFloat(ghost.style.opacity)).toBeCloseTo(0.5);
+		expect(ghost.style.transform).toBe('translateX(50px)');
+
+		step.setProgress(1);
+		expect(ghost.style.opacity).toBe('0');
+		expect(ghost.style.transform).toBe('translateX(100px)');
+
+		step.end();
+		expect(ghosts('[data-layout="a"]').length).toBe(0);
+	});
+
 	it('completes the enter by a custom enterEnd and holds the finished state', () => {
 		setBody('');
 		const step = new LayoutStep(

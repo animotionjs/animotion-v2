@@ -47,7 +47,7 @@ export { SceneManager } from './runtime/runtime.svelte.js';
 export { createSequence } from './runtime/sequence.js';
 export type { SceneEntry, Sequence } from './runtime/sequence.js';
 export { TickStep, type TickFrame } from './runtime/steps.js';
-export type { LayoutTransition, LayoutOptions } from './runtime/steps.js';
+export type { LayoutTransition, LayoutTransitionValue, LayoutOptions } from './runtime/steps.js';
 export { createScene } from './runtime/builder.svelte.js';
 export { configure, registerLanguages, highlight, whenReady } from './code/highlighter.js';
 export type { Token, PositionedToken, MorphToken } from './code/highlighter.js';
