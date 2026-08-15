@@ -1148,6 +1148,115 @@ describe('LayoutStep', () => {
 		expect(ghosts('[data-layout="a"]').length).toBe(0);
 	});
 
+	it('staggerers entering elements by the step fraction between them', () => {
+		const step = new LayoutStep(
+			{},
+			() => {
+				setBody(
+					'<div data-layout="a" style="width:100px;height:40px"></div><div data-layout="b" style="width:100px;height:40px"></div>'
+				);
+			},
+			1,
+			{ enter: 'fade', stagger: 0.25, ease: linear }
+		);
+		step.start();
+
+		const a = element('[data-layout="a"]');
+		const b = element('[data-layout="b"]');
+		expect(a.style.opacity).toBe('0');
+		expect(b.style.opacity).toBe('0');
+
+		step.setProgress(0.25);
+		expect(parseFloat(a.style.opacity)).toBeCloseTo(0.25);
+		// b's window starts at its stagger offset: not yet animating.
+		expect(b.style.opacity).toBe('0');
+
+		step.setProgress(0.5);
+		expect(parseFloat(a.style.opacity)).toBeCloseTo(0.5);
+		expect(parseFloat(b.style.opacity)).toBeCloseTo((0.5 - 0.25) / 0.75);
+
+		step.setProgress(1);
+		expect(a.style.opacity).toBe('1');
+		expect(b.style.opacity).toBe('1');
+
+		step.end();
+		expect(a.style.opacity).toBe('');
+		expect(b.style.opacity).toBe('');
+	});
+
+	it('staggerers only root entering elements so nested text follows its card', () => {
+		const step = new LayoutStep(
+			{},
+			() => {
+				setBody(
+					'<div data-layout="card1"><span data-layout="card1-text">A</span></div><div data-layout="card2"><span data-layout="card2-text">B</span></div>'
+				);
+			},
+			1,
+			{ enter: 'fade', stagger: 0.6, ease: linear }
+		);
+		step.start();
+
+		const card1 = element('[data-layout="card1"]');
+		const card2 = element('[data-layout="card2"]');
+		// card2 must be index 1 (delay 0.6), not index 2 (delay 1.2) which
+		// would render it instantly; the nested spans consume no slots.
+		expect(card1.style.opacity).toBe('0');
+		expect(card2.style.opacity).toBe('0');
+
+		step.setProgress(0.6);
+		expect(parseFloat(card1.style.opacity)).toBeCloseTo(0.6);
+		expect(card2.style.opacity).toBe('0');
+
+		step.setProgress(0.8);
+		expect(parseFloat(card2.style.opacity)).toBeCloseTo((0.8 - 0.6) / 0.4);
+
+		step.setProgress(1);
+		expect(card1.style.opacity).toBe('1');
+		expect(card2.style.opacity).toBe('1');
+
+		step.end();
+		expect(card1.style.opacity).toBe('');
+		expect(card2.style.opacity).toBe('');
+	});
+
+	it('staggerers exiting ghosts by the step fraction between them', () => {
+		setBody(
+			'<div data-layout="a" style="width:100px;height:40px"></div><div data-layout="b" style="width:100px;height:40px"></div>'
+		);
+		const step = new LayoutStep(
+			{},
+			() => {
+				setBody('');
+			},
+			1,
+			{ exit: 'fade', exitEnd: 1, stagger: 0.25, ease: linear }
+		);
+		step.start();
+
+		const a = ghosts('[data-layout="a"]')[0];
+		const b = ghosts('[data-layout="b"]')[0];
+		expect(a.style.opacity).toBe('1');
+		expect(b.style.opacity).toBe('1');
+
+		step.setProgress(0.25);
+		// a (index 0) fades from 1; b (index 1) hasn't started leaving yet.
+		expect(parseFloat(a.style.opacity)).toBeCloseTo(0.75);
+		expect(b.style.opacity).toBe('1');
+
+		step.setProgress(0.5);
+		expect(parseFloat(a.style.opacity)).toBeCloseTo(0.5);
+		expect(parseFloat(b.style.opacity)).toBeCloseTo(1 - (0.5 - 0.25) / 0.75);
+
+		step.setProgress(1);
+		expect(a.style.opacity).toBe('0');
+		expect(b.style.opacity).toBe('0');
+
+		step.end();
+		expect(ghosts('[data-layout="a"]').length).toBe(0);
+		expect(ghosts('[data-layout="b"]').length).toBe(0);
+	});
+
 	it('completes the enter by a custom enterEnd and holds the finished state', () => {
 		setBody('');
 		const step = new LayoutStep(

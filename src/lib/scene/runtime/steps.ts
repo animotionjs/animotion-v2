@@ -183,6 +183,15 @@ export interface LayoutOptions {
 	 * half-visible for the rest of the step. Defaults to `0.1`.
 	 */
 	exitEnd?: number;
+	/**
+	 * The fraction of the step between successive entering/exiting elements'
+	 * start times. Element `i` begins its transition at `stagger * i`, so a
+	 * batch added or removed together animates one after another. The step
+	 * duration stays fixed (later elements compress); elements whose delay
+	 * reaches the transition's end render the fully-transitioned state.
+	 * Defaults to `0` (no stagger).
+	 */
+	stagger?: number;
 }
 
 const DEFAULT_ENTER: LayoutTransition = 'fade';
@@ -237,6 +246,8 @@ interface EnterTween {
 	props: LayoutPropTween[];
 	parentScale?: ParentScale;
 	localFinal: { x: number; y: number };
+	/** The element's 0-based position among the step's entering elements. */
+	staggerIndex: number;
 }
 
 /** A removed element's fixed-position ghost animating out. */
@@ -245,6 +256,8 @@ interface ExitTween {
 	mode: 'exit';
 	transition: LayoutTransition;
 	props: LayoutPropTween[];
+	/** The element's 0-based position among the step's exiting elements. */
+	staggerIndex: number;
 }
 
 type LayoutTween = FlipTween | EnterTween | ExitTween;
@@ -602,6 +615,7 @@ export class LayoutStep implements Step {
 	#scale: boolean;
 	#enterEnd: number;
 	#exitEnd: number;
+	#stagger: number;
 	#snapshot: Record<string, unknown> = {};
 	#tweens: LayoutTween[] = [];
 
@@ -620,6 +634,7 @@ export class LayoutStep implements Step {
 		this.#scale = options.scale ?? true;
 		this.#enterEnd = clamp(options.enterEnd ?? 1, 0, 1);
 		this.#exitEnd = clamp(options.exitEnd ?? 0.1, 0, 1);
+		this.#stagger = clamp(options.stagger ?? 0, 0, 1);
 	}
 
 	get duration(): number {
@@ -669,10 +684,14 @@ export class LayoutStep implements Step {
 				// gone before the layout settles; the enter runs for the whole
 				// step (`enterEnd` defaults to 1).
 				const end = direction === 'enter' ? this.#enterEnd : this.#exitEnd;
-				// A zero-length mapping domain (`enterEnd`/`exitEnd: 0`) would
-				// divide by zero into NaN on the first frame; the transition is
-				// simply already complete.
-				const p = end === 0 ? 1 : clampRemap(eased, 0, end, 0, 1);
+				// `stagger` offsets each element's transition start so a batch
+				// added/removed together animates one after another.
+				const start = this.#stagger * tween.staggerIndex;
+				// A zero-length mapping domain (`enterEnd`/`exitEnd: 0`, or a
+				// stagger offset that reaches the transition's end) would divide
+				// by zero into NaN on the first frame; the transition is already
+				// complete for that element.
+				const p = end === 0 || end <= start ? 1 : clampRemap(eased, start, end, 0, 1);
 				const value = transitionValue(tween.transition, p, direction);
 				if (value.opacity !== undefined) tween.el.style.opacity = String(value.opacity);
 				if (value.transform !== undefined) tween.el.style.transform = value.transform;
@@ -745,6 +764,11 @@ export class LayoutStep implements Step {
 		}
 
 		this.#tweens = [];
+
+		// Positions within the entering/exiting sets, used to stagger each
+		// element's transition start in DOM order.
+		let enterCount = 0;
+		let exitCount = 0;
 
 		// The containing block for an absolutely-positioned element: the
 		// nearest `data-layout` ancestor (so nested elements follow their
@@ -923,6 +947,14 @@ export class LayoutStep implements Step {
 					localFinal: { x: finalLeft, y: finalTop }
 				});
 			} else {
+				// A nested element entering inside an entering data-layout
+				// ancestor rides its animation (transform/opacity propagate down
+				// the subtree) and must not consume a stagger slot, or cards
+				// under a larger batch index past the enter window and appear
+				// instantly.
+				const ancestor = el.parentElement?.closest('[data-layout]');
+				const ancestorKey = ancestor?.getAttribute('data-layout') ?? '';
+				if (ancestor && lastBounds.has(ancestorKey) && !firstBounds.has(ancestorKey)) continue;
 				// Pin newly added elements at their final spot, out of flow, so
 				// siblings re-flowing during the step can't shift them; animate
 				// in with the enter transition on top of that.
@@ -944,7 +976,8 @@ export class LayoutStep implements Step {
 					transition: this.#enter,
 					props: [],
 					parentScale,
-					localFinal: { x: left, y: top }
+					localFinal: { x: left, y: top },
+					staggerIndex: enterCount++
 				});
 			}
 		}
@@ -964,7 +997,8 @@ export class LayoutStep implements Step {
 				el: ghost,
 				mode: 'exit',
 				transition: this.#exit,
-				props: []
+				props: [],
+				staggerIndex: exitCount++
 			});
 		}
 
