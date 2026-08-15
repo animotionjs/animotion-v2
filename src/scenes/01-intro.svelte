@@ -3,7 +3,7 @@
 
 	const scene = createScene({ opacity: 0, view: 'title' })
 		.tween('opacity', 1, 0.6)
-		.layout(() => (scene.view = 'logo'), 0.6, { ease: easeInOut, enter: 'scale' });
+		.layout((s) => (s.view = 'logo'), 0.6, { ease: easeInOut, enter: 'scale' });
 </script>
 
 <div data-notes>
