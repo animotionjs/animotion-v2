@@ -415,6 +415,12 @@ interface LayoutBounds {
 	styles: Record<string, string>;
 	text: LayoutTextMetrics;
 	/**
+	 * The element's computed `display`. Exit ghosts clone the element and pin
+	 * it `fixed`, and forcing `block` would break grid/flex centering of
+	 * nested content (removed text jumping to the left edge).
+	 */
+	display: string;
+	/**
 	 * The text glyph ink position (Range over the contents), distinct from the
 	 * layout box because the ink sits at a different offset within the box at
 	 * different font sizes. Only present for direct-text elements.
@@ -713,6 +719,7 @@ export class LayoutStep implements Step {
 					rect,
 					styles: snapshotLayoutStyles(el),
 					text: snapshotTextMetrics(el),
+					display: getComputedStyle(el).display,
 					ink: textInkRect(el)
 				});
 			}
@@ -731,6 +738,7 @@ export class LayoutStep implements Step {
 					rect,
 					styles: snapshotLayoutStyles(el),
 					text: snapshotTextMetrics(el),
+					display: getComputedStyle(el).display,
 					ink: textInkRect(el)
 				});
 			}
@@ -941,10 +949,16 @@ export class LayoutStep implements Step {
 			}
 		}
 
-		for (const [key, { el, rect, text }] of firstBounds) {
+		for (const [key, { el, rect, text, display }] of firstBounds) {
 			if (lastBounds.has(key)) continue;
 			if (this.#exit === 'none') continue;
-			const ghost = this.#createGhost(el, rect, text);
+			// An exiting element already lives inside its data-layout
+			// ancestor's ghost clone, so a second ghost would render the
+			// content twice (e.g. a nested text span duplicated on exit).
+			const ancestor = el.parentElement?.closest('[data-layout]');
+			const ancestorKey = ancestor?.getAttribute('data-layout') ?? '';
+			if (ancestor && firstBounds.has(ancestorKey) && !lastBounds.has(ancestorKey)) continue;
+			const ghost = this.#createGhost(el, rect, text, display);
 			this.#applyStart(ghost, this.#exit, 'exit');
 			this.#tweens.push({
 				el: ghost,
@@ -967,7 +981,12 @@ export class LayoutStep implements Step {
 		if (value.clipPath !== undefined) el.style.clipPath = value.clipPath;
 	}
 
-	#createGhost(el: HTMLElement, rect: DOMRect, text: LayoutTextMetrics): HTMLElement {
+	#createGhost(
+		el: HTMLElement,
+		rect: DOMRect,
+		text: LayoutTextMetrics,
+		display: string
+	): HTMLElement {
 		const ghost = el.cloneNode(true) as HTMLElement;
 		// The ghost leaves the element's flow context (it is appended to
 		// <body>), so class-relative text sizing — em/rem against a scaled
@@ -987,7 +1006,10 @@ export class LayoutStep implements Step {
 		ghost.style.width = `${rect.width}px`;
 		ghost.style.height = `${rect.height}px`;
 		ghost.style.margin = '0';
-		ghost.style.display = 'block';
+		// Preserve the source's display so grid/flex centering of nested
+		// content survives the clone (the source is always captured visible,
+		// so `display` is never `none`).
+		ghost.style.display = display;
 		ghost.style.pointerEvents = 'none';
 		document.body.appendChild(ghost);
 		return ghost;

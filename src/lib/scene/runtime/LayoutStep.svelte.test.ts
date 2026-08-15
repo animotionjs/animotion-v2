@@ -932,6 +932,46 @@ describe('LayoutStep', () => {
 		expect(ghosts('[data-layout="a"]').length).toBe(0);
 	});
 
+	it('spawns one ghost when an exiting element has a data-layout descendant', () => {
+		setBody('<div data-layout="a"><span data-layout="a-text">Text</span></div>');
+		const step = new LayoutStep(
+			{},
+			() => {
+				setBody('');
+			},
+			0.5
+		);
+		step.start();
+
+		// The card ghost's clone already carries the nested text, so a
+		// second ghost for the span would render it twice on exit.
+		expect(ghosts('[data-layout="a"]').length).toBe(1);
+		expect(ghosts('[data-layout="a-text"]').length).toBe(0);
+		expect(ghosts('[data-layout="a"]')[0].textContent).toBe('Text');
+
+		step.end();
+		expect(ghosts('[data-layout="a"]').length).toBe(0);
+	});
+
+	it('preserves the source display so nested content stays centered on exit', () => {
+		setBody(
+			'<div data-layout="a" style="display:grid;width:100px;height:50px;place-items:center"><span>Text</span></div>'
+		);
+		const step = new LayoutStep(
+			{},
+			() => {
+				setBody('');
+			},
+			0.5
+		);
+		step.start();
+
+		expect(ghosts('[data-layout="a"]')[0].style.display).toBe('grid');
+
+		step.end();
+		expect(ghosts('[data-layout="a"]').length).toBe(0);
+	});
+
 	it('spawns a ghost when an element is hidden with display:none', () => {
 		setBody('<div data-layout="a" style="width:100px;height:50px"></div>');
 		const step = new LayoutStep(
