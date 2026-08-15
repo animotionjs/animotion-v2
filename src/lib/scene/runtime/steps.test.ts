@@ -11,6 +11,7 @@ import {
 	ParallelStep,
 	SelectionStep,
 	TickStep,
+	TweenStep,
 	type Step,
 	type TickFrame
 } from './steps';
@@ -102,6 +103,34 @@ describe('SelectionStep deferred resolution', () => {
 
 	it('DEFAULT selects all lines', () => {
 		expect(resolveAtPlay(DEFAULT)).toEqual(code.ALL_LINES);
+	});
+});
+
+describe('TweenStep un-started guards', () => {
+	it('revert before start is a no-op', () => {
+		const state: Record<string, unknown> = { x: 5 };
+		const step = new TweenStep(state, 'x', 10, 1);
+
+		step.revert();
+		expect(state.x).toBe(5);
+	});
+
+	it('end before start is a no-op', () => {
+		const state: Record<string, unknown> = { x: 5 };
+		const step = new TweenStep(state, 'x', 10, 1);
+
+		step.end();
+		expect(state.x).toBe(5);
+	});
+
+	it('revert restores the pre-step value after playing', () => {
+		const state: Record<string, unknown> = { x: 5 };
+		const step = new TweenStep(state, 'x', 10, 1);
+
+		step.start();
+		step.setProgress(0.5);
+		step.revert();
+		expect(state.x).toBe(5);
 	});
 });
 

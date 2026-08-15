@@ -341,6 +341,13 @@ export class SceneManager {
 	 * whole scene to completion. Steps above the target are reverted first, so
 	 * the scene regresses correctly. Used by the embedded speaker mirror to
 	 * track the presentation in place.
+	 *
+	 * Unlike `load()`, the target step is entered eagerly (its `start()` runs
+	 * immediately) rather than deferred: `seek` reproduces a playback position
+	 * the presenter already reached, so the step's animation is meant to resume.
+	 * The mirror only seeks when its own position differs (see
+	 * `speaker.embedState`), so a freshly-loaded un-started scene is never
+	 * flashed by entering step 0 here.
 	 */
 	seek(stepIndex: number, stepCompleted = false, finished = false) {
 		this.#stopLoop();
@@ -376,6 +383,11 @@ export class SceneManager {
 	 * completion, then either enters the target step (started, not progressed),
 	 * marks the previous step completed, or finishes the scene. Emits a step
 	 * change afterwards. Used by {@link seek}.
+	 *
+	 * Entering the target step eagerly (`#enterStep`) is intentional and
+	 * mirrors the contract `load()` deliberately breaks: `load` rests a fresh
+	 * scene at its initial state, while a `seek`'d scene is being resumed, so
+	 * its current step is started at once.
 	 */
 	#positionTo(target: number, stepCompleted: boolean, finished: boolean) {
 		const steps = this.#steps;

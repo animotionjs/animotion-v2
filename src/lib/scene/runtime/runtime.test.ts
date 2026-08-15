@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { SceneManager, type TransitionBuild } from './runtime.svelte';
-import { TickStep, type Step, type TickFrame } from './steps';
+import { TickStep, TweenStep, type Step, type TickFrame } from './steps';
 
 class SpyStep implements Step {
 	starts = 0;
@@ -99,6 +99,46 @@ describe('SceneManager resume after prev', () => {
 		manager.load({ steps: [step] });
 
 		manager.play();
+		expect(step.starts).toBe(1);
+	});
+});
+
+describe('SceneManager deferred start vs rewind/seek', () => {
+	it('prev immediately after load preserves the initial tween value', () => {
+		const manager = new SceneManager();
+		manager.enableRenderMode();
+		const state: Record<string, unknown> = { x: 5 };
+		manager.load({ steps: [new TweenStep(state, 'x', 10, 1)] });
+
+		// The step was never started, so reverting it must not clobber the
+		// initial value with the un-snapshotted `from` default.
+		manager.prev();
+		expect(state.x).toBe(5);
+
+		manager.next();
+		let guard = 0;
+		while (!manager.finished && guard++ < 100) manager.advanceFrame(0.2);
+		expect(state.x).toBe(10);
+	});
+
+	it('seek on a freshly loaded scene does not corrupt the initial value', () => {
+		const manager = new SceneManager();
+		manager.enableRenderMode();
+		const state: Record<string, unknown> = { x: 5 };
+		manager.load({ steps: [new TweenStep(state, 'x', 10, 1)] });
+
+		manager.seek(0, false, false);
+		expect(state.x).toBe(5);
+	});
+
+	it('seek enters the target step eagerly (unlike the load deferral)', () => {
+		const manager = new SceneManager();
+		manager.enableRenderMode();
+		const step = new SpyStep();
+		manager.load({ steps: [step] });
+		expect(step.starts).toBe(0);
+
+		manager.seek(0, false, false);
 		expect(step.starts).toBe(1);
 	});
 });

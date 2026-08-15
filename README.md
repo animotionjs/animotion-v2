@@ -63,7 +63,7 @@ Every animated element must carry a unique `data-layout` key so the step can mat
 </ul>
 ```
 
-FLIP motion and the `scale` transition are driven by `transform`, which browsers ignore on `display: inline` elements. The theme stylesheet automatically makes `span[data-layout]` `inline-block`, so animated spans work out of the box; other inline elements (`a`, `em`, `code`, …) need the same rule or a block-level element. `fade`, `clip`, and `wipe` work on plain inline elements since they only rely on `opacity`/`clip-path`.
+FLIP motion and the `scale`/`slide` transitions are driven by `transform`, which browsers ignore on `display: inline` elements. The theme stylesheet automatically makes `span[data-layout]` `inline-block`, so animated spans work out of the box; other inline elements (`a`, `em`, `code`, …) need the same rule or a block-level element. `fade`, `clip`, and `wipe` work on plain inline elements since they only rely on `opacity`/`clip-path`.
 
 `enter` and `exit` accept `fade` (default), `scale`, `clip` (circle reveal), `wipe` (left-to-right), `slide` (vertical: entering elements slide up in, exiting ones slide down out), or `none`. `ease` defaults to `easeInOut`. `enterEnd` and `exitEnd` set the fraction of the step at which the enter/exit transition completes (defaults `1` and `0.1`): the exit finishes quickly so removed elements are gone while the retained layout keeps settling, while entering elements animate in for the whole step.
 

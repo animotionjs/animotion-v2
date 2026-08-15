@@ -43,6 +43,7 @@ export class TweenStep implements Step {
 	#duration: number;
 	#ease: Easing;
 	#from = 0;
+	#started = false;
 
 	constructor(
 		state: Record<string, unknown>,
@@ -67,14 +68,23 @@ export class TweenStep implements Step {
 	}
 
 	start() {
+		this.#started = true;
 		this.#from = this.#state[this.#key] as number;
 	}
 
 	end() {
+		// Committing an un-started step would clobber the scene's initial value
+		// with the target; only end steps that actually played.
+		if (!this.#started) return;
 		this.#state[this.#key] = this.#to;
 	}
 
 	revert() {
+		// An un-started step has no `from` snapshot (it still holds the field
+		// default), so reverting it would reset a non-zero initial value. This
+		// mirrors the `#snapshot` guard on `CodeStep`/`SelectionStep`.
+		if (!this.#started) return;
+		this.#started = false;
 		this.#state[this.#key] = this.#from;
 	}
 }
@@ -178,30 +188,35 @@ export interface LayoutOptions {
 const DEFAULT_ENTER: LayoutTransition = 'fade';
 const DEFAULT_EXIT: LayoutTransition = 'fade';
 
-type LayoutMode = 'flip' | 'enter' | 'exit';
+/** The ancestor's scale to cancel, and the element's final local spot. */
+type ParentScale = { x0: number; y0: number };
 
-interface LayoutTween {
+/**
+ * A retained element: pinned at its final bounds and glided via transforms.
+ * `localFinal` is always present — every flip tween is pinned — so the
+ * ancestor-scale counter needs no `!` to read it.
+ */
+interface FlipTween {
 	el: HTMLElement;
-	mode: LayoutMode;
-	transition: LayoutTransition;
-	/** flip-only: changed visual properties, each lerped by progress */
+	mode: 'flip';
+	transition: 'none';
+	/** changed visual properties, each lerped by progress */
 	props: LayoutPropTween[];
 	/**
-	 * flip-only: the position offset (previous minus final local position).
-	 * Pinned at its final bounds, the element is transformed back to its
-	 * previous spot and glides forward; a transform keeps the motion at float
-	 * precision instead of stepping through device pixels like left/top.
+	 * The position offset (previous minus final local position). Pinned at its
+	 * final bounds, the element is transformed back to its previous spot and
+	 * glides forward; a transform keeps the motion at float precision instead
+	 * of stepping through device pixels like left/top.
 	 */
 	offset?: { x: number; y: number };
 	/**
-	 * flip-only (`scale: false`): the box's previous and final bounds, lerped
-	 * as `width`/`height` so nested text and images rasterize at native size.
+	 * (`scale: false`): the box's previous and final bounds, lerped as
+	 * `width`/`height` so nested text and images rasterize at native size.
 	 */
 	size?: { fromW: number; fromH: number; toW: number; toH: number };
 	/**
-	 * flip-only (default mode): present when the element morphs between sizes;
-	 * `x`/`y` track the current frame's scale so the border-radius can be
-	 * counter-scaled against it.
+	 * Present when the element morphs between sizes; `x`/`y` track the current
+	 * frame's scale so the border-radius can be counter-scaled against it.
 	 */
 	scale?: { x0: number; y0: number; x: number; y: number };
 	/**
@@ -209,10 +224,30 @@ interface LayoutTween {
 	 * the counter transform cancels the ancestor's scale so this element's
 	 * content never stretches with it.
 	 */
-	parentScale?: { x0: number; y0: number };
+	parentScale?: ParentScale;
 	/** this element's local left/top in the final layout, for the counter */
-	localFinal?: { x: number; y: number };
+	localFinal: { x: number; y: number };
 }
+
+/** A newly added element animating in with the enter transition. */
+interface EnterTween {
+	el: HTMLElement;
+	mode: 'enter';
+	transition: LayoutTransition;
+	props: LayoutPropTween[];
+	parentScale?: ParentScale;
+	localFinal: { x: number; y: number };
+}
+
+/** A removed element's fixed-position ghost animating out. */
+interface ExitTween {
+	el: HTMLElement;
+	mode: 'exit';
+	transition: LayoutTransition;
+	props: LayoutPropTween[];
+}
+
+type LayoutTween = FlipTween | EnterTween | ExitTween;
 
 /** A single property interpolated between two computed values. */
 interface LayoutPropTween {
@@ -414,6 +449,22 @@ function hasDirectText(el: HTMLElement): boolean {
 }
 
 /**
+ * Whether a retained element's bounds change enough to need morphing.
+ * transform-scale stretches an element's own text, so a box whose size change
+ * comes from its content (a shrink-wrapped text run that becomes a full-width
+ * block) is treated as position-only and glides crisply — unless the font-size
+ * itself changed, in which case the text element scales its own glyphs (the one
+ * way a text-size change animates) regardless of the `scale` option.
+ */
+function morphsSize(prev: LayoutBounds, last: Pick<LayoutBounds, 'el' | 'rect' | 'text'>): boolean {
+	const fontChanged = prev.text.fontSize !== last.text.fontSize;
+	return (
+		(prev.rect.width !== last.rect.width || prev.rect.height !== last.rect.height) &&
+		!(hasDirectText(last.el) && !fontChanged)
+	);
+}
+
+/**
  * The top-left of the element's text glyph ink, as opposed to its layout box.
  * Must run while the element is untransformed.
  */
@@ -488,6 +539,44 @@ function transitionValue(
 	}
 }
 
+/** The containing block's border widths, which inset its padding-box edge. */
+function paddingBoxOffset(el: Element): { left: number; top: number } {
+	const style = getComputedStyle(el);
+	return {
+		left: parseFloat(style.borderLeftWidth) || 0,
+		top: parseFloat(style.borderTopWidth) || 0
+	};
+}
+
+/**
+ * Whether `style` establishes a containing block for absolutely-positioned
+ * descendants, per the CSS spec: positioned, transformed, filtered, or
+ * contained. `container-type: inline-size` (Tailwind's `@container`) does NOT
+ * create a containing block, so it is intentionally absent.
+ */
+function establishesContainingBlock(style: CSSStyleDeclaration): boolean {
+	if (style.position !== 'static') return true;
+	if (style.transform !== 'none') return true;
+	if (style.perspective !== 'none') return true;
+	if (style.filter !== 'none') return true;
+	if (style.backdropFilter !== 'none') return true;
+	if (/layout|paint|strict|content/.test(style.contain)) return true;
+	return /transform|perspective|filter/.test(style.willChange);
+}
+
+/**
+ * The nearest ancestor establishing the containing block for an
+ * absolutely-positioned element. `offsetParent` misses SVG (it is `undefined`)
+ * and any block formed by a transform, filter, or containment — so it must be
+ * derived from computed styles instead.
+ */
+function absoluteContainingBlock(el: Element): Element | null {
+	for (let node = el.parentElement; node; node = node.parentElement) {
+		if (establishesContainingBlock(getComputedStyle(node))) return node;
+	}
+	return null;
+}
+
 /**
  * Animates a DOM change with a FLIP transition. On `start()` it snapshots the
  * bounds of every element tagged `data-layout`, runs `change()` (flushing
@@ -558,11 +647,11 @@ export class LayoutStep implements Step {
 					// inside the ancestor's scaled space.
 					const sPx = lerp(tween.parentScale.x0, 1, eased);
 					const sPy = lerp(tween.parentScale.y0, 1, eased);
-					const fx = tween.localFinal!.x;
-					const fy = tween.localFinal!.y;
-					const px = (fx + dx) / sPx - fx;
-					const py = (fy + dy) / sPy - fy;
-					tween.el.style.transform = `translate(${px}px, ${py}px) scale(${scaleX / sPx}, ${scaleY / sPy})`;
+					const fx = tween.localFinal.x;
+					const fy = tween.localFinal.y;
+					const pxOffset = (fx + dx) / sPx - fx;
+					const pyOffset = (fy + dy) / sPy - fy;
+					tween.el.style.transform = `translate(${pxOffset}px, ${pyOffset}px) scale(${scaleX / sPx}, ${scaleY / sPy})`;
 				} else if (tween.scale) {
 					tween.el.style.transform = `translate(${dx}px, ${dy}px) scale(${scaleX}, ${scaleY})`;
 				} else if (tween.offset && (tween.offset.x !== 0 || tween.offset.y !== 0)) {
@@ -574,17 +663,23 @@ export class LayoutStep implements Step {
 				// gone before the layout settles; the enter runs for the whole
 				// step (`enterEnd` defaults to 1).
 				const end = direction === 'enter' ? this.#enterEnd : this.#exitEnd;
-				const value = transitionValue(tween.transition, clampRemap(eased, 0, end, 0, 1), direction);
+				// A zero-length mapping domain (`enterEnd`/`exitEnd: 0`) would
+				// divide by zero into NaN on the first frame; the transition is
+				// simply already complete.
+				const p = end === 0 ? 1 : clampRemap(eased, 0, end, 0, 1);
+				const value = transitionValue(tween.transition, p, direction);
 				if (value.opacity !== undefined) tween.el.style.opacity = String(value.opacity);
 				if (value.transform !== undefined) tween.el.style.transform = value.transform;
 				if (value.clipPath !== undefined) tween.el.style.clipPath = value.clipPath;
-				if (tween.parentScale) {
+				// Exit ghosts leave the layout tree, so only entered elements
+				// can sit under a scaling ancestor that needs counter-scaling.
+				if (tween.mode === 'enter' && tween.parentScale) {
 					// Counter-scale over the transition transform (applied last,
 					// in the unscaled space) so the element stays crisp.
 					const sPx = lerp(tween.parentScale.x0, 1, eased);
 					const sPy = lerp(tween.parentScale.y0, 1, eased);
-					const lx = tween.localFinal!.x;
-					const ly = tween.localFinal!.y;
+					const lx = tween.localFinal.x;
+					const ly = tween.localFinal.y;
 					const counter = `translate(${lx * (1 / sPx - 1)}px, ${
 						ly * (1 / sPy - 1)
 					}px) scale(${1 / sPx}, ${1 / sPy})`;
@@ -605,6 +700,9 @@ export class LayoutStep implements Step {
 			}
 		}
 
+		// `data-layout` is an HTML-first contract; the cast keeps the types
+		// simple while SVG roots (e.g. `<svg data-layout>` scenes) ride along
+		// as best-effort because CSS positioning applies to them too.
 		const elements = [...document.querySelectorAll('[data-layout]')] as HTMLElement[];
 		const firstBounds = new Map<string, LayoutBounds>();
 		for (const el of elements) {
@@ -642,10 +740,12 @@ export class LayoutStep implements Step {
 
 		// The containing block for an absolutely-positioned element: the
 		// nearest `data-layout` ancestor (so nested elements follow their
-		// animated parent), else the nearest positioned ancestor, else the
-		// viewport. Both states are returned because the ancestor itself
-		// glides from its old bounds to its final ones, and the child's local
-		// coordinates must be measured against each.
+		// animated parent), else the ancestor establishing a CSS containing
+		// block (positioned, transformed, filtered, or a container — anything
+		// `offsetParent` would miss, such as SVG or the scene's transition
+		// transform), else the viewport. Both states are returned because the
+		// ancestor itself glides from its old bounds to its final ones, and the
+		// child's local coordinates must be measured against each.
 		const originOf = (
 			el: HTMLElement
 		): { prev: { left: number; top: number }; final: { left: number; top: number } } => {
@@ -653,19 +753,28 @@ export class LayoutStep implements Step {
 			// coordinate space of an element is its ancestor's.
 			const ancestor = el.parentElement?.closest('[data-layout]');
 			if (ancestor) {
+				// `left`/`top` on the pinned element resolve against the
+				// containing block's padding-box edge, so the border-box origin
+				// is shifted out by the ancestor's border widths.
+				const border = paddingBoxOffset(ancestor as HTMLElement);
 				const prev = firstBounds.get((ancestor as HTMLElement).dataset.layout!);
 				const final = lastBounds.get((ancestor as HTMLElement).dataset.layout!);
 				return {
-					prev: prev ? { left: prev.rect.left, top: prev.rect.top } : { left: 0, top: 0 },
-					final: final ? { left: final.rect.left, top: final.rect.top } : { left: 0, top: 0 }
+					prev: prev
+						? { left: prev.rect.left + border.left, top: prev.rect.top + border.top }
+						: { left: 0, top: 0 },
+					final: final
+						? { left: final.rect.left + border.left, top: final.rect.top + border.top }
+						: { left: 0, top: 0 }
 				};
 			}
-			const offset = el.offsetParent;
-			if (offset) {
-				const rect = offset.getBoundingClientRect();
+			const block = absoluteContainingBlock(el);
+			if (block) {
+				const border = paddingBoxOffset(block);
+				const rect = block.getBoundingClientRect();
 				return {
-					prev: { left: rect.left, top: rect.top },
-					final: { left: rect.left, top: rect.top }
+					prev: { left: rect.left + border.left, top: rect.top + border.top },
+					final: { left: rect.left + border.left, top: rect.top + border.top }
 				};
 			}
 			return { prev: { left: 0, top: 0 }, final: { left: 0, top: 0 } };
@@ -681,9 +790,7 @@ export class LayoutStep implements Step {
 			const prev = firstBounds.get(key);
 			if (!prev) continue;
 			const fontChanged = prev.text.fontSize !== text.fontSize;
-			const sizeChanged =
-				(prev.rect.width !== rect.width || prev.rect.height !== rect.height) &&
-				!(hasDirectText(el) && !fontChanged);
+			const sizeChanged = morphsSize(prev, { el, rect, text });
 			if (!((this.#scale || (hasDirectText(el) && fontChanged)) && sizeChanged)) continue;
 			const finalFont = parseFloat(text.fontSize);
 			const uniform =
@@ -731,16 +838,8 @@ export class LayoutStep implements Step {
 				el.style.top = px(finalTop);
 				el.style.width = px(rect.width);
 				el.style.height = px(rect.height);
-				// transform-scale stretches an element's own text, so a box whose
-				// size change comes from its content (a shrink-wrapped text run
-				// that becomes a full-width block) is treated as position-only and
-				// glides crisply — unless the font-size itself changed, in which
-				// case the text element scales its own glyphs (the one way a
-				// text-size change animates) regardless of the `scale` option.
 				const fontChanged = prev.text.fontSize !== text.fontSize;
-				const sizeChanged =
-					(prev.rect.width !== rect.width || prev.rect.height !== rect.height) &&
-					!(hasDirectText(el) && !fontChanged);
+				const sizeChanged = morphsSize(prev, { el, rect, text });
 				const scale = scaling.get(key);
 				const parentScale = parentScaleOf(el);
 				const props: LayoutPropTween[] = [];
@@ -899,7 +998,6 @@ export class LayoutStep implements Step {
 			tween.el.remove();
 		} else {
 			tween.el.style.transform = '';
-			tween.el.style.opacity = '';
 			tween.el.style.clipPath = '';
 			tween.el.style.transformOrigin = '';
 			tween.el.style.position = '';

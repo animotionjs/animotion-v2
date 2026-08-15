@@ -1251,4 +1251,275 @@ describe('LayoutStep', () => {
 		expect(child.style.left).toBe('');
 		expect(child.style.position).toBe('');
 	});
+
+	it('pins children against a bordered container padding-box, not its border-box', () => {
+		setBody(`
+			<div data-layout="box" style="position:absolute;left:0;top:0;width:100px;height:60px;border-left:5px solid red;border-top:3px solid red;padding:8px">
+				<div data-layout="child" style="width:40px;height:20px"></div>
+			</div>
+		`);
+		const step = new LayoutStep(
+			{},
+			() => {
+				element('[data-layout="box"]').style.width = '200px';
+			},
+			0.5
+		);
+		step.start();
+
+		// The child's natural spot is border-box 0 + border 5/3 + padding 8;
+		// `left`/`top` resolve from the padding-box edge, so the border counts
+		// out and the pinned element lands on its natural spot once it settles.
+		const child = element('[data-layout="child"]');
+		expect(child.style.position).toBe('absolute');
+		expect(parseFloat(child.style.left)).toBeCloseTo(8, 4);
+		expect(parseFloat(child.style.top)).toBeCloseTo(8, 4);
+
+		step.setProgress(1);
+		expect(child.getBoundingClientRect().x).toBeCloseTo(13, 4);
+		expect(child.getBoundingClientRect().y).toBeCloseTo(11, 4);
+
+		step.end();
+		expect(child.getBoundingClientRect().x).toBeCloseTo(13, 4);
+		expect(child.getBoundingClientRect().y).toBeCloseTo(11, 4);
+	});
+
+	it('pins an entering element against a transformed containing block (no snap)', () => {
+		// The scene container establishes a containing block via its transform
+		// (the scene transition) and is offset from the viewport, so the pin
+		// must resolve against its padding box — `offsetParent` misses it and
+		// SVG reports undefined entirely. A viewport origin would shift the
+		// pinned element by the container's offset, snapping back at the end.
+		// Sizes come from classes (as in real scenes) so un-pinning on `end`
+		// keeps the layout stable enough to compare.
+		setBody(`
+			<style>
+				.code { width: 200px; height: 100px }
+				.sv { width: 120px; height: 120px }
+			</style>
+			<div style="margin: 100px 0 0 120px">
+				<div id="cb" style="transform: translate(0px, 0px) scale(1); padding: 16px; width: 400px; height: 200px; display: flex; align-items: center; gap: 24px;">
+					<div data-layout="code" class="code"></div>
+				</div>
+			</div>
+		`);
+		const cb = element('#cb');
+		const step = new LayoutStep(
+			{},
+			() => {
+				const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+				svg.dataset.layout = 'scene';
+				svg.setAttribute('viewBox', '0 0 100 100');
+				svg.setAttribute('class', 'sv');
+				cb.appendChild(svg);
+			},
+			0.5
+		);
+		step.start();
+
+		const svg = element('[data-layout="scene"]');
+		const code = element('[data-layout="code"]');
+		const cs = getComputedStyle(cb);
+		const padBoxLeft = cb.getBoundingClientRect().left + (parseFloat(cs.borderLeftWidth) || 0);
+		const padBoxTop = cb.getBoundingClientRect().top + (parseFloat(cs.borderTopWidth) || 0);
+
+		step.setProgress(1);
+		// The SVG is the flex item after the 200px code plus the 24px gap, and
+		// its pin resolves against the containing block's padding box.
+		const pinned = { x: svg.getBoundingClientRect().x, y: svg.getBoundingClientRect().y };
+		expect(pinned.x).toBeCloseTo(code.getBoundingClientRect().x + 224, 4);
+		expect(parseFloat(svg.style.left)).toBeCloseTo(pinned.x - padBoxLeft, 4);
+		expect(parseFloat(svg.style.top)).toBeCloseTo(pinned.y - padBoxTop, 4);
+
+		// Un-pinning returns it to the exact same flex spot — no snap.
+		step.end();
+		expect(svg.getBoundingClientRect().x).toBeCloseTo(pinned.x, 4);
+		expect(svg.getBoundingClientRect().y).toBeCloseTo(pinned.y, 4);
+	});
+
+	it('does not mistake an inline-size query container for a containing block', () => {
+		// `container-type: inline-size` (Tailwind's `@container`) establishes no
+		// containing block, so the pin must keep using the viewport origin —
+		// treating it as a containing block would shift the element.
+		setBody(`
+			<style>
+				.code { width: 200px; height: 100px }
+				.sv { width: 120px; height: 120px }
+			</style>
+			<div style="margin: 60px 0 0 80px">
+				<div id="cb" style="container-type: inline-size; padding: 16px; width: 400px; height: 200px; display: flex; align-items: center; gap: 24px;">
+					<div data-layout="code" class="code"></div>
+				</div>
+			</div>
+		`);
+		const cb = element('#cb');
+		const step = new LayoutStep(
+			{},
+			() => {
+				const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+				svg.dataset.layout = 'scene';
+				svg.setAttribute('viewBox', '0 0 100 100');
+				svg.setAttribute('class', 'sv');
+				cb.appendChild(svg);
+			},
+			0.5
+		);
+		step.start();
+
+		const svg = element('[data-layout="scene"]');
+		const code = element('[data-layout="code"]');
+
+		step.setProgress(1);
+		const pinned = { x: svg.getBoundingClientRect().x, y: svg.getBoundingClientRect().y };
+		expect(pinned.x).toBeCloseTo(code.getBoundingClientRect().x + 224, 4);
+		// A viewport origin: the pin equals the in-flow viewport position.
+		expect(parseFloat(svg.style.left)).toBeCloseTo(pinned.x, 4);
+
+		step.end();
+		expect(svg.getBoundingClientRect().x).toBeCloseTo(pinned.x, 4);
+		expect(svg.getBoundingClientRect().y).toBeCloseTo(pinned.y, 4);
+	});
+
+	it('counter-scales an em-based border-radius (computed to px)', () => {
+		setBody(
+			'<div data-layout="a" style="width:100px;height:100px;border-radius:2em;font-size:16px"></div>'
+		);
+		const step = new LayoutStep(
+			{},
+			() => {
+				element('[data-layout="a"]').style.width = '200px';
+			},
+			0.5,
+			{ scale: true }
+		);
+		step.start();
+
+		const el = element('[data-layout="a"]');
+		// `2em` resolves to 32px in computed styles, so the px counter-scale
+		// path applies and the corners stay put while the box shrinks to half.
+		expect(el.style.borderRadius).toBe('64px / 32px');
+
+		step.end();
+		expect(el.style.borderRadius).toBe('');
+	});
+
+	it('enterEnd: 0 renders the fully-entered state from the first frame', () => {
+		setBody('');
+		const step = new LayoutStep(
+			{},
+			() => {
+				setBody('<div data-layout="a" style="width:100px;height:50px"></div>');
+			},
+			0.5,
+			{ enter: 'fade', enterEnd: 0 }
+		);
+		step.start();
+
+		// A zero-length mapping domain would otherwise divide by zero into NaN
+		// on the first frame; the transition is simply already complete.
+		const el = element('[data-layout="a"]');
+		expect(el.style.opacity).toBe('1');
+
+		step.setProgress(0.5);
+		expect(el.style.opacity).toBe('1');
+
+		step.setProgress(1);
+		step.end();
+		expect(el.style.opacity).toBe('');
+	});
+
+	it('exitEnd: 0 renders the fully-exited state from the first frame', () => {
+		setBody(
+			'<div data-layout="a" style="width:100px;height:50px"></div><div data-layout="b" style="width:100px;height:50px"></div>'
+		);
+		const step = new LayoutStep(
+			{},
+			() => {
+				setBody('<div data-layout="a" style="width:100px;height:50px"></div>');
+			},
+			0.5,
+			{ exit: 'fade', exitEnd: 0 }
+		);
+		step.start();
+
+		const ghost = ghosts('[data-layout="b"]')[0];
+		expect(ghost.style.opacity).toBe('0');
+	});
+
+	it('scale-enter without a scaling ancestor keeps the center transform origin', () => {
+		setBody('');
+		const step = new LayoutStep(
+			{},
+			() => {
+				setBody('<div data-layout="a" style="width:100px;height:50px"></div>');
+			},
+			0.5,
+			{ enter: 'scale' }
+		);
+		step.start();
+
+		const el = element('[data-layout="a"]');
+		expect(el.style.transformOrigin).toBe('center center');
+		expect(el.style.transform).toBe('scale(0)');
+	});
+
+	it('scale-enter inside a scaling ancestor anchors the origin to top-left', () => {
+		setBody(`
+			<div data-layout="box" style="width:100px;height:100px">
+				<div data-layout="child" style="width:50px;height:50px"></div>
+			</div>
+		`);
+		const step = new LayoutStep(
+			{},
+			() => {
+				element('[data-layout="box"]').style.width = '200px';
+				element('[data-layout="box"]').style.height = '200px';
+				const box = element('[data-layout="box"]');
+				const added = document.createElement('div');
+				added.dataset.layout = 'new';
+				added.style.width = '50px';
+				added.style.height = '50px';
+				box.appendChild(added);
+			},
+			0.5,
+			{ enter: 'scale' }
+		);
+		step.start();
+
+		// The counter transform's math assumes a top-left origin, which
+		// silently overrides the scale-enter's center anchor.
+		const added = element('[data-layout="new"]');
+		expect(added.style.transformOrigin).toBe('left top');
+		expect(added.style.transform).toContain('scale(0)');
+		expect(added.style.transform).toContain('scale(2, 2)');
+	});
+
+	it('slide-enter inside a scaling ancestor composes the counter transform', () => {
+		setBody(`
+			<div data-layout="box" style="width:100px;height:100px">
+				<div data-layout="child" style="width:50px;height:50px"></div>
+			</div>
+		`);
+		const step = new LayoutStep(
+			{},
+			() => {
+				element('[data-layout="box"]').style.width = '200px';
+				element('[data-layout="box"]').style.height = '200px';
+				const box = element('[data-layout="box"]');
+				const added = document.createElement('div');
+				added.dataset.layout = 'new';
+				added.style.width = '50px';
+				added.style.height = '50px';
+				box.appendChild(added);
+			},
+			0.5,
+			{ enter: 'slide' }
+		);
+		step.start();
+
+		const added = element('[data-layout="new"]');
+		expect(added.style.opacity).toBe('0');
+		expect(added.style.transform).toContain('translateY(100%)');
+		expect(added.style.transform).toContain('scale(2, 2)');
+	});
 });
