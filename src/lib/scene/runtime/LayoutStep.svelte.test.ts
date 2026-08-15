@@ -1744,4 +1744,474 @@ describe('LayoutStep', () => {
 		expect(added.style.transform).toContain('translateY(100%)');
 		expect(added.style.transform).toContain('scale(2, 2)');
 	});
+
+	it('keeps an existing transform while entering and restores it on end', () => {
+		const step = new LayoutStep(
+			{},
+			() => {
+				setBody(
+					'<div data-layout="a" style="width:100px;height:40px;transform:rotate(30deg)"></div>'
+				);
+			},
+			1,
+			{ enter: 'slide', ease: linear }
+		);
+		step.start();
+
+		const el = element('[data-layout="a"]');
+		// The transition's slide composes BEFORE the element's own rotation, so
+		// it slides in while staying tilted.
+		expect(el.style.transform).toContain('translateY(100%)');
+		expect(el.style.transform).toContain('matrix(');
+
+		step.setProgress(0.5);
+		expect(el.style.transform).toContain('translateY(50%)');
+		expect(el.style.transform).toContain('matrix(');
+
+		step.setProgress(1);
+		expect(el.style.transform).toContain('matrix(');
+
+		step.end();
+		// The author's inline transform is restored, not wiped.
+		expect(el.style.transform).toBe('rotate(30deg)');
+	});
+
+	it('keeps a stylesheet transform while entering and returns to it on end', () => {
+		const step = new LayoutStep(
+			{},
+			() => {
+				setBody(
+					'<style>.tilted{transform:rotate(30deg)}</style><div data-layout="a" class="tilted" style="width:100px;height:40px"></div>'
+				);
+			},
+			1,
+			{ enter: 'slide', ease: linear }
+		);
+		step.start();
+
+		const el = element('[data-layout="a"]');
+		expect(el.style.transform).toContain('matrix(');
+
+		step.end();
+		// The inline transform is cleared so the class's transform re-applies.
+		expect(el.style.transform).toBe('');
+	});
+
+	it('keeps an existing transform while FLIPping, pivoting around its center', () => {
+		setBody(
+			'<div data-layout="a" style="width:100px;height:50px;position:absolute;top:10px;left:10px;transform:rotate(30deg)"></div>'
+		);
+		const step = new LayoutStep(
+			{},
+			() => {
+				setBody(
+					'<div data-layout="a" style="width:200px;height:80px;position:absolute;top:100px;left:100px;transform:rotate(30deg)"></div>'
+				);
+			},
+			0.5,
+			{ ease: linear }
+		);
+		step.start();
+
+		const el = element('[data-layout="a"]');
+		// The rotation is tweened (constant here) on top of the flip transform,
+		// keeping the element's natural center pivot instead of forcing
+		// top-left and wrapping the transform.
+		expect(el.style.transformOrigin).toBe('');
+		expect(el.style.transform).toBe('translate(-140px, -105px) scale(0.5, 0.625) rotate(30deg)');
+
+		step.setProgress(1);
+		expect(el.style.transform).toBe('translate(0px, 0px) scale(1, 1) rotate(30deg)');
+
+		step.end();
+		expect(el.style.transform).toBe('rotate(30deg)');
+	});
+
+	it('keeps a standalone rotate property with its natural pivot while FLIPping', () => {
+		setBody(
+			'<div data-layout="a" style="width:100px;height:50px;position:absolute;top:10px;left:10px;rotate:30deg"></div>'
+		);
+		const step = new LayoutStep(
+			{},
+			() => {
+				setBody(
+					'<div data-layout="a" style="width:200px;height:80px;position:absolute;top:100px;left:100px;rotate:30deg"></div>'
+				);
+			},
+			0.5,
+			{ ease: linear }
+		);
+		step.start();
+
+		const el = element('[data-layout="a"]');
+		// The standalone rotate keeps its natural center pivot and is folded
+		// into the tweened transform (the `rotate` property is suppressed to
+		// identity so it can't double-apply).
+		expect(el.style.transformOrigin).toBe('');
+		expect(el.style.transform).toBe('translate(-140px, -105px) scale(0.5, 0.625) rotate(30deg)');
+		expect(el.style.rotate).toBe('0deg');
+
+		step.setProgress(1);
+		expect(el.style.transform).toBe('translate(0px, 0px) scale(1, 1) rotate(30deg)');
+
+		step.end();
+		// The author's `rotate` property is restored, the tweened transform
+		// cleared.
+		expect(el.style.transform).toBe('');
+		expect(el.style.rotate).toBe('30deg');
+	});
+
+	it('keeps an existing transform while exiting', () => {
+		setBody('<div data-layout="a" style="width:100px;height:40px;transform:rotate(30deg)"></div>');
+		const step = new LayoutStep(
+			{},
+			() => {
+				setBody('');
+			},
+			1,
+			{ exit: 'slide', exitEnd: 1, ease: linear }
+		);
+		step.start();
+
+		const ghost = ghosts('[data-layout="a"]')[0];
+		expect(ghost.style.transform).toContain('translateY(0%)');
+		expect(ghost.style.transform).toContain('matrix(');
+
+		step.setProgress(0.5);
+		expect(ghost.style.transform).toContain('translateY(50%)');
+
+		step.end();
+		expect(ghosts('[data-layout="a"]').length).toBe(0);
+	});
+
+	it('supports standalone rotate/scale/translate in a custom transition', () => {
+		const step = new LayoutStep(
+			{},
+			() => {
+				setBody('<div data-layout="a" style="width:100px;height:40px"></div>');
+			},
+			1,
+			{
+				enter: (p) => ({
+					rotate: `${(1 - p) * 90}deg`,
+					scale: `${1 - p}`,
+					translate: `${(1 - p) * 10}px ${(1 - p) * 20}px`
+				}),
+				ease: linear
+			}
+		);
+		step.start();
+
+		const el = element('[data-layout="a"]');
+		expect(el.style.rotate).toBe('90deg');
+		expect(el.style.scale).toBe('1');
+		expect(el.style.translate).toBe('10px 20px');
+
+		step.setProgress(0.5);
+		expect(el.style.rotate).toBe('45deg');
+
+		step.setProgress(1);
+		expect(el.style.rotate).toBe('0deg');
+		expect(el.style.translate).toBe('0px');
+
+		step.end();
+		expect(el.style.rotate).toBe('');
+		expect(el.style.scale).toBe('');
+		expect(el.style.translate).toBe('');
+	});
+
+	it('animates a retained element own rotation to zero (same box)', () => {
+		setBody(
+			'<div data-layout="a" style="width:100px;height:100px;position:absolute;top:100px;left:100px;rotate:45deg"></div>'
+		);
+		const step = new LayoutStep(
+			{},
+			() => {
+				setBody(
+					'<div data-layout="a" style="width:100px;height:100px;position:absolute;top:100px;left:100px"></div>'
+				);
+			},
+			0.5,
+			{ ease: linear }
+		);
+		step.start();
+
+		const el = element('[data-layout="a"]');
+		// Identical layout boxes mean no flip compensation: only the rotation
+		// tween runs, around the element's natural center. The final state has
+		// no standalone `rotate`, so there is nothing to suppress.
+		expect(el.style.transformOrigin).toBe('');
+		expect(el.style.rotate).toBe('');
+		expect(el.style.transform).toBe('rotate(45deg)');
+
+		step.setProgress(0.5);
+		expect(el.style.transform).toBe('rotate(22.5deg)');
+
+		step.setProgress(1);
+		expect(el.style.transform).toBe('');
+
+		step.end();
+		expect(el.style.transform).toBe('');
+		expect(el.style.rotate).toBe('');
+	});
+
+	it('animates rotation while moving and resizing', () => {
+		setBody(
+			'<div data-layout="a" style="width:100px;height:50px;position:absolute;top:10px;left:10px;rotate:45deg"></div>'
+		);
+		const step = new LayoutStep(
+			{},
+			() => {
+				setBody(
+					'<div data-layout="a" style="width:200px;height:80px;position:absolute;top:100px;left:100px"></div>'
+				);
+			},
+			0.5,
+			{ ease: linear }
+		);
+		step.start();
+
+		const el = element('[data-layout="a"]');
+		// The rotation tween composes outermost, on top of the flip
+		// compensation, keeping the natural center pivot.
+		expect(el.style.transformOrigin).toBe('');
+		expect(el.style.transform).toBe('translate(-140px, -105px) scale(0.5, 0.625) rotate(45deg)');
+
+		step.setProgress(0.5);
+		expect(el.style.transform).toBe(
+			'translate(-70px, -52.5px) scale(0.75, 0.8125) rotate(22.5deg)'
+		);
+
+		step.setProgress(1);
+		expect(el.style.transform).toBe('translate(0px, 0px) scale(1, 1)');
+
+		step.end();
+		expect(el.style.transform).toBe('');
+	});
+
+	it('animates between two rotations of a retained element', () => {
+		setBody(
+			'<div data-layout="a" style="width:100px;height:100px;position:absolute;top:100px;left:100px;rotate:45deg"></div>'
+		);
+		const step = new LayoutStep(
+			{},
+			() => {
+				setBody(
+					'<div data-layout="a" style="width:100px;height:100px;position:absolute;top:100px;left:100px;rotate:15deg"></div>'
+				);
+			},
+			0.5,
+			{ ease: linear }
+		);
+		step.start();
+
+		const el = element('[data-layout="a"]');
+		expect(el.style.transform).toBe('rotate(45deg)');
+
+		step.setProgress(0.5);
+		expect(el.style.transform).toBe('rotate(30deg)');
+
+		// The final rotation is tweened back into the element while the
+		// suppressed `rotate` property is still neutralized.
+		step.setProgress(1);
+		expect(el.style.transform).toBe('rotate(15deg)');
+		expect(el.style.rotate).toBe('0deg');
+
+		step.end();
+		expect(el.style.transform).toBe('');
+		expect(el.style.rotate).toBe('15deg');
+	});
+
+	it('tweens a stylesheet rotate while neutralizing it mid-step', () => {
+		setBody(
+			'<style>.rot{rotate:45deg}.rot15{rotate:15deg}</style><div data-layout="a" class="rot" style="width:100px;height:100px;position:absolute;top:100px;left:100px"></div>'
+		);
+		const step = new LayoutStep(
+			{},
+			() => {
+				setBody(
+					'<style>.rot{rotate:45deg}.rot15{rotate:15deg}</style><div data-layout="a" class="rot15" style="width:100px;height:100px;position:absolute;top:100px;left:100px"></div>'
+				);
+			},
+			0.5,
+			{ ease: linear }
+		);
+		step.start();
+
+		const el = element('[data-layout="a"]');
+		// An inline `rotate: 0deg` neutralizes the class rule while the tween
+		// supplies the rotation, so the class's 15deg can't double with it.
+		expect(el.style.rotate).toBe('0deg');
+		expect(el.style.transform).toBe('rotate(45deg)');
+
+		step.setProgress(0.5);
+		expect(el.style.transform).toBe('rotate(30deg)');
+
+		step.setProgress(1);
+		expect(el.style.transform).toBe('rotate(15deg)');
+
+		step.end();
+		// The inline override is cleared so the class's `rotate` re-applies.
+		expect(el.style.rotate).toBe('');
+		expect(el.style.transform).toBe('');
+	});
+
+	it('enters a transformed element without doubling its rotation', () => {
+		const step = new LayoutStep(
+			{},
+			() => {
+				setBody('<div data-layout="a" style="width:100px;height:40px;rotate:45deg"></div>');
+			},
+			1,
+			{ enter: 'slide', ease: linear }
+		);
+		step.start();
+
+		const el = element('[data-layout="a"]');
+		// The enter transform slides the box while the standalone rotate keeps
+		// it tilted — the individual property stays untouched during enter.
+		expect(el.style.transform).toContain('translateY(100%)');
+		expect(el.style.rotate).toBe('45deg');
+
+		step.setProgress(0.5);
+		expect(el.style.transform).toContain('translateY(50%)');
+		expect(el.style.rotate).toBe('45deg');
+
+		step.end();
+		expect(el.style.transform).toBe('');
+		expect(el.style.rotate).toBe('45deg');
+	});
+
+	it('keeps a translated transform anchored to its untranslated box', () => {
+		setBody(
+			'<div data-layout="a" style="width:100px;height:50px;position:absolute;top:10px;left:10px;transform:translate(20px, 30px)"></div>'
+		);
+		const step = new LayoutStep(
+			{},
+			() => {
+				setBody(
+					'<div data-layout="a" style="width:100px;height:50px;position:absolute;top:10px;left:10px;transform:translate(20px, 30px)"></div>'
+				);
+			},
+			0.5,
+			{ ease: linear }
+		);
+		step.start();
+
+		const el = element('[data-layout="a"]');
+		// Pinned at the untranslated layout box, not the translated rect, so the
+		// tweened transform lands on the same visual spot.
+		expect(el.style.left).toBe('10px');
+		expect(el.style.top).toBe('10px');
+		expect(el.style.transform).toBe('translate(20px, 30px)');
+
+		step.end();
+		expect(el.style.transform).toBe('translate(20px, 30px)');
+	});
+
+	it('composes standalone scale before rotate like the CSS engine', () => {
+		setBody(
+			'<div data-layout="a" style="width:100px;height:50px;position:absolute;top:10px;left:10px;rotate:30deg;scale:2 1"></div>'
+		);
+		const step = new LayoutStep(
+			{},
+			() => {
+				setBody(
+					'<div data-layout="a" style="width:100px;height:50px;position:absolute;top:10px;left:10px;rotate:30deg;scale:2 1"></div>'
+				);
+			},
+			0.5,
+			{ ease: linear }
+		);
+		step.start();
+
+		const el = element('[data-layout="a"]');
+		// The effective matrix is rotate(30deg) then scale(2, 1); folding them
+		// in the CSS order roundtrips through the tween unchanged.
+		expect(el.style.rotate).toBe('0deg');
+		expect(el.style.scale).toBe('1');
+		expect(el.style.transform).toBe('rotate(30deg) scale(2, 1)');
+
+		step.end();
+		expect(el.style.rotate).toBe('30deg');
+		expect(el.style.scale).toBe('2 1');
+	});
+
+	it('roundtrips a reflected transform as rotate(180deg) scale(1, -1)', () => {
+		setBody(
+			'<div data-layout="a" style="width:100px;height:50px;position:absolute;top:10px;left:10px;transform:scaleX(-1)"></div>'
+		);
+		const step = new LayoutStep(
+			{},
+			() => {
+				setBody(
+					'<div data-layout="a" style="width:100px;height:50px;position:absolute;top:10px;left:10px;transform:scaleX(-1)"></div>'
+				);
+			},
+			0.5,
+			{ ease: linear }
+		);
+		step.start();
+
+		const el = element('[data-layout="a"]');
+		// A reflection rides on the y scale so the roundtrip is still a
+		// horizontal flip rather than a vertical one.
+		expect(el.style.transform).toBe('rotate(180deg) scale(1, -1)');
+
+		step.end();
+		expect(el.style.transform).toBe('scaleX(-1)');
+	});
+
+	it('treats a single-value standalone scale as uniform', () => {
+		setBody(
+			'<div data-layout="a" style="width:100px;height:50px;position:absolute;top:10px;left:10px;scale:2"></div>'
+		);
+		const step = new LayoutStep(
+			{},
+			() => {
+				setBody(
+					'<div data-layout="a" style="width:100px;height:50px;position:absolute;top:10px;left:10px;scale:2"></div>'
+				);
+			},
+			0.5,
+			{ ease: linear }
+		);
+		step.start();
+
+		const el = element('[data-layout="a"]');
+		// `scale: 2` means 2 2 — a missing y axis defaults to x.
+		expect(el.style.transform).toBe('scale(2, 2)');
+
+		step.end();
+		expect(el.style.scale).toBe('2');
+	});
+
+	it('pins an exiting transformed element at its untranslated box', () => {
+		setBody(
+			'<div data-layout="a" style="width:100px;height:40px;position:absolute;top:10px;left:10px;transform:rotate(30deg)"></div>'
+		);
+		const step = new LayoutStep(
+			{},
+			() => {
+				setBody('');
+			},
+			1,
+			{ exit: 'fade', exitEnd: 1, ease: linear }
+		);
+		step.start();
+
+		const ghost = ghosts('[data-layout="a"]')[0];
+		// The ghost pins the untranslated layout box and re-applies the rotation
+		// on top, so it renders at the source's visual footprint instead of an
+		// inflated rotated rect.
+		expect(ghost.style.left).toBe('10px');
+		expect(ghost.style.top).toBe('10px');
+		expect(ghost.style.width).toBe('100px');
+		expect(ghost.style.height).toBe('40px');
+		// The cloned inline rotation is preserved on the ghost.
+		expect(ghost.style.transform).toContain('rotate');
+
+		step.end();
+		expect(ghosts('[data-layout="a"]').length).toBe(0);
+	});
 });

@@ -156,11 +156,7 @@ export type LayoutTransition =
 	| 'wipe'
 	| 'slide'
 	| 'none'
-	| ((
-			p: number,
-			direction: 'enter' | 'exit',
-			el: HTMLElement
-		) => LayoutTransitionValue);
+	| ((p: number, direction: 'enter' | 'exit', el: HTMLElement) => LayoutTransitionValue);
 
 /**
  * The per-frame styles a layout transition yields, keyed by progress `p`
@@ -173,6 +169,12 @@ export interface LayoutTransitionValue {
 	clipPath?: string;
 	/** The transform pivot; only honored when returned by a custom transition. */
 	transformOrigin?: string;
+	/** The standalone `rotate` property, composed with `transform` by CSS. */
+	rotate?: string;
+	/** The standalone `scale` property, composed with `transform` by CSS. */
+	scale?: string;
+	/** The standalone `translate` property, composed with `transform` by CSS. */
+	translate?: string;
 }
 
 /**
@@ -259,6 +261,14 @@ interface FlipTween {
 	parentScale?: ParentScale;
 	/** this element's local left/top in the final layout, for the counter */
 	localFinal: { x: number; y: number };
+	/**
+	 * The element's own transform tweened across the flip (present when either
+	 * state has a transform); composed after the flip compensation and applied
+	 * around the element's natural transform-origin.
+	 */
+	transform?: { from: TransformState; to: TransformState };
+	/** The author's inline styles the step overwrites, restored on clear. */
+	inline: LayoutInlineStyles;
 }
 
 /** A newly added element animating in with the enter transition. */
@@ -271,6 +281,10 @@ interface EnterTween {
 	localFinal: { x: number; y: number };
 	/** The element's 0-based position among the step's entering elements. */
 	staggerIndex: number;
+	/** The element's existing transform, wrapped to the animation's pivot. */
+	base: string;
+	/** The author's inline styles the step overwrites, restored on clear. */
+	inline: LayoutInlineStyles;
 }
 
 /** A removed element's fixed-position ghost animating out. */
@@ -281,6 +295,10 @@ interface ExitTween {
 	props: LayoutPropTween[];
 	/** The element's 0-based position among the step's exiting elements. */
 	staggerIndex: number;
+	/** The element's existing transform, wrapped to the animation's pivot. */
+	base: string;
+	/** The author's inline styles the step overwrites, restored on clear. */
+	inline: LayoutInlineStyles;
 }
 
 type LayoutTween = FlipTween | EnterTween | ExitTween;
@@ -462,6 +480,14 @@ interface LayoutBounds {
 	 * different font sizes. Only present for direct-text elements.
 	 */
 	ink?: { left: number; top: number };
+	/** The parsed computed `transform`, or `null` when the element has none. */
+	matrix: Matrix2D | null;
+	/** The element's computed transform-origin as an offset from its top-left. */
+	origin: { x: number; y: number };
+	/** Whether the element uses standalone `rotate`/`scale`/`translate` props. */
+	individual: boolean;
+	/** The element's untransformed layout box (`rect` for untransformed elements). */
+	layout: { left: number; top: number; width: number; height: number };
 }
 
 /**
@@ -496,14 +522,43 @@ function hasDirectText(el: HTMLElement): boolean {
  * comes from its content (a shrink-wrapped text run that becomes a full-width
  * block) is treated as position-only and glides crisply — unless the font-size
  * itself changed, in which case the text element scales its own glyphs (the one
- * way a text-size change animates) regardless of the `scale` option.
+ * way a text-size change animates) regardless of the `scale` option. Both boxes
+ * are the untransformed layout boxes so an element's own rotation doesn't
+ * inflate its measured size into a false scale.
  */
-function morphsSize(prev: LayoutBounds, last: Pick<LayoutBounds, 'el' | 'rect' | 'text'>): boolean {
+function morphsSize(
+	prev: LayoutBounds,
+	last: Pick<LayoutBounds, 'el' | 'layout' | 'text'>
+): boolean {
 	const fontChanged = prev.text.fontSize !== last.text.fontSize;
 	return (
-		(prev.rect.width !== last.rect.width || prev.rect.height !== last.rect.height) &&
+		(prev.layout.width !== last.layout.width || prev.layout.height !== last.layout.height) &&
 		!(hasDirectText(last.el) && !fontChanged)
 	);
+}
+
+/** Measures one `data-layout` element's state (box, transform, text, ink). */
+function captureBounds(el: HTMLElement, rect: DOMRect): LayoutBounds {
+	const computed = getComputedStyle(el);
+	const width = el.offsetWidth || rect.width;
+	const height = el.offsetHeight || rect.height;
+	const individual = hasIndividualTransforms(el);
+	const matrix = composeTransform(computed, individual, width, height);
+	const origin = resolveOrigin(computed.transformOrigin, width, height);
+	return {
+		el,
+		rect,
+		matrix,
+		origin,
+		individual,
+		layout: matrix
+			? layoutRectOf(el, matrix, rect, origin)
+			: { left: rect.left, top: rect.top, width: rect.width, height: rect.height },
+		styles: snapshotLayoutStyles(el),
+		text: snapshotTextMetrics(el),
+		display: computed.display,
+		ink: textInkRect(el)
+	};
 }
 
 /**
@@ -581,6 +636,292 @@ function transitionValue(
 		case 'none':
 			return {};
 	}
+}
+
+/** The author's inline styles a step overwrites, restored on `end()`/`revert()`. */
+interface LayoutInlineStyles {
+	transform: string;
+	clipPath: string;
+	transformOrigin: string;
+	rotate: string;
+	scale: string;
+	translate: string;
+}
+
+function snapshotInline(el: HTMLElement): LayoutInlineStyles {
+	return {
+		transform: el.style.transform,
+		clipPath: el.style.clipPath,
+		transformOrigin: el.style.transformOrigin,
+		rotate: el.style.rotate,
+		scale: el.style.scale,
+		translate: el.style.translate
+	};
+}
+
+/** The element's resolved `transform` matrix, or `''` when it has none. */
+function computedTransformOf(el: HTMLElement): string {
+	const transform = getComputedStyle(el).transform;
+	return transform === 'none' ? '' : transform;
+}
+
+/** Whether the element uses a standalone `rotate`/`scale`/`translate` property. */
+function hasIndividualTransforms(el: HTMLElement): boolean {
+	const style = getComputedStyle(el);
+	return style.rotate !== 'none' || style.scale !== 'none' || style.translate !== 'none';
+}
+
+/** Resolves one transform-origin axis (`left`/`center`/`50%`/`10px`...) to px. */
+function originAxis(value: string, size: number): number {
+	const axis = value.trim().toLowerCase();
+	if (axis === 'left' || axis === 'top') return 0;
+	if (axis === 'right' || axis === 'bottom') return size;
+	if (axis === 'center') return size / 2;
+	const parsed = parseFloat(axis);
+	if (Number.isNaN(parsed)) return size / 2;
+	return axis.endsWith('%') ? (parsed / 100) * size : parsed;
+}
+
+/** Resolves a transform-origin value to an offset from the element's top-left. */
+function resolveOrigin(value: string, width: number, height: number): { x: number; y: number } {
+	const [x, y = 'center'] = value.trim().split(/\s+/);
+	return { x: originAxis(x, width), y: originAxis(y, height) };
+}
+
+/**
+ * Wraps `base` (resolved by the browser around the element's natural
+ * transform-origin) so it renders identically when the animation applies it
+ * around a different pivot. Keeps the element's existing rotation/scale from
+ * jumping when the step starts or ends.
+ */
+function aroundOrigin(
+	base: string,
+	natural: { x: number; y: number },
+	forced: { x: number; y: number }
+): string {
+	if (!base) return '';
+	const dx = natural.x - forced.x;
+	const dy = natural.y - forced.y;
+	if (dx === 0 && dy === 0) return base;
+	return `translate(${dx}px, ${dy}px) ${base} translate(${-dx}px, ${-dy}px)`;
+}
+
+/** Appends the element's existing transform after a transition's transform. */
+const withBase = (transform: string, base: string) => (base ? `${transform} ${base}` : transform);
+
+/** The 2D affine part of a computed `transform` matrix. */
+interface Matrix2D {
+	a: number;
+	b: number;
+	c: number;
+	d: number;
+	e: number;
+	f: number;
+}
+
+/** The transformable parts of a 2D matrix, used to tween transforms across a FLIP. */
+interface TransformState {
+	tx: number;
+	ty: number;
+	sx: number;
+	sy: number;
+	/** degrees; `0` when absent */
+	rotate: number;
+}
+
+/**
+ * Parses a computed `transform` into its 2D affine part. `none`/`''` resolve to
+ * `null`; a 3D matrix falls back to its top-left 2x2 block and translation.
+ */
+function parseTransform(transform: string): Matrix2D | null {
+	if (transform === '' || transform === 'none') return null;
+	const matrix = transform.match(
+		/^matrix\(([-\d.eE]+),\s*([-\d.eE]+),\s*([-\d.eE]+),\s*([-\d.eE]+),\s*([-\d.eE]+),\s*([-\d.eE]+)\)$/
+	);
+	if (matrix) {
+		return {
+			a: Number(matrix[1]),
+			b: Number(matrix[2]),
+			c: Number(matrix[3]),
+			d: Number(matrix[4]),
+			e: Number(matrix[5]),
+			f: Number(matrix[6])
+		};
+	}
+	const matrix3d = transform.match(
+		/^matrix3d\(([-\d.eE]+),\s*([-\d.eE]+),\s*([-\d.eE]+),\s*([-\d.eE]+),\s*([-\d.eE]+),\s*([-\d.eE]+),\s*([-\d.eE]+),\s*([-\d.eE]+),\s*([-\d.eE]+),\s*([-\d.eE]+),\s*([-\d.eE]+),\s*([-\d.eE]+),\s*([-\d.eE]+),\s*([-\d.eE]+),\s*([-\d.eE]+),\s*([-\d.eE]+)\)$/
+	);
+	if (matrix3d) {
+		return {
+			a: Number(matrix3d[1]),
+			b: Number(matrix3d[2]),
+			c: Number(matrix3d[5]),
+			d: Number(matrix3d[6]),
+			e: Number(matrix3d[13]),
+			f: Number(matrix3d[14])
+		};
+	}
+	return null;
+}
+
+/**
+ * Reconstructs the element's untransformed layout box from a measured (possibly
+ * transformed) bounding rect: the box the element would occupy with
+ * `transform: none`. `offsetWidth`/`offsetHeight` give the untransformed size;
+ * the position is recovered by undoing the whole matrix (including its
+ * translation) around the transform-origin.
+ */
+function layoutRectOf(
+	el: HTMLElement,
+	matrix: Matrix2D,
+	rect: DOMRect,
+	origin: { x: number; y: number }
+): { left: number; top: number; width: number; height: number } {
+	const width = el.offsetWidth || rect.width;
+	const height = el.offsetHeight || rect.height;
+	const centerX = rect.left + rect.width / 2;
+	const centerY = rect.top + rect.height / 2;
+	const dx = width / 2 - origin.x;
+	const dy = height / 2 - origin.y;
+	const mx = matrix.a * dx + matrix.c * dy;
+	const my = matrix.b * dx + matrix.d * dy;
+	return {
+		left: centerX - origin.x - mx - matrix.e,
+		top: centerY - origin.y - my - matrix.f,
+		width,
+		height
+	};
+}
+
+/** Multiplies two 2D matrices (`a` applied after `b`). */
+const mul = (a: Matrix2D, b: Matrix2D): Matrix2D => ({
+	a: a.a * b.a + a.c * b.b,
+	b: a.b * b.a + a.d * b.b,
+	c: a.a * b.c + a.c * b.d,
+	d: a.b * b.c + a.d * b.d,
+	e: a.a * b.e + a.c * b.f + a.e,
+	f: a.b * b.e + a.d * b.f + a.f
+});
+
+const matrixOfTranslate = (tx: number, ty: number): Matrix2D => ({
+	a: 1,
+	b: 0,
+	c: 0,
+	d: 1,
+	e: tx,
+	f: ty
+});
+
+const matrixOfRotate = (degrees: number): Matrix2D => {
+	const rad = (degrees * Math.PI) / 180;
+	return { a: Math.cos(rad), b: Math.sin(rad), c: -Math.sin(rad), d: Math.cos(rad), e: 0, f: 0 };
+};
+
+const matrixOfScale = (sx: number, sy: number): Matrix2D => ({
+	a: sx,
+	b: 0,
+	c: 0,
+	d: sy,
+	e: 0,
+	f: 0
+});
+
+const parseAngle = (value: string): number => parseFloat(value) || 0;
+
+/** Resolves a `translate` axis value (`px`, `%`, or `0`) against the box size. */
+function translateAxis(value: string, size: number): number {
+	if (!value || value === '0') return 0;
+	if (value.endsWith('%')) return (parseFloat(value) / 100) * size;
+	return parseFloat(value) || 0;
+}
+
+/**
+ * The element's effective transform matrix: the `transform` property combined
+ * with the standalone `translate`/`rotate`/`scale` properties, which the CSS
+ * spec applies before `transform` (points hit `scale`, then `rotate`, then
+ * `translate`) and which do not show up in the computed `transform` value. The
+ * FLIP tween animates this combined matrix so standalone transforms
+ * rotate/scale across the flip like property transforms.
+ */
+function composeTransform(
+	computed: CSSStyleDeclaration,
+	individual: boolean,
+	width: number,
+	height: number
+): Matrix2D | null {
+	const matrix = parseTransform(computed.transform);
+	if (!individual) return matrix;
+	// `mul(a, b)` applies `a` after `b`, so folding in this order builds the
+	// CSS `M = translate·rotate·scale·transform` product.
+	let composed = matrix ?? { a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 };
+	if (computed.scale !== 'none') {
+		// `scale: 2` is a uniform scale, so a missing y axis defaults to x.
+		const [sx = '1', sy] = computed.scale.split(/\s+/);
+		composed = mul(matrixOfScale(parseFloat(sx) || 1, parseFloat(sy ?? sx) || 1), composed);
+	}
+	if (computed.rotate !== 'none') {
+		composed = mul(matrixOfRotate(parseAngle(computed.rotate)), composed);
+	}
+	if (computed.translate !== 'none') {
+		const [tx = '0', ty = '0'] = computed.translate.split(/\s+/);
+		composed = mul(
+			matrixOfTranslate(translateAxis(tx, width), translateAxis(ty, height)),
+			composed
+		);
+	}
+	return composed;
+}
+
+/**
+ * Decomposes a matrix into its translate/scale/rotate parts (no skew). Exact
+ * for `R(θ)·S`-form matrices (pure `rotate`/`scale`, and CSS lists like
+ * `rotate(30deg) scale(2)`); `scale(2, 1) rotate(30deg)`-style lists and
+ * arbitrary `matrix()` values decompose approximately. A reflection (det<0)
+ * rides on the y scale so `rotate(180deg) scale(1, -1)` roundtrips a `scaleX(-1)`.
+ */
+function decomposeTransform(matrix: Matrix2D | null): TransformState {
+	if (!matrix) return { tx: 0, ty: 0, sx: 1, sy: 1, rotate: 0 };
+	const sx = Math.hypot(matrix.a, matrix.b);
+	const sy = Math.hypot(matrix.c, matrix.d);
+	const det = matrix.a * matrix.d - matrix.b * matrix.c;
+	return {
+		tx: matrix.e,
+		ty: matrix.f,
+		sx,
+		sy: det < 0 ? -sy : sy,
+		rotate: (Math.atan2(matrix.b, matrix.a) * 180) / Math.PI
+	};
+}
+
+/** Rounds to 3 decimals, trimming float noise and trailing zeros. */
+const fmt = (value: number) => String(Math.round(value * 1000) / 1000);
+
+/** Serializes a transform state, omitting identity parts. */
+function rebuildTransform(state: TransformState): string {
+	// Round before the identity check: computed matrices round to 6 decimals,
+	// so a pure rotation reads back as sx=0.99999968, which is exactly 1.
+	const tx = Math.round(state.tx * 1000) / 1000;
+	const ty = Math.round(state.ty * 1000) / 1000;
+	const sx = Math.round(state.sx * 1000) / 1000;
+	const sy = Math.round(state.sy * 1000) / 1000;
+	const rotate = Math.round(state.rotate * 1000) / 1000;
+	const parts: string[] = [];
+	if (tx !== 0 || ty !== 0) parts.push(`translate(${fmt(tx)}px, ${fmt(ty)}px)`);
+	if (rotate !== 0) parts.push(`rotate(${fmt(rotate)}deg)`);
+	if (sx !== 1 || sy !== 1) parts.push(`scale(${fmt(sx)}, ${fmt(sy)})`);
+	return parts.join(' ');
+}
+
+/** Lerps two transform states; rotation takes the shortest way around. */
+function lerpTransformState(from: TransformState, to: TransformState, p: number): TransformState {
+	const delta = ((to.rotate - from.rotate + 540) % 360) - 180;
+	return {
+		tx: lerp(from.tx, to.tx, p),
+		ty: lerp(from.ty, to.ty, p),
+		sx: lerp(from.sx, to.sx, p),
+		sy: lerp(from.sy, to.sy, p),
+		rotate: from.rotate + delta * p
+	};
 }
 
 /** The containing block's border widths, which inset its padding-box edge. */
@@ -687,6 +1028,7 @@ export class LayoutStep implements Step {
 					tween.el.style.width = `${lerp(tween.size.fromW, tween.size.toW, eased)}px`;
 					tween.el.style.height = `${lerp(tween.size.fromH, tween.size.toH, eased)}px`;
 				}
+				let flip = '';
 				if (tween.parentScale) {
 					// The element is pinned at its final local spot; cancel the
 					// ancestor's scale (net scale 1) while the position glides
@@ -697,11 +1039,22 @@ export class LayoutStep implements Step {
 					const fy = tween.localFinal.y;
 					const pxOffset = (fx + dx) / sPx - fx;
 					const pyOffset = (fy + dy) / sPy - fy;
-					tween.el.style.transform = `translate(${pxOffset}px, ${pyOffset}px) scale(${scaleX / sPx}, ${scaleY / sPy})`;
+					flip = `translate(${pxOffset}px, ${pyOffset}px) scale(${scaleX / sPx}, ${scaleY / sPy})`;
 				} else if (tween.scale) {
-					tween.el.style.transform = `translate(${dx}px, ${dy}px) scale(${scaleX}, ${scaleY})`;
+					flip = `translate(${dx}px, ${dy}px) scale(${scaleX}, ${scaleY})`;
 				} else if (tween.offset && (tween.offset.x !== 0 || tween.offset.y !== 0)) {
-					tween.el.style.transform = `translate(${dx}px, ${dy}px)`;
+					flip = `translate(${dx}px, ${dy}px)`;
+				}
+				// The element's own transform glides from its previous matrix to
+				// its final one, outermost so it rotates on top of the flip.
+				const tweened = tween.transform
+					? rebuildTransform(lerpTransformState(tween.transform.from, tween.transform.to, eased))
+					: '';
+				// A transform tween writes every frame (an identity frame clears
+				// the property); a flip-only tween writes only while active so a
+				// stationary element is never touched.
+				if (tween.transform || flip) {
+					tween.el.style.transform = flip ? (tweened ? `${flip} ${tweened}` : flip) : tweened;
 				}
 			} else {
 				const direction = tween.mode === 'enter' ? 'enter' : 'exit';
@@ -719,9 +1072,14 @@ export class LayoutStep implements Step {
 				const p = end === 0 || end <= start ? 1 : clampRemap(eased, start, end, 0, 1);
 				const value = transitionValue(tween.transition, p, direction, tween.el);
 				if (value.opacity !== undefined) tween.el.style.opacity = String(value.opacity);
-				if (value.transform !== undefined) tween.el.style.transform = value.transform;
+				if (value.transform !== undefined)
+					tween.el.style.transform = withBase(value.transform, tween.base);
 				if (value.clipPath !== undefined) tween.el.style.clipPath = value.clipPath;
-				if (value.transformOrigin !== undefined) tween.el.style.transformOrigin = value.transformOrigin;
+				if (value.transformOrigin !== undefined)
+					tween.el.style.transformOrigin = value.transformOrigin;
+				if (value.rotate !== undefined) tween.el.style.rotate = value.rotate;
+				if (value.scale !== undefined) tween.el.style.scale = value.scale;
+				if (value.translate !== undefined) tween.el.style.translate = value.translate;
 				// Exit ghosts leave the layout tree, so only entered elements
 				// can sit under a scaling ancestor that needs counter-scaling.
 				if (tween.mode === 'enter' && tween.parentScale) {
@@ -734,7 +1092,10 @@ export class LayoutStep implements Step {
 					const counter = `translate(${lx * (1 / sPx - 1)}px, ${
 						ly * (1 / sPy - 1)
 					}px) scale(${1 / sPx}, ${1 / sPy})`;
-					tween.el.style.transform = value.transform ? `${value.transform} ${counter}` : counter;
+					tween.el.style.transform = withBase(
+						value.transform ? `${value.transform} ${counter}` : counter,
+						tween.base
+					);
 				}
 			}
 		}
@@ -759,14 +1120,7 @@ export class LayoutStep implements Step {
 		for (const el of elements) {
 			const rect = el.getBoundingClientRect();
 			if (rect.width > 0 && rect.height > 0) {
-				firstBounds.set(el.dataset.layout!, {
-					el,
-					rect,
-					styles: snapshotLayoutStyles(el),
-					text: snapshotTextMetrics(el),
-					display: getComputedStyle(el).display,
-					ink: textInkRect(el)
-				});
+				firstBounds.set(el.dataset.layout!, captureBounds(el, rect));
 			}
 		}
 
@@ -778,14 +1132,7 @@ export class LayoutStep implements Step {
 		for (const el of lastElements) {
 			const rect = el.getBoundingClientRect();
 			if (rect.width > 0 && rect.height > 0) {
-				lastBounds.set(el.dataset.layout!, {
-					el,
-					rect,
-					styles: snapshotLayoutStyles(el),
-					text: snapshotTextMetrics(el),
-					display: getComputedStyle(el).display,
-					ink: textInkRect(el)
-				});
+				lastBounds.set(el.dataset.layout!, captureBounds(el, rect));
 			}
 		}
 
@@ -818,11 +1165,14 @@ export class LayoutStep implements Step {
 				const prev = firstBounds.get((ancestor as HTMLElement).dataset.layout!);
 				const final = lastBounds.get((ancestor as HTMLElement).dataset.layout!);
 				return {
+					// The ancestor's untransformed layout box: a transformed
+					// ancestor anchors its children around its own (rotated)
+					// measured bounds, which would misplace pinned children.
 					prev: prev
-						? { left: prev.rect.left + border.left, top: prev.rect.top + border.top }
+						? { left: prev.layout.left + border.left, top: prev.layout.top + border.top }
 						: { left: 0, top: 0 },
 					final: final
-						? { left: final.rect.left + border.left, top: final.rect.top + border.top }
+						? { left: final.layout.left + border.left, top: final.layout.top + border.top }
 						: { left: 0, top: 0 }
 				};
 			}
@@ -844,11 +1194,11 @@ export class LayoutStep implements Step {
 		// scales uniformly by its font ratio — a uniform scale is what reads as
 		// the text genuinely growing — while boxes scale by their bounds.
 		const scaling = new Map<string, { x0: number; y0: number; x: number; y: number }>();
-		for (const [key, { el, rect, text }] of lastBounds) {
+		for (const [key, { el, layout, text }] of lastBounds) {
 			const prev = firstBounds.get(key);
 			if (!prev) continue;
 			const fontChanged = prev.text.fontSize !== text.fontSize;
-			const sizeChanged = morphsSize(prev, { el, rect, text });
+			const sizeChanged = morphsSize(prev, { el, layout, text });
 			if (!((this.#scale || (hasDirectText(el) && fontChanged)) && sizeChanged)) continue;
 			const finalFont = parseFloat(text.fontSize);
 			const uniform =
@@ -856,8 +1206,8 @@ export class LayoutStep implements Step {
 					? parseFloat(prev.text.fontSize) / finalFont
 					: undefined;
 			scaling.set(key, {
-				x0: uniform ?? prev.rect.width / rect.width,
-				y0: uniform ?? prev.rect.height / rect.height,
+				x0: uniform ?? prev.layout.width / layout.width,
+				y0: uniform ?? prev.layout.height / layout.height,
 				x: 1,
 				y: 1
 			});
@@ -869,7 +1219,7 @@ export class LayoutStep implements Step {
 			return ancestor ? scaling.get(ancestor.dataset.layout!) : undefined;
 		};
 
-		for (const [key, { el, rect, styles, text, ink }] of lastBounds) {
+		for (const [key, { el, styles, text, ink, matrix, origin, layout, individual }] of lastBounds) {
 			const prev = firstBounds.get(key);
 			if (prev) {
 				// Take the element out of flow so the container's size tween
@@ -877,7 +1227,7 @@ export class LayoutStep implements Step {
 				// re-distributing). It is pinned at its final bounds and moved
 				// via a transform so position and size glide at float precision
 				// instead of re-laying-out fractional geometry each frame.
-				const origin = originOf(el);
+				const originAt = originOf(el);
 				el.style.position = 'absolute';
 				// `top`/`left` position the margin box, so margins would shift
 				// the border box; drop them and place the border box directly.
@@ -887,17 +1237,19 @@ export class LayoutStep implements Step {
 				el.style.minHeight = 'auto';
 				el.style.maxWidth = 'none';
 				el.style.maxHeight = 'none';
-				const finalLeft = rect.left - origin.final.left;
-				const finalTop = rect.top - origin.final.top;
+				const finalLeft = layout.left - originAt.final.left;
+				const finalTop = layout.top - originAt.final.top;
 				// Pin at the final bounds so a shrink-wrapped box (e.g. an
 				// absolutely-positioned text run that becomes a full-width block)
-				// doesn't snap to its final size when the step ends.
+				// doesn't snap to its final size when the step ends. A
+				// transformed element pins its untransformed layout box: the
+				// rotation tween renders the measured transform on top.
 				el.style.left = px(finalLeft);
 				el.style.top = px(finalTop);
-				el.style.width = px(rect.width);
-				el.style.height = px(rect.height);
+				el.style.width = px(layout.width);
+				el.style.height = px(layout.height);
 				const fontChanged = prev.text.fontSize !== text.fontSize;
-				const sizeChanged = morphsSize(prev, { el, rect, text });
+				const sizeChanged = morphsSize(prev, { el, layout, text });
 				const scale = scaling.get(key);
 				const parentScale = parentScaleOf(el);
 				const props: LayoutPropTween[] = [];
@@ -907,8 +1259,8 @@ export class LayoutStep implements Step {
 				// compensation computed from the local shift, or the child
 				// glides under the counter-scale.
 				const offset = {
-					x: prev.rect.left - origin.prev.left - finalLeft,
-					y: prev.rect.top - origin.prev.top - finalTop
+					x: prev.layout.left - originAt.prev.left - finalLeft,
+					y: prev.layout.top - originAt.prev.top - finalTop
 				};
 				if (scale && fontChanged && prev.ink && ink) {
 					// The glyph ink sits at a different offset within the box at
@@ -918,8 +1270,8 @@ export class LayoutStep implements Step {
 					const finalFont = parseFloat(text.fontSize);
 					if (finalFont > 0) {
 						const r = parseFloat(prev.text.fontSize) / finalFont;
-						offset.x += prev.ink.left - prev.rect.left - (ink.left - rect.left) * r;
-						offset.y += prev.ink.top - prev.rect.top - (ink.top - rect.top) * r;
+						offset.x += prev.ink.left - prev.layout.left - (ink.left - layout.left) * r;
+						offset.y += prev.ink.top - prev.layout.top - (ink.top - layout.top) * r;
 					}
 				}
 				// `scale: false` opts into morphing width/height so nested text
@@ -929,19 +1281,47 @@ export class LayoutStep implements Step {
 				const size =
 					!scale && sizeChanged
 						? {
-								fromW: prev.rect.width,
-								fromH: prev.rect.height,
-								toW: rect.width,
-								toH: rect.height
+								fromW: prev.layout.width,
+								fromH: prev.layout.height,
+								toW: layout.width,
+								toH: layout.height
 							}
 						: undefined;
-				if (scale || parentScale) el.style.transformOrigin = 'top left';
+				// The element's own transform is tweened across the flip — from
+				// the previous state's matrix to the final one's — and applies
+				// around the element's natural transform-origin (an un-anchored
+				// pivot, so the position offset compensates for it when the box
+				// scales). Standalone `rotate`/`scale`/`translate` are folded
+				// into that tween and suppressed while the step runs.
+				const transformed = Boolean(prev.matrix || matrix);
+				// The current element's standalone props are folded into the
+				// tweened matrix, so override them to identity while the step
+				// runs (an inline `''` wouldn't beat a stylesheet rule like
+				// Tailwind's `rotate-45`); the snapshot restores them on clear.
+				const suppressIndividual = individual;
+				// Snapshot before suppressing so the author's standalone props
+				// survive to be restored on clear.
+				const inline = snapshotInline(el);
+				const forceTopLeft = (scale || parentScale) && !transformed;
+				if (forceTopLeft) el.style.transformOrigin = 'top left';
+				else if (scale || parentScale) {
+					offset.x += origin.x * (scale ? scale.x0 - 1 : 0);
+					offset.y += origin.y * (scale ? scale.y0 - 1 : 0);
+				}
+				if (suppressIndividual) {
+					el.style.rotate = '0deg';
+					el.style.scale = '1';
+					el.style.translate = '0px';
+				}
+				const transform = transformed
+					? { from: decomposeTransform(prev.matrix), to: decomposeTransform(matrix) }
+					: undefined;
 				for (const prop of Object.keys(LAYOUT_PROPS)) {
 					let tween = createLayoutPropTween(
 						prop,
 						prev.styles[prop],
 						styles[prop],
-						prop === 'border-radius' ? Math.min(rect.width, rect.height) / 2 : undefined
+						prop === 'border-radius' ? Math.min(layout.width, layout.height) / 2 : undefined
 					);
 					if (prop === 'border-radius' && scale) {
 						const radius = parseRadius(styles[prop]);
@@ -970,7 +1350,9 @@ export class LayoutStep implements Step {
 					size,
 					scale,
 					parentScale,
-					localFinal: { x: finalLeft, y: finalTop }
+					localFinal: { x: finalLeft, y: finalTop },
+					transform,
+					inline
 				});
 			} else {
 				// A nested element entering inside an entering data-layout
@@ -984,18 +1366,30 @@ export class LayoutStep implements Step {
 				// Pin newly added elements at their final spot, out of flow, so
 				// siblings re-flowing during the step can't shift them; animate
 				// in with the enter transition on top of that.
-				const origin = originOf(el);
-				const left = rect.left - origin.final.left;
-				const top = rect.top - origin.final.top;
+				const originAt = originOf(el);
+				const left = layout.left - originAt.final.left;
+				const top = layout.top - originAt.final.top;
 				el.style.position = 'absolute';
 				el.style.margin = '0';
 				el.style.left = px(left);
 				el.style.top = px(top);
-				el.style.width = px(rect.width);
-				el.style.height = px(rect.height);
-				this.#applyStart(el, this.#enter, 'enter');
+				el.style.width = px(layout.width);
+				el.style.height = px(layout.height);
+				const inline = snapshotInline(el);
+				const rawBase = computedTransformOf(el);
 				const parentScale = parentScaleOf(el);
-				if (parentScale) el.style.transformOrigin = 'top left';
+				// The counter-scale below assumes a top-left pivot, so an
+				// element under a scaling ancestor always pivots there, even if
+				// the enter transition wants its own origin.
+				const base = this.#applyStart(
+					el,
+					this.#enter,
+					'enter',
+					rawBase,
+					layout.width,
+					layout.height,
+					Boolean(parentScale)
+				);
 				this.#tweens.push({
 					el,
 					mode: 'enter',
@@ -1003,12 +1397,14 @@ export class LayoutStep implements Step {
 					props: [],
 					parentScale,
 					localFinal: { x: left, y: top },
-					staggerIndex: enterCount++
+					staggerIndex: enterCount++,
+					base,
+					inline
 				});
 			}
 		}
 
-		for (const [key, { el, rect, text, display }] of firstBounds) {
+		for (const [key, { el, text, display, layout }] of firstBounds) {
 			if (lastBounds.has(key)) continue;
 			if (this.#exit === 'none') continue;
 			// An exiting element already lives inside its data-layout
@@ -1017,14 +1413,29 @@ export class LayoutStep implements Step {
 			const ancestor = el.parentElement?.closest('[data-layout]');
 			const ancestorKey = ancestor?.getAttribute('data-layout') ?? '';
 			if (ancestor && firstBounds.has(ancestorKey) && !lastBounds.has(ancestorKey)) continue;
-			const ghost = this.#createGhost(el, rect, text, display);
-			this.#applyStart(ghost, this.#exit, 'exit');
+			// Pin at the untransformed layout box, not the measured rect: the
+			// composed base re-applies the transform, so pinning the rotated
+			// rect too would render the ghost inflated.
+			const ghost = this.#createGhost(el, layout, text, display);
+			const ghostInline = snapshotInline(ghost);
+			// The ghost keeps the source's standalone props (they are not in the
+			// composed base), so it exits while staying tilted.
+			const base = this.#applyStart(
+				ghost,
+				this.#exit,
+				'exit',
+				computedTransformOf(ghost),
+				layout.width,
+				layout.height
+			);
 			this.#tweens.push({
 				el: ghost,
 				mode: 'exit',
 				transition: this.#exit,
 				props: [],
-				staggerIndex: exitCount++
+				staggerIndex: exitCount++,
+				base,
+				inline: ghostInline
 			});
 		}
 
@@ -1033,18 +1444,49 @@ export class LayoutStep implements Step {
 		this.setProgress(0);
 	}
 
-	#applyStart(el: HTMLElement, transition: LayoutTransition, direction: 'enter' | 'exit') {
-		if (transition === 'scale') el.style.transformOrigin = 'center';
+	/**
+	 * Snaps an element to its transition's start state and returns the
+	 * transition-composed version of its existing transform (the tween reuses
+	 * it every frame). `forceTopLeft` makes the counter-scale under a scaling
+	 * ancestor win over the transition's own pivot.
+	 */
+	#applyStart(
+		el: HTMLElement,
+		transition: LayoutTransition,
+		direction: 'enter' | 'exit',
+		base: string,
+		width: number,
+		height: number,
+		forceTopLeft = false
+	): string {
 		const value = transitionValue(transition, 0, direction, el);
+		const natural = resolveOrigin(getComputedStyle(el).transformOrigin, width, height);
+		let forced = natural;
+		let originStyle: string | null = null;
+		if (forceTopLeft) {
+			forced = { x: 0, y: 0 };
+			originStyle = 'top left';
+		} else if (transition === 'scale') {
+			forced = { x: width / 2, y: height / 2 };
+			originStyle = 'center';
+		} else if (value.transformOrigin !== undefined) {
+			forced = resolveOrigin(value.transformOrigin, width, height);
+			originStyle = value.transformOrigin;
+		}
+		if (originStyle !== null) el.style.transformOrigin = originStyle;
+		const composed = aroundOrigin(base, natural, forced);
 		if (value.opacity !== undefined) el.style.opacity = String(value.opacity);
-		if (value.transform !== undefined) el.style.transform = value.transform;
+		if (value.transform !== undefined) el.style.transform = withBase(value.transform, composed);
 		if (value.clipPath !== undefined) el.style.clipPath = value.clipPath;
-		if (value.transformOrigin !== undefined) el.style.transformOrigin = value.transformOrigin;
+		if (value.rotate !== undefined) el.style.rotate = value.rotate;
+		if (value.scale !== undefined) el.style.scale = value.scale;
+		if (value.translate !== undefined) el.style.translate = value.translate;
+		return composed;
 	}
 
 	#createGhost(
 		el: HTMLElement,
-		rect: DOMRect,
+		box: Pick<DOMRect, 'left' | 'top' | 'width' | 'height'>,
 		text: LayoutTextMetrics,
 		display: string
 	): HTMLElement {
@@ -1062,10 +1504,10 @@ export class LayoutStep implements Step {
 		ghost.style.letterSpacing = text.letterSpacing;
 		ghost.style.wordSpacing = text.wordSpacing;
 		ghost.style.position = 'fixed';
-		ghost.style.left = `${rect.left}px`;
-		ghost.style.top = `${rect.top}px`;
-		ghost.style.width = `${rect.width}px`;
-		ghost.style.height = `${rect.height}px`;
+		ghost.style.left = `${box.left}px`;
+		ghost.style.top = `${box.top}px`;
+		ghost.style.width = `${box.width}px`;
+		ghost.style.height = `${box.height}px`;
 		ghost.style.margin = '0';
 		// Preserve the source's display so grid/flex centering of nested
 		// content survives the clone (the source is always captured visible,
@@ -1080,9 +1522,16 @@ export class LayoutStep implements Step {
 		if (tween.mode === 'exit') {
 			tween.el.remove();
 		} else {
-			tween.el.style.transform = '';
-			tween.el.style.clipPath = '';
-			tween.el.style.transformOrigin = '';
+			// Restore the author's inline styles instead of wiping them: a
+			// layout step overrides these during the animation and must leave
+			// the element exactly as it found it.
+			const { inline } = tween;
+			tween.el.style.transform = inline.transform;
+			tween.el.style.clipPath = inline.clipPath;
+			tween.el.style.transformOrigin = inline.transformOrigin;
+			tween.el.style.rotate = inline.rotate;
+			tween.el.style.scale = inline.scale;
+			tween.el.style.translate = inline.translate;
 			tween.el.style.position = '';
 			tween.el.style.margin = '';
 			tween.el.style.left = '';
