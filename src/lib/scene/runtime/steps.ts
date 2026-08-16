@@ -460,6 +460,12 @@ interface LayoutTextMetrics {
 	lineHeight: string;
 	letterSpacing: string;
 	wordSpacing: string;
+	/**
+	 * The resolved color, pinned so a ghost's `currentColor`-dependent
+	 * presentation (SVG strokes, borders) survives the move to `<body>`,
+	 * where it would otherwise inherit the body's color.
+	 */
+	color: string;
 }
 
 /** Measured state of one `data-layout` element in a step's two snapshots. */
@@ -505,7 +511,8 @@ function snapshotTextMetrics(el: HTMLElement): LayoutTextMetrics {
 		fontVariant: computed.fontVariant,
 		lineHeight: computed.lineHeight,
 		letterSpacing: computed.letterSpacing,
-		wordSpacing: computed.wordSpacing
+		wordSpacing: computed.wordSpacing,
+		color: computed.color
 	};
 }
 
@@ -646,17 +653,29 @@ interface LayoutInlineStyles {
 	rotate: string;
 	scale: string;
 	translate: string;
+	/**
+	 * The author's inline values of the auto-tweened visual props. A step only
+	 * ever overrides these while it runs, so clearing them at the end would wipe
+	 * author-set styles (e.g. a Svelte `style:background-color` directive);
+	 * restoring them leaves each element exactly as it was found.
+	 */
+	layoutProps: Record<string, string>;
 }
 
 function snapshotInline(el: HTMLElement): LayoutInlineStyles {
-	return {
+	const inline: LayoutInlineStyles = {
 		transform: el.style.transform,
 		clipPath: el.style.clipPath,
 		transformOrigin: el.style.transformOrigin,
 		rotate: el.style.rotate,
 		scale: el.style.scale,
-		translate: el.style.translate
+		translate: el.style.translate,
+		layoutProps: {}
 	};
+	for (const prop of Object.keys(LAYOUT_PROPS)) {
+		inline.layoutProps[prop] = el.style.getPropertyValue(prop);
+	}
+	return inline;
 }
 
 /** The element's resolved `transform` matrix, or `''` when it has none. */
@@ -1503,6 +1522,7 @@ export class LayoutStep implements Step {
 		ghost.style.lineHeight = text.lineHeight;
 		ghost.style.letterSpacing = text.letterSpacing;
 		ghost.style.wordSpacing = text.wordSpacing;
+		ghost.style.color = text.color;
 		ghost.style.position = 'fixed';
 		ghost.style.left = `${box.left}px`;
 		ghost.style.top = `${box.top}px`;
@@ -1542,7 +1562,21 @@ export class LayoutStep implements Step {
 			tween.el.style.minHeight = '';
 			tween.el.style.maxWidth = '';
 			tween.el.style.maxHeight = '';
-			for (const prop of Object.keys(LAYOUT_PROPS)) tween.el.style.setProperty(prop, '');
+			// Auto-tweened props are only ever temporary overrides. A retained
+			// element ends back on its own inline value (restored to `''` for
+			// class-driven props so the class stays authoritative), while an
+			// untouched prop — e.g. a constant `style:background-color`
+			// directive — must survive the step. Entering elements keep the
+			// old wipe: their only animated visual prop is the
+			// transition-managed opacity.
+			const tweened = new Set(tween.props.map((p) => p.prop));
+			for (const prop of Object.keys(LAYOUT_PROPS)) {
+				if (tween.mode === 'flip') {
+					if (tweened.has(prop)) tween.el.style.setProperty(prop, inline.layoutProps[prop]);
+				} else {
+					tween.el.style.setProperty(prop, '');
+				}
+			}
 		}
 	}
 

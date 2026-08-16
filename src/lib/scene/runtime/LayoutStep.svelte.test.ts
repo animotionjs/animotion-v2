@@ -463,7 +463,9 @@ describe('LayoutStep', () => {
 		expect(el.style.borderRadius).toBe('16px');
 
 		step.end();
-		expect(el.style.borderRadius).toBe('');
+		// The author's inline radius survives the step (only animated props
+		// are restored to their own values; this one was never cleared).
+		expect(el.style.borderRadius).toBe('16px');
 	});
 
 	it('keeps a constant border-radius while the box grows', () => {
@@ -488,7 +490,9 @@ describe('LayoutStep', () => {
 		expect(el.style.borderRadius).toBe('16px');
 
 		step.end();
-		expect(el.style.borderRadius).toBe('');
+		// A constant inline radius isn't animated, so it must survive the step
+		// rather than being wiped to ''.
+		expect(el.style.borderRadius).toBe('16px');
 	});
 
 	it('morphs border-radius when it changes', () => {
@@ -510,7 +514,7 @@ describe('LayoutStep', () => {
 
 		step.setProgress(1);
 		step.end();
-		expect(el.style.borderRadius).toBe('');
+		expect(el.style.borderRadius).toBe('20px');
 	});
 
 	it('clamps an oversized border-radius to the box size', () => {
@@ -536,7 +540,7 @@ describe('LayoutStep', () => {
 		expect(parseFloat(el.style.borderRadius)).toBe(25);
 
 		step.end();
-		expect(el.style.borderRadius).toBe('');
+		expect(el.style.borderRadius).toBe('9999px');
 	});
 
 	it('morphs a rounded-full radius reported in scientific notation', () => {
@@ -559,7 +563,7 @@ describe('LayoutStep', () => {
 
 		step.setProgress(1);
 		step.end();
-		expect(el.style.borderRadius).toBe('');
+		expect(el.style.borderRadius).toBe('3.35544e+07px');
 	});
 
 	it('morphs background-color when it changes', () => {
@@ -581,7 +585,7 @@ describe('LayoutStep', () => {
 
 		step.setProgress(1);
 		step.end();
-		expect(el.style.backgroundColor).toBe('');
+		expect(el.style.backgroundColor).toBe('rgb(255, 255, 255)');
 	});
 
 	it('morphs oklch colors (Tailwind palette)', () => {
@@ -613,7 +617,7 @@ describe('LayoutStep', () => {
 		expect(parseRgba(el.style.backgroundColor)).toEqual([0, 213, 190, 1]);
 
 		step.end();
-		expect(el.style.backgroundColor).toBe('');
+		expect(el.style.backgroundColor).toBe('oklch(0.777 0.152 181.912)');
 	});
 
 	it('morphs oklab colors with alpha (opacity modifiers)', () => {
@@ -640,7 +644,7 @@ describe('LayoutStep', () => {
 		expect(end[3]).toBe(0.8);
 
 		step.end();
-		expect(el.style.backgroundColor).toBe('');
+		expect(el.style.backgroundColor).toBe('oklab(0.5 0 0 / 0.8)');
 	});
 
 	it('morphs between hex and oklch colors', () => {
@@ -661,7 +665,7 @@ describe('LayoutStep', () => {
 		expect(parseRgba(el.style.backgroundColor).slice(0, 3)).toEqual([0, 213, 190]);
 
 		step.end();
-		expect(el.style.backgroundColor).toBe('');
+		expect(el.style.backgroundColor).toBe('oklch(0.777 0.152 181.912)');
 	});
 
 	it('morphs border-color when it changes', () => {
@@ -685,7 +689,51 @@ describe('LayoutStep', () => {
 		expect(parseRgba(el.style.borderColor).slice(0, 3)).toEqual([255, 255, 255]);
 
 		step.end();
-		expect(el.style.borderColor).toBe('');
+		expect(el.style.borderColor).toBe('rgb(255, 255, 255)');
+	});
+
+	it('preserves an author inline background-color that does not change', () => {
+		setBody(
+			'<div data-layout="a" style="width:100px;height:50px;background-color:rgb(255, 100, 100)"></div>'
+		);
+		const step = new LayoutStep(
+			{},
+			() => {
+				element('[data-layout="a"]').style.height = '100px';
+			},
+			0.5
+		);
+		step.start();
+		step.setProgress(1);
+		step.end();
+
+		// The color never changed, so the step never tweened it and must leave
+		// the author's inline value (e.g. a Svelte `style:background-color`
+		// directive) untouched instead of wiping it.
+		expect(element('[data-layout="a"]').style.backgroundColor).toBe('rgb(255, 100, 100)');
+	});
+
+	it('restores a class-driven color to its final class instead of freezing it inline', () => {
+		setBody(`
+			<style>.red { background-color: red } .blue { background-color: blue }</style>
+			<div data-layout="a" class="red" style="width:100px;height:50px"></div>
+		`);
+		const step = new LayoutStep(
+			{},
+			() => {
+				element('[data-layout="a"]').className = 'blue';
+			},
+			0.5
+		);
+		step.start();
+		step.setProgress(1);
+		step.end();
+
+		// The color was tweened, but its source is the class: after the step
+		// the inline style must be gone so the (new) class stays authoritative.
+		const el = element('[data-layout="a"]');
+		expect(el.style.backgroundColor).toBe('');
+		expect(getComputedStyle(el).backgroundColor).toBe('rgb(0, 0, 255)');
 	});
 
 	it('sets font-size to its final value and scales the box instead of tweening it', () => {
@@ -927,6 +975,29 @@ describe('LayoutStep', () => {
 		const ghost = ghosts('[data-layout="a"]')[0];
 		expect(parseFloat(getComputedStyle(ghost).fontSize)).toBe(12);
 		expect(ghost.style.fontSize).toBe('12px');
+
+		step.end();
+		expect(ghosts('[data-layout="a"]').length).toBe(0);
+	});
+
+	it('pins the source color on the ghost so currentColor survives the move to body', () => {
+		// The SVG's `currentColor` stroke resolves against the parent's white
+		// text color; as a body child the clone would inherit the body's black
+		// color instead and the exiting arrow would be invisible on dark.
+		setBody(
+			'<div style="color:rgb(255, 255, 255)"><svg data-layout="a" stroke="currentColor"></svg></div>'
+		);
+		const step = new LayoutStep(
+			{},
+			() => {
+				setBody('');
+			},
+			0.5
+		);
+		step.start();
+
+		const ghost = ghosts('[data-layout="a"]')[0];
+		expect(ghost.style.color).toBe('rgb(255, 255, 255)');
 
 		step.end();
 		expect(ghosts('[data-layout="a"]').length).toBe(0);
@@ -1622,7 +1693,8 @@ describe('LayoutStep', () => {
 		expect(el.style.borderRadius).toBe('64px / 32px');
 
 		step.end();
-		expect(el.style.borderRadius).toBe('');
+		// The author's `2em` inline radius is restored, not wiped.
+		expect(el.style.borderRadius).toBe('2em');
 	});
 
 	it('enterEnd: 0 renders the fully-entered state from the first frame', () => {
