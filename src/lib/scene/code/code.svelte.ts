@@ -251,12 +251,19 @@ export function makeCodeTree(code: string): string {
  * the same line, e.g. `foo({` or `<button onclick={...}>`), and every closing
  * bracket or tag pops its own kind, so braces and tags stay balanced.
  * Self-closing tags and void elements (`<br>`, `<img>`, ...) never push.
+ * An opening tag that spans lines (its `>` lands on a later line) indents
+ * each attribute line one level deeper and aligns the closing `>`/`/>` with
+ * the tag; only when the `>` appears does it push a block, and a `/>` never
+ * pushes at all.
  * Braces inside strings, templates, comments and tag attributes are ignored,
  * and lines that continue inside a multi-line string/template/comment are left
  * untouched. A `<` is only treated as an opening tag when followed by a letter
  * and at the start of the line or preceded by whitespace or `>`; closing tags
  * (`</`) are always recognised. TS generics (`foo<number>`) and comparisons
  * (`a < b`) are therefore not misread as tags.
+ * Statement continuations — chained calls (`.foo(...)`) or `?.` chains, and a
+ * line starting with `=` after an unfinished statement — indent one level
+ * deeper than the statement they continue.
  * Leading and trailing blank lines are dropped. Idempotent.
  */
 const CHAIN_START = /^(\?\.|\.\s*[$A-Z_a-z(])/;
@@ -301,10 +308,15 @@ function popTag(stack: IndentBlock[], name: string): IndentBlock | undefined {
 	return undefined;
 }
 
-function scanTag(
-	raw: string,
-	start: number
-): { closing: boolean; selfClosing: boolean; name: string; end: number } | null {
+interface TagScan {
+	closing: boolean;
+	selfClosing: boolean;
+	name: string;
+	end: number;
+	completed: boolean;
+}
+
+function scanTag(raw: string, start: number): TagScan | null {
 	let i = start + 1;
 	let closing = false;
 	if (raw[i] === '/') {
@@ -327,12 +339,40 @@ function scanTag(
 		} else if (c === '/' && raw[i + 1] === '>') {
 			selfClosing = true;
 		} else if (c === '>') {
-			break;
+			return { closing, selfClosing, name, end: i, completed: true };
 		}
 		i++;
 	}
-	if (i >= raw.length) return null;
-	return { closing, selfClosing, name, end: i };
+	return { closing, selfClosing, name, end: i, completed: false };
+}
+
+/**
+ * Scans a line inside a multiline opening tag for the tag's closing `>`.
+ * Returns `null` while the tag stays open. `>` inside quotes or `{...}`
+ * expressions is ignored, so attribute values like `style="{scene.x}px"` or
+ * `onclick={count > 3}` never end the tag early.
+ */
+function scanTagEnd(raw: string): { selfClosing: boolean } | null {
+	let quote: string | null = null;
+	let depth = 0;
+	let selfClosing = false;
+	for (let i = 0; i < raw.length; i++) {
+		const c = raw[i];
+		if (quote) {
+			if (c === quote) quote = null;
+		} else if (c === '"' || c === "'") {
+			quote = c;
+		} else if (c === '{') {
+			depth++;
+		} else if (c === '}') {
+			depth = Math.max(0, depth - 1);
+		} else if (depth === 0 && c === '/' && raw[i + 1] === '>') {
+			selfClosing = true;
+		} else if (depth === 0 && c === '>') {
+			return { selfClosing };
+		}
+	}
+	return null;
 }
 
 export function smartIndent(code: string, unit = '  '): string {
@@ -344,6 +384,8 @@ export function smartIndent(code: string, unit = '  '): string {
 	let inTemplate = false;
 	let inString: "'" | '"' | null = null;
 	let escaped = false;
+	let inTag: { name: string; level: number; base: number } | null = null;
+	let prevTrimmed = '';
 
 	for (const raw of lines) {
 		const insideContinuation = inBlockComment || inTemplate || inString !== null;
@@ -354,12 +396,35 @@ export function smartIndent(code: string, unit = '  '): string {
 			out.push(insideContinuation ? raw : '');
 		} else if (insideContinuation) {
 			out.push(raw);
+		} else if (inTag) {
+			const end = scanTagEnd(raw);
+			if (end) {
+				level = /^\/?>/.test(trimmed) ? inTag.level : inTag.level + 1;
+				out.push(unit.repeat(level) + trimmed);
+				if (!end.selfClosing && !VOID_ELEMENTS.has(inTag.name)) {
+					stack.push({ kind: 'tag', level: inTag.level, base: inTag.base, name: inTag.name });
+				}
+				base = inTag.base;
+				inTag = null;
+			} else {
+				level = inTag.level + 1;
+				out.push(unit.repeat(level) + trimmed);
+			}
+			prevTrimmed = trimmed;
+			continue;
 		} else {
 			const top = stack[stack.length - 1];
 			const closesBracket = trimmed[0] === '}' || trimmed[0] === ')' || trimmed[0] === ']';
 			const closesTag = trimmed[0] === '<' && trimmed[1] === '/';
 			const closes = closesBracket || closesTag;
-			const chain = !closes && CHAIN_START.test(trimmed);
+			// A leading `=` continues an assignment whose left-hand side ended
+			// the previous line, so the RHS indents one level deeper; a fresh
+			// statement after `;`, `{` or `}` never matches.
+			const assignment =
+				trimmed[0] === '=' &&
+				prevTrimmed.length > 0 &&
+				!/[;{}]\s*$/.test(prevTrimmed);
+			const chain = !closes && (assignment || CHAIN_START.test(trimmed));
 
 			if (chain) {
 				level = base + 1;
@@ -416,14 +481,24 @@ export function smartIndent(code: string, unit = '  '): string {
 			) {
 				const tag = scanTag(raw, i);
 				if (tag) {
-					if (tag.closing) {
-						const popped = popTag(stack, tag.name);
-						if (popped) base = popped.base;
-					} else if (!tag.selfClosing && !VOID_ELEMENTS.has(tag.name)) {
-						stack.push({ kind: 'tag', level, base, name: tag.name });
+					if (tag.completed) {
+						if (tag.closing) {
+							const popped = popTag(stack, tag.name);
+							if (popped) base = popped.base;
+						} else if (!tag.selfClosing && !VOID_ELEMENTS.has(tag.name)) {
+							stack.push({ kind: 'tag', level, base, name: tag.name });
+						}
+						i = tag.end - 1;
+						continue;
 					}
-					i = tag.end - 1;
-					continue;
+					if (!tag.closing) {
+						// An opening tag whose `>` is on a later line: the rest of
+						// this line and the next ones are attributes, so skip them
+						// and let the per-line handler track the tag's end.
+						inTag = { name: tag.name, level, base };
+						i = raw.length;
+						continue;
+					}
 				}
 			}
 			if (ch === '{' || ch === '(' || ch === '[') {
@@ -433,6 +508,7 @@ export function smartIndent(code: string, unit = '  '): string {
 				if (popped) base = popped.base;
 			}
 		}
+		prevTrimmed = trimmed;
 	}
 
 	return out.join('\n').replace(/^\n+|\n+$/g, '');

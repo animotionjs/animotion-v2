@@ -170,6 +170,36 @@ describe('smartIndent', () => {
 		expect(smartIndent(input)).toBe(`const o = {\n  a: 1,\n  ...rest,\n  b: .5,\n};`);
 	});
 
+	it('indents a standalone assignment continuation one level deeper', () => {
+		const input = `function f() {
+state.value
+= lerp(from, to, progress);
+}`;
+		expect(smartIndent(input)).toBe(`function f() {
+  state.value
+    = lerp(from, to, progress);
+}`);
+	});
+
+	it('indents a top-level assignment continuation one level deeper', () => {
+		expect(smartIndent('value\n= lerp(from, to, progress);')).toBe(
+			`value\n  = lerp(from, to, progress);`
+		);
+	});
+
+	it('does not treat a leading = after a completed statement as a continuation', () => {
+		const input = `const a = 1;\n= foo();`;
+		expect(smartIndent(input)).toBe(`const a = 1;\n= foo();`);
+	});
+
+	it('keeps = continuations idempotent', () => {
+		const input = `function f() {
+  state.value
+    = lerp(from, to, progress);
+}`;
+		expect(smartIndent(input)).toBe(input);
+	});
+
 	it('indents with a custom unit', () => {
 		const input = `function f() {\nx();\n}`;
 		expect(smartIndent(input, '    ')).toBe(`function f() {\n    x();\n}`);
@@ -266,5 +296,59 @@ count is {count}
 		const input = `<div>\n<p>\nText\n</p>\n</div>`;
 		const once = smartIndent(input);
 		expect(smartIndent(once)).toBe(once);
+	});
+
+	it('indents attributes of a multiline tag and aligns the closing slash', () => {
+		const input = `<div\nclass="h-20 w-20 rounded-full bg-amber-400"\nstyle:translate="{scene.x}px"\n/>`;
+		expect(smartIndent(input)).toBe(
+			`<div\n  class="h-20 w-20 rounded-full bg-amber-400"\n  style:translate="{scene.x}px"\n/>`
+		);
+	});
+
+	it('opens a block once a multiline tag closes with >', () => {
+		const input = `<div\nclass="foo">\nText\n</div>`;
+		expect(smartIndent(input)).toBe(`<div\n  class="foo">\n  Text\n</div>`);
+	});
+
+	it('ignores angle brackets inside expression attributes of a multiline tag', () => {
+		const input = `<button\nonclick={count > 3}\n>\nIncrement\n</button>`;
+		expect(smartIndent(input)).toBe(
+			`<button\n  onclick={count > 3}\n>\n  Increment\n</button>`
+		);
+	});
+
+	it('is idempotent with multiline tags', () => {
+		const input = `<div\nclass="x"\n/>\n<p>\nHi\n</p>`;
+		const once = smartIndent(input);
+		expect(smartIndent(once)).toBe(once);
+	});
+
+	it('re-indents a demo scene mixing script, chain and multiline tag', () => {
+		const input = `
+		<script>
+			import { createScene } from '#lib/scene';
+
+			const scene = createScene({ x: -160 })
+				.tween('x', 160, 1.2);
+		</script>
+
+		<div
+			class="h-20 w-20 rounded-full bg-amber-400"
+			style:translate="{scene.x}px"
+		/>
+	`;
+		expect(smartIndent(input)).toBe(
+			`<script>
+  import { createScene } from '#lib/scene';
+
+  const scene = createScene({ x: -160 })
+    .tween('x', 160, 1.2);
+</script>
+
+<div
+  class="h-20 w-20 rounded-full bg-amber-400"
+  style:translate="{scene.x}px"
+/>`
+		);
 	});
 });
