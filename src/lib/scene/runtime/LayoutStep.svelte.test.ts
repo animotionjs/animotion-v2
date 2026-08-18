@@ -692,6 +692,37 @@ describe('LayoutStep', () => {
 		expect(el.style.borderColor).toBe('rgb(255, 255, 255)');
 	});
 
+	it('does not tween border-color when either state has no visible border', () => {
+		// A borderless box computes `border-color` as currentColor (white in
+		// this presentation) even though nothing renders, so a key that moves
+		// onto a 2px-bordered element would otherwise paint a white frame that
+		// scales with the morph. The bordered element's color comes from a
+		// class (as in real scenes), so an engine write would show up inline.
+		setBody('<div data-layout="a" style="width:200px;height:80px"></div>');
+		const step = new LayoutStep(
+			{},
+			() => {
+				setBody(`
+					<style>.bordered { border: 2px solid transparent }</style>
+					<div data-layout="a" class="bordered" style="width:100px;height:50px"></div>
+				`);
+			},
+			0.5
+		);
+		step.start();
+
+		const el = element('[data-layout="a"]');
+		expect(el.style.borderColor).toBe('');
+
+		step.setProgress(0.5);
+		expect(el.style.borderColor).toBe('');
+		// The class stays authoritative: no inline color left behind.
+		expect(getComputedStyle(el).borderTopColor).toBe('rgba(0, 0, 0, 0)');
+
+		step.end();
+		expect(el.style.borderColor).toBe('');
+	});
+
 	it('preserves an author inline background-color that does not change', () => {
 		setBody(
 			'<div data-layout="a" style="width:100px;height:50px;background-color:rgb(255, 100, 100)"></div>'
@@ -1024,6 +1055,29 @@ describe('LayoutStep', () => {
 		expect(ghosts('[data-layout="a"]').length).toBe(0);
 	});
 
+	it('ghosts a reused element with its pre-change content', () => {
+		setBody('<div data-layout="a" style="width:100px;height:50px">OLD</div>');
+		const step = new LayoutStep(
+			{},
+			() => {
+				// The same node is reused: its `data-layout` key and content are
+				// rewritten in place, so the exit ghost must render what was
+				// actually on screen before the change, not the new content.
+				const el = element('[data-layout="a"]');
+				el.dataset.layout = 'b';
+				el.textContent = 'NEW';
+			},
+			0.5
+		);
+		step.start();
+
+		const ghost = ghosts('[data-layout="a"]')[0];
+		expect(ghost.textContent).toBe('OLD');
+
+		step.end();
+		expect(ghosts('[data-layout="a"]').length).toBe(0);
+	});
+
 	it('preserves the source display so nested content stays centered on exit', () => {
 		setBody(
 			'<div data-layout="a" style="display:grid;width:100px;height:50px;place-items:center"><span>Text</span></div>'
@@ -1126,6 +1180,222 @@ describe('LayoutStep', () => {
 		expect(ghosts('[data-layout="a"]').length).toBe(0);
 	});
 
+	it('rides a retained ancestor that moves and shrinks', () => {
+		setBody(`
+			<div data-layout="card" style="position:absolute;left:100px;top:100px;width:200px;height:200px">
+				<div data-layout="item" style="position:absolute;left:120px;top:130px;width:40px;height:40px"></div>
+			</div>
+		`);
+		const step = new LayoutStep(
+			{},
+			() => {
+				// The card survives but glides to the top-left corner while
+				// shrinking in half; the item is removed.
+				setBody(`
+					<div data-layout="card" style="position:absolute;left:0px;top:0px;width:100px;height:100px"></div>
+				`);
+			},
+			0.5,
+			{ ease: linear }
+		);
+		step.start();
+
+		// Pinned at its pre-change viewport spot, the ghost is transformed back
+		// onto the card's old position at the start of the ride.
+		const ghost = ghosts('[data-layout="item"]')[0];
+		expect(ghost.style.position).toBe('fixed');
+		expect(ghost.style.left).toBe('220px');
+		expect(ghost.style.top).toBe('230px');
+		expect(ghost.style.transformOrigin).toBe('left top');
+		expect(ghost.style.transform).toBe('translate(0px, 0px) scale(1, 1)');
+
+		// Half-way, the ghost sits where the item would be inside the half-scaled
+		// card (origin 0 + half the 100px slide + scaled local offset), and its
+		// native size has shrunk with the card's scale.
+		step.setProgress(0.5);
+		expect(ghost.style.transform).toBe('translate(-80px, -82.5px) scale(0.75, 0.75)');
+
+		// At the end the ghost settles inside the final card (local 120x130 / 2).
+		step.setProgress(1);
+		expect(ghost.style.transform).toBe('translate(-160px, -165px) scale(0.5, 0.5)');
+
+		step.end();
+		expect(ghosts('[data-layout="item"]').length).toBe(0);
+	});
+
+	it('rides a retained ancestor that only moves', () => {
+		setBody(`
+			<div data-layout="card" style="position:absolute;left:100px;top:100px;width:200px;height:200px">
+				<div data-layout="item" style="position:absolute;left:120px;top:130px;width:40px;height:40px"></div>
+			</div>
+		`);
+		const step = new LayoutStep(
+			{},
+			() => {
+				// The card keeps its size but slides to the top-left corner.
+				setBody(`
+					<div data-layout="card" style="position:absolute;left:0px;top:0px;width:200px;height:200px"></div>
+				`);
+			},
+			0.5,
+			{ ease: linear }
+		);
+		step.start();
+
+		const ghost = ghosts('[data-layout="item"]')[0];
+		// A size-stable ancestor still contributes its translation to the ride.
+		step.setProgress(0.5);
+		expect(ghost.style.transform).toBe('translate(-50px, -50px) scale(1, 1)');
+
+		step.end();
+		expect(ghosts('[data-layout="item"]').length).toBe(0);
+	});
+
+	it('rides the entity the ancestor node belonged to before a key rewrite', () => {
+		setBody(`
+			<div data-layout="card" style="position:absolute;left:200px;top:50px;width:200px;height:200px">
+				<div data-layout="item" style="position:absolute;left:220px;top:70px;width:40px;height:40px"></div>
+			</div>
+			<div data-layout="other" style="position:absolute;left:50px;top:50px;width:80px;height:60px"></div>
+		`);
+		const step = new LayoutStep(
+			{},
+			() => {
+				// Svelte reuses the old "card" detail node for the next hero
+				// and the child node along with it: both have their
+				// `data-layout` rewritten in place, while a fresh node claims
+				// the old "card" key.
+				const detail = element('[data-layout="card"]');
+				element('[data-layout="item"]').dataset.layout = 'item2';
+				detail.dataset.layout = 'other';
+				const list = document.createElement('div');
+				list.dataset.layout = 'card';
+				list.style.cssText = 'position:absolute;left:50px;top:50px;width:80px;height:60px';
+				document.body.appendChild(list);
+			},
+			0.5,
+			{ ease: linear }
+		);
+		step.start();
+
+		// The ghost rides the old "card" entity (large detail collapsing into
+		// the small list row), not the node's current "other" key.
+		const ghost = ghosts('[data-layout="item"]')[0];
+		step.setProgress(0.5);
+		expect(ghost.style.transform).toBe('translate(-141px, -24.5px) scale(0.7, 0.65)');
+
+		step.end();
+		expect(ghosts('[data-layout="item"]').length).toBe(0);
+	});
+
+	it('rides a retained ancestor that rotates its exiting content', () => {
+		setBody(`
+			<div data-layout="card" style="position:absolute;left:0px;top:0px;width:200px;height:200px;transform:rotate(0deg);transform-origin:0px 0px">
+				<div data-layout="item" style="position:absolute;left:120px;top:130px;width:40px;height:40px"></div>
+			</div>
+		`);
+		const step = new LayoutStep(
+			{},
+			() => {
+				// The card turns 90° around its top-left corner while the item
+				// is removed; the ghost must swing with the card's own
+				// transform instead of freezing at its pre-change spot.
+				setBody(`
+					<div data-layout="card" style="position:absolute;left:0px;top:0px;width:200px;height:200px;transform:rotate(90deg);transform-origin:0px 0px"></div>
+				`);
+			},
+			0.5,
+			{ ease: linear }
+		);
+		step.start();
+
+		const ghost = ghosts('[data-layout="item"]')[0];
+		// The pivot-matched ride starts exactly where the rotating card placed
+		// the item and rotates the ghost's offset as the card turns.
+		expect(ghost.style.transform).toBe(
+			'translate(-120px, -130px) translate(0px, 0px) rotate(0deg) scale(1, 1) translate(0px, 0px) scale(1, 1) translate(120px, 130px)'
+		);
+		step.setProgress(0.5);
+		expect(ghost.style.transform).toBe(
+			'translate(-120px, -130px) translate(0px, 0px) rotate(45deg) scale(1, 1) translate(0px, 0px) scale(1, 1) translate(120px, 130px)'
+		);
+		step.setProgress(1);
+		expect(ghost.style.transform).toBe(
+			'translate(-120px, -130px) translate(0px, 0px) rotate(90deg) scale(1, 1) translate(0px, 0px) scale(1, 1) translate(120px, 130px)'
+		);
+
+		step.end();
+		expect(ghosts('[data-layout="item"]').length).toBe(0);
+	});
+
+	it('adds a retained ancestor\'s own translate to the ghost ride', () => {
+		setBody(`
+			<div data-layout="card" style="position:absolute;left:0px;top:0px;width:200px;height:200px;transform:translate(20px, 30px);transform-origin:0px 0px">
+				<div data-layout="item" style="position:absolute;left:120px;top:130px;width:40px;height:40px"></div>
+			</div>
+		`);
+		const step = new LayoutStep(
+			{},
+			() => {
+				// The card keeps its own translate; only the item is removed.
+				setBody(`
+					<div data-layout="card" style="position:absolute;left:0px;top:0px;width:200px;height:200px;transform:translate(20px, 30px);transform-origin:0px 0px"></div>
+				`);
+			},
+			0.5,
+			{ ease: linear }
+		);
+		step.start();
+
+		const ghost = ghosts('[data-layout="item"]')[0];
+		// Pinned at the item's measured spot (already including the ancestor's
+		// own translate), the ride adds that translate back so the ghost stays
+		// glued to the card instead of jumping to the untransformed spot.
+		expect(ghost.style.transform).toBe(
+			'translate(-140px, -160px) translate(20px, 30px) rotate(0deg) scale(1, 1) translate(0px, 0px) scale(1, 1) translate(140px, 160px)'
+		);
+		step.setProgress(0.5);
+		expect(ghost.style.transform).toBe(
+			'translate(-140px, -160px) translate(20px, 30px) rotate(0deg) scale(1, 1) translate(0px, 0px) scale(1, 1) translate(140px, 160px)'
+		);
+
+		step.end();
+		expect(ghosts('[data-layout="item"]').length).toBe(0);
+	});
+
+	it('keeps an exiting child native-sized under a scale:false retained ancestor', () => {
+		setBody(`
+			<div data-layout="card" style="position:absolute;left:100px;top:100px;width:100px;height:100px">
+				<div data-layout="item" style="position:absolute;left:20px;top:30px;width:40px;height:40px"></div>
+			</div>
+		`);
+		const step = new LayoutStep(
+			{},
+			() => {
+				// The card slides up-left while growing through width/height
+				// re-layout (`scale: false`); the item is removed.
+				setBody(`
+					<div data-layout="card" style="position:absolute;left:50px;top:50px;width:200px;height:200px"></div>
+				`);
+			},
+			0.5,
+			{ scale: false, ease: linear }
+		);
+		step.start();
+
+		const ghost = ghosts('[data-layout="item"]')[0];
+		// The ghost keeps its native size (scale 1) and rides the ancestor's
+		// origin, staying at its local spot inside the re-laid-out card.
+		expect(ghost.style.transform).toBe('translate(0px, 0px) scale(1, 1)');
+		step.setProgress(0.5);
+		expect(ghost.style.transform).toBe('translate(-25px, -25px) scale(1, 1)');
+		step.setProgress(1);
+		expect(ghost.style.transform).toBe('translate(-50px, -50px) scale(1, 1)');
+
+		step.end();
+		expect(ghosts('[data-layout="item"]').length).toBe(0);
+	});
+
 	it('slides in from below when enter is slide', () => {
 		setBody('');
 		const step = new LayoutStep(
@@ -1155,6 +1425,55 @@ describe('LayoutStep', () => {
 		step.end();
 		expect(el.style.transform).toBe('');
 		expect(el.style.opacity).toBe('');
+	});
+
+	it('composes enter opacity with a class opacity ceiling', () => {
+		const styles = '<style>.dim { opacity: 0.5 }</style>';
+		setBody(styles);
+		const step = new LayoutStep(
+			{},
+			() => {
+				setBody(`${styles}<div data-layout="a" class="dim" style="width:100px;height:50px"></div>`);
+			},
+			0.5,
+			{ ease: linear }
+		);
+		step.start();
+
+		const el = element('[data-layout="a"]');
+		expect(el.style.opacity).toBe('0');
+		step.setProgress(0.5);
+		// The fade runs 0 → 0.5 (the class value), not 0 → 1, so clearing the
+		// inline style at the end lands on the same 0.5 instead of popping.
+		expect(parseFloat(el.style.opacity)).toBeCloseTo(0.25);
+		step.setProgress(1);
+		expect(parseFloat(el.style.opacity)).toBeCloseTo(0.5);
+		step.end();
+		expect(el.style.opacity).toBe('');
+		expect(getComputedStyle(el).opacity).toBe('0.5');
+	});
+
+	it('starts an exiting ghost at its class opacity', () => {
+		const styles = '<style>.dim { opacity: 0.5 }</style>';
+		setBody(`${styles}<div data-layout="a" class="dim" style="width:100px;height:50px"></div>`);
+		const step = new LayoutStep(
+			{},
+			() => {
+				setBody(styles);
+			},
+			0.5,
+			{ ease: linear }
+		);
+		step.start();
+
+		// The ghost begins at the source's visual opacity (0.5), not full.
+		const ghost = ghosts('[data-layout="a"]')[0];
+		expect(parseFloat(ghost.style.opacity)).toBeCloseTo(0.5);
+		step.setProgress(0.5);
+		expect(parseFloat(ghost.style.opacity)).toBeCloseTo(0.25);
+
+		step.end();
+		expect(ghosts('[data-layout="a"]').length).toBe(0);
 	});
 
 	it('slides out downward when exit is slide', () => {
@@ -1815,6 +2134,51 @@ describe('LayoutStep', () => {
 		expect(added.style.opacity).toBe('0');
 		expect(added.style.transform).toContain('translateY(100%)');
 		expect(added.style.transform).toContain('scale(2, 2)');
+	});
+
+	it('keeps an entering element at its final spot under a moving scaling ancestor', () => {
+		setBody(`
+			<div data-layout="box" style="position:absolute;left:0;top:0;width:100px;height:100px;padding-left:20px">
+			</div>
+		`);
+		const step = new LayoutStep(
+			{},
+			() => {
+				// The box glides from (0,0) to (200,0) while doubling in size;
+				// the entering child must sit at its final local spot (inside
+				// the final box at x=220), not be flung to the projected spot
+				// by the box's motion.
+				const box = element('[data-layout="box"]');
+				box.style.left = '200px';
+				box.style.width = '200px';
+				box.style.height = '200px';
+				const added = document.createElement('div');
+				added.dataset.layout = 'new';
+				added.style.width = '50px';
+				added.style.height = '50px';
+				box.appendChild(added);
+			},
+			0.5,
+			{ ease: linear }
+		);
+		step.start();
+
+		const added = element('[data-layout="new"]');
+		// The child stays pinned to its final absolute spot the whole way
+		// through (it has no previous position to glide from).
+		expect(added.getBoundingClientRect().x).toBeCloseTo(220, 1);
+
+		step.setProgress(0.5);
+		expect(added.getBoundingClientRect().x).toBeCloseTo(220, 1);
+
+		step.setProgress(1);
+		expect(added.getBoundingClientRect().x).toBeCloseTo(220, 1);
+
+		step.end();
+		// `end()` restores the box's inline `left: 0`, so the child settles at
+		// its natural spot (0 + padding 20); the during-step pinning is what
+		// must hold it at the destination without shifting.
+		expect(added.getBoundingClientRect().x).toBeCloseTo(20, 1);
 	});
 
 	it('keeps an existing transform while entering and restores it on end', () => {

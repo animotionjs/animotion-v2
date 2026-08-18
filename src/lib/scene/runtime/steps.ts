@@ -243,7 +243,15 @@ const DEFAULT_ENTER: LayoutTransition = 'fade';
 const DEFAULT_EXIT: LayoutTransition = 'fade';
 
 /** The ancestor's scale to cancel, and the element's final local spot. */
-type ParentScale = { x0: number; y0: number };
+type ParentScale = {
+	x0: number;
+	y0: number;
+	x: number;
+	y: number;
+	/** The ancestor's FLIP offset (previous minus final local position), so entering children can cancel its motion. */
+	dx0: number;
+	dy0: number;
+};
 
 /**
  * A retained element: pinned at its final bounds and glided via transforms.
@@ -303,9 +311,38 @@ interface EnterTween {
 	staggerIndex: number;
 	/** The element's existing transform, wrapped to the animation's pivot. */
 	base: string;
+	/** The element's computed opacity; the transition composes with it. */
+	baseOpacity: number;
 	/** The author's inline styles the step overwrites, restored on clear. */
 	inline: LayoutInlineStyles;
 }
+
+/**
+ * A retained `data-layout` ancestor's FLIP motion that an exit ghost must
+ * ride: the ancestor's previous-to-final offset and scale, its final origin,
+ * and the ghost's offset from the ancestor's previous origin.
+ */
+type ExitAncestor = {
+	/** The ancestor's previous-to-final layout offset in viewport pixels. */
+	dx0: number;
+	dy0: number;
+	/** The ancestor's previous-to-final scale; 1 when it doesn't morph size. */
+	x0: number;
+	y0: number;
+	/** The ancestor's final layout origin. */
+	left: number;
+	top: number;
+	/** The ghost's offset from the ancestor's previous origin, in that space. */
+	local: { x: number; y: number };
+	/**
+	 * The ancestor's own transform, tweened across the step exactly like its
+	 * flip so the ghost rotates/scales with it instead of freezing at its
+	 * pre-change spot. Present only when the ancestor carries a transform.
+	 */
+	transform?: { from: TransformState; to: TransformState };
+	/** The ancestor's transform-origin as an offset from its box's top-left. */
+	origin: { x: number; y: number };
+};
 
 /** A removed element's fixed-position ghost animating out. */
 interface ExitTween {
@@ -317,8 +354,19 @@ interface ExitTween {
 	staggerIndex: number;
 	/** The element's existing transform, wrapped to the animation's pivot. */
 	base: string;
+	/** The element's computed opacity; the transition composes with it. */
+	baseOpacity: number;
 	/** The author's inline styles the step overwrites, restored on clear. */
 	inline: LayoutInlineStyles;
+	/** The ghost's pinned fixed origin (its pre-change viewport spot). */
+	fixed: { left: number; top: number };
+	/**
+	 * Present when the ghost's `data-layout` ancestor survives the change and
+	 * FLIPs: the ancestor's motion the ghost must ride each frame, or the
+	 * ghost freezes at its pre-change spot while the card shrinks out from
+	 * under it.
+	 */
+	ancestor?: ExitAncestor;
 }
 
 type LayoutTween = FlipTween | EnterTween | ExitTween;
@@ -500,6 +548,12 @@ interface LayoutBounds {
 	 * nested content (removed text jumping to the left edge).
 	 */
 	display: string;
+	/** The computed border-top width; `'0px'` when the border isn't visible. */
+	borderWidth: string;
+	/** The element's computed opacity, so a transition can compose with it. */
+	opacity: number;
+	/** The element cloned before the step's change, so exit ghosts render the state being left. */
+	clone?: HTMLElement;
 	/**
 	 * The text glyph ink position (Range over the contents), distinct from the
 	 * layout box because the ink sits at a different offset within the box at
@@ -584,6 +638,8 @@ function captureBounds(el: HTMLElement, rect: DOMRect): LayoutBounds {
 		styles: snapshotLayoutStyles(el),
 		text: snapshotTextMetrics(el),
 		display: computed.display,
+		borderWidth: computed.borderTopWidth,
+		opacity: parseFloat(computed.opacity),
 		ink: textInkRect(el)
 	};
 }
@@ -1110,9 +1166,64 @@ export class LayoutStep implements Step {
 				// complete for that element.
 				const p = end === 0 || end <= start ? 1 : clampRemap(eased, start, end, 0, 1);
 				const value = transitionValue(tween.transition, p, direction, tween.el);
-				if (value.opacity !== undefined) tween.el.style.opacity = String(value.opacity);
-				if (value.transform !== undefined)
+				if (value.opacity !== undefined)
+					// Compose with the element's own opacity so a class-based
+					// value (e.g. Tailwind's `opacity-60`) is the ceiling: the
+					// transition fades 0 → baseOpacity and clearing the inline
+					// style at the end lands on the same class value instead of
+					// popping to it.
+					tween.el.style.opacity = String(tween.baseOpacity * value.opacity);
+				if (tween.mode === 'exit' && tween.ancestor) {
+					// Ride the retained ancestor's FLIP motion (interpolated on
+					// the full step, while the fade runs on the transition's own
+					// timeline): scale the ghost's offset by the ancestor's
+					// current scale and add its current translation, so the
+					// ghost stays glued to the shrinking card it used to live
+					// in instead of freezing at its old viewport spot. The
+					// scale is normalized by the ancestor's initial scale so
+					// the ghost starts at its native size (what was on screen
+					// before the change) and only shrinks with the card.
+					const a = tween.ancestor;
+					const sx = lerp(a.x0, 1, eased) / a.x0;
+					const sy = lerp(a.y0, 1, eased) / a.y0;
+					const dx = lerp(a.dx0, 0, eased);
+					const dy = lerp(a.dy0, 0, eased);
+					// The ancestor's animated layout origin, relative to the
+					// ghost's pinned spot. `a.local` offsets the ghost from the
+					// ancestor's previous origin, so at progress 0 the ride is
+					// exactly the ghost's pre-change position.
+					const ox = a.left + dx - tween.fixed.left;
+					const oy = a.top + dy - tween.fixed.top;
+					let ride: string;
+					if (a.transform) {
+						// The ancestor's own transform rides too, tweened across
+						// the step like its flip: its rotation and scale deform
+						// the ghost around the ancestor's transform-origin (a
+						// rotated card spins its exiting content with it) and
+						// its translation shifts the whole ghost. The pivot is
+						// the ancestor's transform-origin, so decomposition —
+						// exact for translate and pure rotate/scale — only
+						// drifts when an ancestor both scales and rotates
+						// around an off-corner origin.
+						const own = lerpTransformState(a.transform.from, a.transform.to, eased);
+						ride =
+							`translate(${fmt(ox)}px, ${fmt(oy)}px) ` +
+							`translate(${fmt(a.origin.x + own.tx)}px, ${fmt(a.origin.y + own.ty)}px) ` +
+							`rotate(${fmt(own.rotate)}deg) scale(${fmt(own.sx)}, ${fmt(own.sy)}) ` +
+							`translate(${fmt(-a.origin.x)}px, ${fmt(-a.origin.y)}px) ` +
+							`scale(${fmt(sx)}, ${fmt(sy)}) translate(${fmt(a.local.x)}px, ${fmt(a.local.y)}px)`;
+					} else {
+						ride = `translate(${fmt(ox + a.local.x * sx)}px, ${
+							fmt(oy + a.local.y * sy)
+						}px) scale(${fmt(sx)}, ${fmt(sy)})`;
+					}
+					tween.el.style.transform =
+						value.transform !== undefined
+							? `${ride} ${withBase(value.transform, tween.base)}`
+							: ride;
+				} else if (value.transform !== undefined) {
 					tween.el.style.transform = withBase(value.transform, tween.base);
+				}
 				if (value.clipPath !== undefined) tween.el.style.clipPath = value.clipPath;
 				if (value.transformOrigin !== undefined)
 					tween.el.style.transformOrigin = value.transformOrigin;
@@ -1123,13 +1234,20 @@ export class LayoutStep implements Step {
 				// can sit under a scaling ancestor that needs counter-scaling.
 				if (tween.mode === 'enter' && tween.parentScale) {
 					// Counter-scale over the transition transform (applied last,
-					// in the unscaled space) so the element stays crisp.
+					// in the unscaled space) so the element stays crisp. The
+					// ancestor's own FLIP offset is cancelled too, so new
+					// content sits at its destination instead of riding the
+					// ancestor's motion to a projected spot (a reused container
+					// like a hero card never actually moves, so riding would
+					// fling entering children to an arbitrary position).
 					const sPx = lerp(tween.parentScale.x0, 1, eased);
 					const sPy = lerp(tween.parentScale.y0, 1, eased);
+					const parentDx = lerp(tween.parentScale.dx0, 0, eased);
+					const parentDy = lerp(tween.parentScale.dy0, 0, eased);
 					const lx = tween.localFinal.x;
 					const ly = tween.localFinal.y;
-					const counter = `translate(${lx * (1 / sPx - 1)}px, ${
-						ly * (1 / sPy - 1)
+					const counter = `translate(${lx * (1 / sPx - 1) - parentDx / sPx}px, ${
+						ly * (1 / sPy - 1) - parentDy / sPy
 					}px) scale(${1 / sPx}, ${1 / sPy})`;
 					tween.el.style.transform = withBase(
 						value.transform ? `${value.transform} ${counter}` : counter,
@@ -1159,7 +1277,12 @@ export class LayoutStep implements Step {
 		for (const el of elements) {
 			const rect = el.getBoundingClientRect();
 			if (rect.width > 0 && rect.height > 0) {
-				firstBounds.set(el.dataset.layout!, captureBounds(el, rect));
+				const bounds = captureBounds(el, rect);
+				// The change may reuse the node (rewriting its `data-layout`
+				// and content); the exit ghost must render the state being
+				// left, so clone before `change()` runs.
+				bounds.clone = el.cloneNode(true) as HTMLElement;
+				firstBounds.set(el.dataset.layout!, bounds);
 			}
 		}
 
@@ -1232,7 +1355,10 @@ export class LayoutStep implements Step {
 		// their content stays crisp while the ancestor morphs. Font-changed text
 		// scales uniformly by its font ratio — a uniform scale is what reads as
 		// the text genuinely growing — while boxes scale by their bounds.
-		const scaling = new Map<string, { x0: number; y0: number; x: number; y: number }>();
+		const scaling = new Map<
+			string,
+			{ x0: number; y0: number; x: number; y: number; dx0: number; dy0: number }
+		>();
 		for (const [key, { el, layout, text }] of lastBounds) {
 			const prev = firstBounds.get(key);
 			if (!prev) continue;
@@ -1244,11 +1370,20 @@ export class LayoutStep implements Step {
 				hasDirectText(el) && fontChanged && finalFont > 0
 					? parseFloat(prev.text.fontSize) / finalFont
 					: undefined;
+			// The ancestor's own FLIP offset (previous minus final local spot),
+			// measured like the retained tween's `offset` below. Entering
+			// children cancel it so new content stays at its destination
+			// instead of riding the ancestor's motion.
+			const originAt = originOf(el);
+			const finalLeft = layout.left - originAt.final.left;
+			const finalTop = layout.top - originAt.final.top;
 			scaling.set(key, {
 				x0: uniform ?? prev.layout.width / layout.width,
 				y0: uniform ?? prev.layout.height / layout.height,
 				x: 1,
-				y: 1
+				y: 1,
+				dx0: prev.layout.left - originAt.prev.left - finalLeft,
+				dy0: prev.layout.top - originAt.prev.top - finalTop
 			});
 		}
 
@@ -1258,7 +1393,10 @@ export class LayoutStep implements Step {
 			return ancestor ? scaling.get(ancestor.dataset.layout!) : undefined;
 		};
 
-		for (const [key, { el, styles, text, ink, matrix, origin, layout, individual }] of lastBounds) {
+		for (const [
+			key,
+			{ el, styles, text, ink, matrix, origin, layout, individual, borderWidth, opacity }
+		] of lastBounds) {
 			const prev = firstBounds.get(key);
 			if (prev) {
 				// Take the element out of flow so the container's size tween
@@ -1356,6 +1494,13 @@ export class LayoutStep implements Step {
 					? { from: decomposeTransform(prev.matrix), to: decomposeTransform(matrix) }
 					: undefined;
 				for (const prop of Object.keys(LAYOUT_PROPS)) {
+					// A borderless box computes `border-color` as currentColor
+					// even though nothing renders, so a key that moves between
+					// a bordered and a borderless node would tween the color
+					// onto the element's own border width and paint a visible
+					// (here white) frame around the morph.
+					if (prop === 'border-color' && (prev.borderWidth === '0px' || borderWidth === '0px'))
+						continue;
 					let tween = createLayoutPropTween(
 						prop,
 						prev.styles[prop],
@@ -1438,24 +1583,38 @@ export class LayoutStep implements Step {
 					localFinal: { x: left, y: top },
 					staggerIndex: enterCount++,
 					base,
+					baseOpacity: opacity,
 					inline
 				});
 			}
 		}
 
-		for (const [key, { el, text, display, layout }] of firstBounds) {
+		for (const [key, { el, clone, text, display, layout, opacity }] of firstBounds) {
 			if (lastBounds.has(key)) continue;
 			if (this.#exit === 'none') continue;
 			// An exiting element already lives inside its data-layout
 			// ancestor's ghost clone, so a second ghost would render the
 			// content twice (e.g. a nested text span duplicated on exit).
-			const ancestor = el.parentElement?.closest('[data-layout]');
-			const ancestorKey = ancestor?.getAttribute('data-layout') ?? '';
-			if (ancestor && firstBounds.has(ancestorKey) && !lastBounds.has(ancestorKey)) continue;
+			// The ancestor is matched by node identity against the snapshot: a
+			// reused node may have had its `data-layout` rewritten in place
+			// (e.g. a hero card becoming the next hero's card), so its current
+			// attribute no longer names the entity the child belonged to.
+			const parentEl = el.parentElement?.closest('[data-layout]') as HTMLElement | null;
+			let ancestorKey: string | undefined;
+			if (parentEl) {
+				for (const [oldKey, bounds] of firstBounds) {
+					if (bounds.el === parentEl) {
+						ancestorKey = oldKey;
+						break;
+					}
+				}
+			}
+			if (ancestorKey === undefined) ancestorKey = parentEl?.getAttribute('data-layout') ?? '';
+			if (parentEl && firstBounds.has(ancestorKey) && !lastBounds.has(ancestorKey)) continue;
 			// Pin at the untransformed layout box, not the measured rect: the
 			// composed base re-applies the transform, so pinning the rotated
 			// rect too would render the ghost inflated.
-			const ghost = this.#createGhost(el, layout, text, display);
+			const ghost = this.#createGhost(clone ?? el, layout, text, display);
 			const ghostInline = snapshotInline(ghost);
 			// The ghost keeps the source's standalone props (they are not in the
 			// composed base), so it exits while staying tilted.
@@ -1467,6 +1626,43 @@ export class LayoutStep implements Step {
 				layout.width,
 				layout.height
 			);
+			// A removed element whose `data-layout` ancestor survives the
+			// change rides the ancestor's FLIP motion: the ghost is pinned to
+			// the viewport, so without compensation it would freeze at its
+			// pre-change spot while the card glides and shrinks away from it.
+			let ancestorMotion: ExitAncestor | undefined;
+			if (parentEl && lastBounds.has(ancestorKey)) {
+				const prev = firstBounds.get(ancestorKey)!;
+				const last = lastBounds.get(ancestorKey)!;
+				// The `scaling` map is populated only for ancestors that morph
+				// via transform scale (`scale: false` re-lays-out instead), so
+				// its presence decides whether the ghost's ride must scale.
+				const morphs = scaling.get(ancestorKey);
+				// The ancestor's own transform, decomposed exactly like its flip
+				// tween's, so the ghost rotates/scales with it across the step.
+				// Read from the keyed snapshots so a node replaced by the change
+				// (a Svelte re-key) still contributes its transform.
+				const transformed = Boolean(prev.matrix || last.matrix);
+				ancestorMotion = {
+					dx0: prev.layout.left - last.layout.left,
+					dy0: prev.layout.top - last.layout.top,
+					x0: morphs ? prev.layout.width / last.layout.width : 1,
+					y0: morphs ? prev.layout.height / last.layout.height : 1,
+					left: last.layout.left,
+					top: last.layout.top,
+					local: { x: layout.left - prev.layout.left, y: layout.top - prev.layout.top },
+					transform: transformed
+						? {
+								from: decomposeTransform(prev.matrix),
+								to: decomposeTransform(last.matrix)
+							}
+						: undefined,
+					origin: last.origin
+				};
+				// The ride transform scales the ghost from its own corner so
+				// it replicates the ancestor's motion around its own spot.
+				ghost.style.transformOrigin = 'top left';
+			}
 			this.#tweens.push({
 				el: ghost,
 				mode: 'exit',
@@ -1474,7 +1670,10 @@ export class LayoutStep implements Step {
 				props: [],
 				staggerIndex: exitCount++,
 				base,
-				inline: ghostInline
+				baseOpacity: opacity,
+				inline: ghostInline,
+				fixed: { left: layout.left, top: layout.top },
+				ancestor: ancestorMotion
 			});
 		}
 
