@@ -59,6 +59,7 @@ export {
 } from './scene/easing.js';
 export {
 	createScene,
+	type SceneBuilder,
 	Code,
 	insert,
 	remove,

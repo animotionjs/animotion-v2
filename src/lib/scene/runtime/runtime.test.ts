@@ -591,3 +591,137 @@ describe('SceneManager seek', () => {
 		]);
 	});
 });
+
+describe('SceneManager stepProgress', () => {
+	it('ramps 0→1 through a step and resets to 0 on advance', () => {
+		const manager = new SceneManager();
+		manager.enableRenderMode();
+		manager.load({ steps: [new WaitStep(1), new WaitStep(1)] });
+
+		expect(manager.stepProgress).toBe(0);
+
+		manager.next();
+		manager.advanceFrame(0.5);
+		expect(manager.stepProgress).toBeGreaterThan(0);
+		expect(manager.stepProgress).toBeLessThan(1);
+
+		let guard = 0;
+		while (!manager.finished && guard++ < 100) {
+			manager.advanceFrame(0.1);
+		}
+		expect(manager.stepProgress).toBe(1);
+		expect(manager.step).toBe(0);
+
+		manager.next();
+		expect(manager.stepProgress).toBe(0);
+		expect(manager.step).toBe(1);
+	});
+
+	it('returns to 1 on prev of a completed step and 0 when rewound to the start', () => {
+		const manager = new SceneManager();
+		manager.enableRenderMode();
+		manager.load({ steps: [new WaitStep(1), new WaitStep(1)] });
+
+		manager.next();
+		let guard = 0;
+		while (!manager.finished && guard++ < 100) {
+			manager.advanceFrame(0.1);
+		}
+
+		manager.next();
+		expect(manager.stepProgress).toBe(0);
+
+		manager.advanceFrame(1);
+		expect(manager.stepProgress).toBe(1);
+
+		manager.prev();
+		expect(manager.step).toBe(0);
+		expect(manager.stepProgress).toBe(1);
+
+		manager.prev();
+		expect(manager.step).toBe(0);
+		expect(manager.stepCompleted).toBe(false);
+		expect(manager.stepProgress).toBe(0);
+	});
+
+	it('lands on the right progress after seek', () => {
+		const manager = new SceneManager();
+		manager.enableRenderMode();
+		manager.load({ steps: [new WaitStep(1), new WaitStep(1), new WaitStep(1)] });
+
+		manager.seek(1, true);
+		expect(manager.step).toBe(1);
+		expect(manager.stepProgress).toBe(1);
+
+		manager.seek(0);
+		expect(manager.step).toBe(0);
+		expect(manager.stepProgress).toBe(0);
+	});
+});
+
+describe('SceneManager zero-duration steps', () => {
+	it('completes a zero-duration first step on the first next', () => {
+		const manager = new SceneManager();
+		manager.enableRenderMode();
+		manager.load({ steps: [new WaitStep(0)] });
+
+		manager.next();
+
+		expect(manager.stepCompleted).toBe(true);
+		expect(manager.finished).toBe(true);
+		expect(manager.stepProgress).toBe(1);
+	});
+
+	it('completes a zero-duration step in place after a played step', () => {
+		const manager = new SceneManager();
+		manager.enableRenderMode();
+		manager.load({ steps: [new WaitStep(1), new WaitStep(0), new WaitStep(1)] });
+
+		manager.next();
+		manager.advanceFrame(1);
+		expect(manager.stepCompleted).toBe(true);
+		expect(manager.step).toBe(0);
+
+		manager.next();
+		expect(manager.step).toBe(1);
+		expect(manager.stepCompleted).toBe(true);
+		expect(manager.stepProgress).toBe(1);
+		expect(manager.finished).toBe(false);
+
+		manager.next();
+		expect(manager.step).toBe(2);
+		expect(manager.stepCompleted).toBe(false);
+	});
+
+	it('lands a zero-duration tween exactly on its target without frames', () => {
+		const manager = new SceneManager();
+		manager.enableRenderMode();
+		const state = { x: 0 };
+		manager.load({ steps: [new TweenStep(state, 'x', 100, 0)] });
+
+		manager.next();
+
+		expect(state.x).toBe(100);
+		expect(manager.stepCompleted).toBe(true);
+	});
+
+	it('rejects negative step durations', () => {
+		expect(() => new WaitStep(-1)).toThrow(/duration/i);
+		expect(() => new TweenStep({}, 'x', 1, -1)).toThrow(/duration/i);
+	});
+});
+
+describe('SceneManager empty scene', () => {
+	it('reports the scene as finished with full progress after load and seek', () => {
+		const manager = new SceneManager();
+		manager.enableRenderMode();
+
+		manager.load({ steps: [] });
+		expect(manager.finished).toBe(true);
+		expect(manager.stepProgress).toBe(1);
+
+		manager.seek(0);
+		expect(manager.finished).toBe(true);
+		expect(manager.stepProgress).toBe(1);
+	});
+});

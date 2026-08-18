@@ -170,6 +170,21 @@ The `<Code />` component accepts a few props:
 
 ## Other steps
 
+- `wait(seconds = 1)`: holds the current scene state for the given duration so the viewer has time to read. During video rendering the frame is held for the full duration; in the live player, pressing next fast-forwards past the wait.
+
+```svelte
+<script lang="ts">
+	import { createScene } from '#lib/scene';
+
+	const scene = createScene({ opacity: 0 })
+		.tween('opacity', 1, 0.6)
+		.wait(1.5)
+		.tween('opacity', 0, 0.6);
+</script>
+
+<div style:opacity={scene.opacity}>Readable for a moment</div>
+```
+
 - `tick(onTick, duration, ease)`: runs `onTick` every frame while the step plays, so you can drive arbitrary state from the step's progress (e.g. a progress bar, a counter, a canvas or third-party animation). The callback receives `{ progress, time, deltaTime, frame }`, where `progress` is the eased 0..1 progress and `time` the elapsed seconds:
 
 ```svelte
@@ -198,6 +213,27 @@ The `<Code />` component accepts a few props:
 	});
 </script>
 ```
+
+## Reading timeline progress
+
+`createScene` exposes two read-only reactive timeline fields that let scenes react to the timeline declaratively, without animating a counter:
+
+- `scene.step`: the 0-based index of the step currently being animated. It stays put when that step finishes and advances only when the next step starts.
+- `scene.progress`: linear progress `0..1` through that step. It is `0` when a step starts and `1` when the step completes (and stays `1` while paused on a completed step).
+
+```svelte
+<script lang="ts">
+	import { createScene, easeOut } from '#lib/scene';
+
+	const scene = createScene({ x: 0 }).tween('x', 200, 1).wait(1);
+
+	const opacity = $derived(easeOut(scene.progress));
+</script>
+
+<p style:opacity>Current step: {scene.step}</p>
+```
+
+`step` and `progress` are reserved scene fields: they cannot be provided in the initial state. Because progress through a step is linear, apply an easing function (`easeOut`, `easeInOut`, ...) when visualizing it.
 
 ## Configuration
 

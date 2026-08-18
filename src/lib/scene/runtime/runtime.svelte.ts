@@ -54,6 +54,7 @@ export class SceneManager {
 	#totalSteps = $state(0);
 	#steps: Step[] = [];
 	#elapsed = 0;
+	#stepProgress = $state(0);
 	#stepCompleted = $state(false);
 	#needsStart = false;
 	#rafId: number | null = null;
@@ -133,6 +134,11 @@ export class SceneManager {
 		if (this.#totalSteps === 0) return 0;
 		const done = this.#phase !== 'paused' || this.#stepCompleted;
 		return (this.#stepIndex + (done ? 1 : 0)) / this.totalSteps;
+	}
+
+	/** Progress 0..1 through the current step; 1 while paused on a completed step. */
+	get stepProgress(): number {
+		return this.#stepProgress;
 	}
 
 	/** Reactive transition state read by `<Scene>`: `opacity`, `x`, `y`, `scale`. */
@@ -266,10 +272,12 @@ export class SceneManager {
 
 		if (steps.length === 0) {
 			this.#phase = 'finished';
+			this.#stepProgress = 1;
 			this.#emitStepChange();
 		} else {
 			this.#stepIndex = 0;
 			this.#elapsed = 0;
+			this.#stepProgress = 0;
 			this.#stepCompleted = false;
 
 			const target = saved ? (saved.stepCompleted ? saved.stepIndex + 1 : saved.stepIndex) : 0;
@@ -286,6 +294,7 @@ export class SceneManager {
 				this.#stepIndex = steps.length - 1;
 				this.#phase = 'finished';
 				this.#stepCompleted = true;
+				this.#stepProgress = 1;
 			} else if (target > 0) {
 				// Resumed past the start: steps 0..target-1 are complete, so we
 				// pause between them and the next step (the state normal playback
@@ -294,6 +303,7 @@ export class SceneManager {
 				this.#stepIndex = target - 1;
 				this.#stepCompleted = true;
 				this.#phase = 'paused';
+				this.#stepProgress = 1;
 			} else {
 				// A fresh scene rests at its initial state; the first step is
 				// started on the first `next` (or a mirror's `play`). Starting
@@ -330,6 +340,7 @@ export class SceneManager {
 		this.#stepIndex = 0;
 		this.#totalSteps = 0;
 		this.#elapsed = 0;
+		this.#stepProgress = 0;
 		this.#stepCompleted = false;
 		this.#needsStart = false;
 	}
@@ -359,6 +370,7 @@ export class SceneManager {
 
 		if (steps.length === 0) {
 			this.#phase = 'finished';
+			this.#stepProgress = 1;
 			this.#emitStepChange();
 			this.#resetTransitionState();
 			return;
@@ -393,6 +405,7 @@ export class SceneManager {
 		const steps = this.#steps;
 		this.#stepIndex = 0;
 		this.#elapsed = 0;
+		this.#stepProgress = 0;
 		this.#stepCompleted = false;
 
 		for (let i = 0; i < target; i++) {
@@ -405,14 +418,17 @@ export class SceneManager {
 
 		if (steps.length === 0) {
 			this.#phase = 'finished';
+			this.#stepProgress = 1;
 		} else if (finished || target >= steps.length) {
 			this.#stepIndex = steps.length - 1;
 			this.#stepCompleted = true;
 			this.#phase = 'finished';
+			this.#stepProgress = 1;
 		} else if (stepCompleted) {
 			this.#stepIndex = target - 1;
 			this.#stepCompleted = true;
 			this.#phase = 'paused';
+			this.#stepProgress = 1;
 		} else {
 			this.#stepIndex = target;
 			this.#phase = 'paused';
@@ -608,8 +624,7 @@ export class SceneManager {
 				this.#needsStart = false;
 				this.#enterStep(this.#stepIndex);
 			}
-			this.#phase = 'tweening';
-			this.#startLoop();
+			this.#playCurrent();
 		}
 	}
 
@@ -622,6 +637,7 @@ export class SceneManager {
 			this.#stepIndex = this.#steps.length - 1;
 			this.#currentStep()?.revert();
 			this.#stepCompleted = true;
+			this.#stepProgress = 1;
 			this.#phase = 'paused';
 			this.#emitStepChange();
 			return;
@@ -631,6 +647,7 @@ export class SceneManager {
 
 		if (this.#stepIndex === 0) {
 			this.#stepCompleted = false;
+			this.#stepProgress = 0;
 			this.#phase = 'paused';
 			this.#emitStepChange();
 			return;
@@ -638,6 +655,7 @@ export class SceneManager {
 
 		this.#stepIndex--;
 		this.#stepCompleted = true;
+		this.#stepProgress = 1;
 		this.#phase = 'paused';
 		this.#emitStepChange();
 	}
@@ -648,10 +666,20 @@ export class SceneManager {
 
 	#playCurrent() {
 		const step = this.#currentStep();
-		if (step && step.duration > 0) {
-			this.#phase = 'tweening';
-			this.#startLoop();
+		if (!step) return;
+
+		// A zero-duration step completes in place: running the frame loop would
+		// divide by `duration` and schedule a stall timer that only fires after
+		// the step's (nonexistent) length, so it would never resolve in render
+		// mode. Commit it immediately on the same press that starts it.
+		if (step.duration <= 0) {
+			step.setProgress(1);
+			this.#completeStepTween(step);
+			return;
 		}
+
+		this.#phase = 'tweening';
+		this.#startLoop();
 	}
 
 	#enterStep(index: number) {
@@ -661,6 +689,7 @@ export class SceneManager {
 
 		step.start();
 		this.#elapsed = 0;
+		this.#stepProgress = 0;
 		this.#stepCompleted = false;
 		this.#phase = 'paused';
 	}
@@ -673,6 +702,7 @@ export class SceneManager {
 		if (this.#stepIndex >= this.#steps.length) {
 			this.#needsStart = false;
 			this.#phase = 'finished';
+			this.#stepProgress = 1;
 			this.#emitStepChange();
 			return;
 		}
@@ -695,6 +725,7 @@ export class SceneManager {
 
 			this.#elapsed += delta;
 			const progress = this.#elapsed / step.duration;
+			this.#stepProgress = Math.min(progress, 1);
 			step.setProgress(progress);
 			if (this.#renderMode) flushSync();
 
@@ -738,6 +769,7 @@ export class SceneManager {
 		this.#clearStepStall();
 		step.end();
 		this.#stepCompleted = true;
+		this.#stepProgress = 1;
 		this.#rafId = null;
 		if (this.#stepIndex >= this.#steps.length - 1) {
 			this.#phase = 'finished';

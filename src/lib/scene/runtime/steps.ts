@@ -18,6 +18,13 @@ import {
 } from '../code/highlighter';
 import { clamp, clampRemap, easeInOut, lerp, type Easing } from '../easing';
 
+/** Throws when a step duration is not a finite non-negative number. */
+function assertDuration(duration: number) {
+	if (!Number.isFinite(duration) || duration < 0) {
+		throw new RangeError('Step duration must be a non-negative finite number.');
+	}
+}
+
 /**
  * A single animation unit. A scene's chain of steps plays sequentially;
  * `duration` is in seconds. `progress` values passed to `setProgress` are
@@ -57,6 +64,7 @@ export class TweenStep implements Step {
 		this.#to = to;
 		this.#duration = duration;
 		this.#ease = ease;
+		assertDuration(duration);
 	}
 
 	get duration(): number {
@@ -116,6 +124,7 @@ export class TickStep implements Step {
 		this.#onTick = onTick;
 		this.#duration = duration;
 		this.#ease = ease;
+		assertDuration(duration);
 	}
 
 	get duration(): number {
@@ -154,6 +163,7 @@ export class WaitStep implements Step {
 
 	constructor(duration: number) {
 		this.#duration = duration;
+		assertDuration(duration);
 	}
 
 	get duration(): number {
@@ -1096,6 +1106,7 @@ export class LayoutStep implements Step {
 		this.#enterEnd = clamp(options.enterEnd ?? 1, 0, 1);
 		this.#exitEnd = clamp(options.exitEnd ?? 1, 0, 1);
 		this.#stagger = clamp(options.stagger ?? 0, 0, 1);
+		assertDuration(duration);
 	}
 
 	get duration(): number {
@@ -1213,9 +1224,9 @@ export class LayoutStep implements Step {
 							`translate(${fmt(-a.origin.x)}px, ${fmt(-a.origin.y)}px) ` +
 							`scale(${fmt(sx)}, ${fmt(sy)}) translate(${fmt(a.local.x)}px, ${fmt(a.local.y)}px)`;
 					} else {
-						ride = `translate(${fmt(ox + a.local.x * sx)}px, ${
-							fmt(oy + a.local.y * sy)
-						}px) scale(${fmt(sx)}, ${fmt(sy)})`;
+						ride = `translate(${fmt(ox + a.local.x * sx)}px, ${fmt(
+							oy + a.local.y * sy
+						)}px) scale(${fmt(sx)}, ${fmt(sy)})`;
 					}
 					tween.el.style.transform =
 						value.transform !== undefined
@@ -1828,7 +1839,7 @@ export class ParallelStep implements Step {
 	}
 
 	get duration(): number {
-		return Math.max(...this.#steps.map((s) => s.duration));
+		return Math.max(0, ...this.#steps.map((s) => s.duration));
 	}
 
 	setProgress(p: number) {
@@ -1910,6 +1921,7 @@ export class CodeStep implements Step {
 		this.#duration = duration;
 		this.#ease = ease;
 		this.#language = language ?? null;
+		assertDuration(duration);
 	}
 
 	get duration(): number {
@@ -2040,6 +2052,7 @@ export class SelectionStep implements Step {
 		this.#codeState = codeState;
 		this.#range = range;
 		this.#duration = duration;
+		assertDuration(duration);
 	}
 
 	get duration(): number {

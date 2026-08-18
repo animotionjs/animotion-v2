@@ -37,6 +37,10 @@ import {
  * were added; `duration` defaults are in seconds.
  */
 export interface SceneBuilder<T> {
+	/** The 0-based index of the current step. Read-only, driven by the timeline. */
+	readonly step: number;
+	/** Progress 0..1 through the current step; 1 while paused on a completed step. */
+	readonly progress: number;
 	tween(key: keyof T, to: number, duration?: number, ease?: Easing): this;
 	tick(onTick: (frame: TickFrame) => void, duration?: number, ease?: Easing): this;
 	wait(seconds?: number): this;
@@ -81,25 +85,48 @@ type Object = Record<string, unknown>;
 
 /**
  * Creates a reactive scene state object extended with the chainable step
- * builder. `initial` becomes the scene's reactive state; the returned object
- * carries both the state fields and the builder methods.
+ * builder. A copy of `initial` becomes the scene's reactive state; the
+ * returned object carries both the state fields and the builder methods.
  *
  * Pass `code` (and optionally `language`) in `initial` to back a `<Code>`
  * component with code-morphing steps. A special `indent` field sets the
- * re-indentation unit (default `'  '`) and is removed from the state.
+ * re-indentation unit (default `'  '`) and is removed from the state. The
+ * read-only `step` (current step index) and `progress` (0..1 through it) are
+ * reserved and always driven by the timeline.
  *
  * Must run during a component's setup so the scene manager context (from
  * `<Scenes>`) is available. Steps are loaded into the manager on mount.
  */
 export function createScene<T extends Object>(initial: T = {} as T) {
-	const rawInitial = initial as Record<string, unknown>;
+	// The caller's object is never mutated: `indent` is stripped and the
+	// read-only timeline getters are installed on a copy, so the same initial
+	// state can back multiple scenes and frozen objects keep working.
+	const rawInitial = { ...initial } as Record<string, unknown>;
 	const indent =
 		typeof rawInitial.indent === 'string' && rawInitial.indent.length > 0
 			? rawInitial.indent
 			: '  ';
 	delete rawInitial.indent;
-	const state = $state(initial) as Scene<T>;
 	const manager = getSceneManager();
+
+	// `step`/`progress` are read-only views of the timeline, not scene state.
+	// The getters must live on the raw object before `$state` proxies it (the
+	// proxy rejects accessor descriptors) so reads track the manager's state.
+	if ('step' in initial || 'progress' in initial) {
+		throw new Error('createScene: `step` and `progress` are reserved scene fields.');
+	}
+	Object.defineProperty(rawInitial, 'step', {
+		enumerable: false,
+		configurable: true,
+		get: () => manager.step
+	});
+	Object.defineProperty(rawInitial, 'progress', {
+		enumerable: false,
+		configurable: true,
+		get: () => manager.stepProgress
+	});
+
+	const state = $state(rawInitial) as Scene<T>;
 	let steps: Step[] = [];
 	let enterBuild: TransitionBuild | null = null;
 	let exitBuild: TransitionBuild | null = null;

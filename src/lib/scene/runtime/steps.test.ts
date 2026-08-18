@@ -22,6 +22,12 @@ beforeAll(async () => {
 	await whenReady();
 });
 
+describe('ParallelStep duration', () => {
+	it('defaults an empty group to a zero-duration step', () => {
+		expect(new ParallelStep([]).duration).toBe(0);
+	});
+});
+
 describe('CodeStep morph timing', () => {
 	it('opens the morph window at the timeline boundaries despite easing', () => {
 		const state = createCodeState('ts', 'const x = 1;');
