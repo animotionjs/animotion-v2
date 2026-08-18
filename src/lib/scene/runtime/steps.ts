@@ -148,6 +148,26 @@ export class TickStep implements Step {
 	}
 }
 
+/** Holds the current frame for `seconds`; nothing animates while it plays. */
+export class WaitStep implements Step {
+	#duration: number;
+
+	constructor(duration: number) {
+		this.#duration = duration;
+	}
+
+	get duration(): number {
+		return this.#duration;
+	}
+
+	setProgress(p: number) {
+		void p;
+	}
+	start() {}
+	end() {}
+	revert() {}
+}
+
 /** Visual transition applied to entering/exiting `data-layout` elements. */
 export type LayoutTransition =
 	| 'fade'

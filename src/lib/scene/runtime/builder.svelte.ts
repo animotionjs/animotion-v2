@@ -6,6 +6,7 @@ import {
 	CodeStep,
 	SelectionStep,
 	TickStep,
+	WaitStep,
 	type Step,
 	type TickFrame,
 	type LayoutOptions
@@ -38,6 +39,7 @@ import {
 export interface SceneBuilder<T> {
 	tween(key: keyof T, to: number, duration?: number, ease?: Easing): this;
 	tick(onTick: (frame: TickFrame) => void, duration?: number, ease?: Easing): this;
+	wait(seconds?: number): this;
 	layout(change: (scene: Scene<T>) => void, duration?: number, options?: LayoutOptions): this;
 	all(fn: (scene: this) => void): this;
 	transitionIn(fn: TransitionBuild): this;
@@ -131,6 +133,15 @@ export function createScene<T extends Object>(initial: T = {} as T) {
 		ease: Easing = (p) => p
 	) {
 		steps.push(new TickStep(onTick, duration, ease));
+		return this;
+	};
+
+	/**
+	 * Holds the current frame for `seconds`. In render the step occupies the
+	 * full duration, giving the viewer time to read; live, → fast-forwards.
+	 */
+	state.wait = function (seconds = 1) {
+		steps.push(new WaitStep(seconds));
 		return this;
 	};
 

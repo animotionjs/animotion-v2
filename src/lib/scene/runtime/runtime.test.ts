@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { SceneManager, type TransitionBuild } from './runtime.svelte';
-import { TickStep, TweenStep, type Step, type TickFrame } from './steps';
+import { TickStep, TweenStep, WaitStep, type Step, type TickFrame } from './steps';
 
 class SpyStep implements Step {
 	starts = 0;
@@ -40,6 +40,47 @@ describe('SceneManager + TickStep (render mode)', () => {
 		expect(frames.at(-1)!.time).toBe(1);
 		expect(frames.at(-1)!.progress).toBe(1);
 		expect(manager.step).toBe(0);
+	});
+});
+
+describe('SceneManager + WaitStep', () => {
+	it('holds for the full duration in render mode', () => {
+		const manager = new SceneManager();
+		manager.enableRenderMode();
+
+		manager.load({ steps: [new WaitStep(1)] });
+		manager.next();
+
+		let frames = 0;
+		let guard = 0;
+		while (!manager.finished && guard++ < 100) {
+			manager.advanceFrame(0.1);
+			frames++;
+		}
+
+		expect(guard).toBeLessThan(100);
+		expect(frames).toBeGreaterThanOrEqual(9);
+		expect(frames).toBeLessThanOrEqual(12);
+		expect(manager.finished).toBe(true);
+	});
+
+	it('fast-forwards past a playing wait in live mode', () => {
+		vi.stubGlobal(
+			'requestAnimationFrame',
+			vi.fn(() => 1)
+		);
+		vi.stubGlobal('cancelAnimationFrame', vi.fn());
+		const manager = new SceneManager();
+
+		manager.load({ steps: [new WaitStep(1), new SpyStep()] });
+
+		manager.next();
+		expect(manager.step).toBe(0);
+		expect(manager.finished).toBe(false);
+
+		manager.next();
+		expect(manager.step).toBe(1);
+		vi.unstubAllGlobals();
 	});
 });
 
