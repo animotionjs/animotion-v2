@@ -13,7 +13,7 @@ import {
 } from './steps';
 import { getSceneManager, getSceneId } from './context.svelte';
 import { TransitionBuilder, type TransitionBuild } from './runtime.svelte';
-import { easeInOut, type Easing } from '../easing';
+import { clamp, easeInOut, type Easing } from '../easing';
 import { getOptions, type TransitionConfig } from '../options';
 import { registerLanguages } from '../code/highlighter';
 import {
@@ -46,6 +46,7 @@ export interface SceneBuilder<T> {
 	wait(seconds?: number): this;
 	layout(change: (scene: Scene<T>) => void, duration?: number, options?: LayoutOptions): this;
 	all(fn: (scene: this) => void): this;
+	repeat(count: number, fn: (scene: this, index: number) => void): this;
 	transitionIn(fn: TransitionBuild): this;
 	transitionOut(fn: TransitionBuild): this;
 	noTransition(): this;
@@ -79,6 +80,18 @@ export interface SceneBuilder<T> {
 		range?: CodeRange | CodeRange[] | RangeResolver | string | typeof DEFAULT,
 		duration?: number
 	): this;
+	/**
+	 * Returns `(index) => opacity` for a sequentially-revealed list: item `i`
+	 * fades in as its step plays and earlier items stay visible. `lead = 1`
+	 * pre-reveals item 0 (visible before the first step plays).
+	 */
+	reveal(lead?: number): (index: number) => number;
+	/**
+	 * Crossfades through `items`, one per step: the current item fades out, the
+	 * next swaps in at the step's invisible midpoint, and fades in. Use with
+	 * `repeat(items.length - 1)` so the last item ends the scene.
+	 */
+	crossfade<U>(items: readonly U[]): { index: number; item: U; opacity: number };
 }
 type Scene<T> = T & SceneBuilder<T>;
 type Object = Record<string, unknown>;
@@ -173,6 +186,34 @@ export function createScene<T extends Object>(initial: T = {} as T) {
 	};
 
 	/**
+	 * Returns `(index) => opacity` for a sequentially-revealed list. Reading
+	 * `step`/`progress` through the closure keeps the returned function
+	 * reactive in markup.
+	 */
+	state.reveal = function (lead = 0) {
+		return (index: number) => clamp(state.step + state.progress + lead - index, 0, 1);
+	};
+
+	/**
+	 * Reactive view of a crossfade through `items`, one item per step. The
+	 * getters read `step`/`progress` lazily, so the returned object works
+	 * directly in markup like `step`/`progress` do.
+	 */
+	state.crossfade = function <U>(items: readonly U[]) {
+		return {
+			get index() {
+				return state.step + Math.round(state.progress);
+			},
+			get item() {
+				return items[state.step + Math.round(state.progress)];
+			},
+			get opacity() {
+				return Math.abs(state.progress * 2 - 1);
+			}
+		};
+	};
+
+	/**
 	 * Animates a DOM change with a FLIP transition: snapshots every element
 	 * tagged with a `data-layout` key, runs `change`, then animates retained,
 	 * added, and removed elements per the `enter`/`exit` {@link LayoutOptions}.
@@ -194,6 +235,25 @@ export function createScene<T extends Object>(initial: T = {} as T) {
 		fn(this);
 		steps = saved;
 		steps.push(new ParallelStep(parallelSteps));
+		return this;
+	};
+
+	/**
+	 * Runs `fn` `count` times so a block of steps can be added repeatedly
+	 * without repeating the builder calls by hand. `index` is the current
+	 * repetition, which lets each pass vary its steps.
+	 */
+	state.repeat = function (
+		this: Scene<T>,
+		count: number,
+		fn: (scene: Scene<T>, index: number) => void
+	) {
+		if (!Number.isInteger(count) || count < 0) {
+			throw new RangeError('repeat count must be a non-negative integer.');
+		}
+		for (let i = 0; i < count; i++) {
+			fn(this, i);
+		}
 		return this;
 	};
 

@@ -214,6 +214,18 @@ The `<Code />` component accepts a few props:
 </script>
 ```
 
+- `repeat(count, (s, i) => ...)`: runs the callback `count` times while building the timeline, so a block of steps can be repeated without repeating the builder calls by hand. The callback receives the builder and the current repetition index:
+
+```svelte
+<script lang="ts">
+	import { createScene } from '#lib/scene';
+
+	const scene = createScene().repeat(4, (s) => {
+		s.wait(1);
+	});
+</script>
+```
+
 ## Reading timeline progress
 
 `createScene` exposes two read-only reactive timeline fields that let scenes react to the timeline declaratively, without animating a counter:
@@ -234,6 +246,47 @@ The `<Code />` component accepts a few props:
 ```
 
 `step` and `progress` are reserved scene fields: they cannot be provided in the initial state. Because progress through a step is linear, apply an easing function (`easeOut`, `easeInOut`, ...) when visualizing it.
+
+### Revealing a list
+
+`scene.reveal(lead)` returns a function giving each item's opacity in a sequential reveal: item `i` fades in while step `i` plays, and earlier items stay fully visible. With `lead` left at its default `0`, item 0 is hidden until step 0 plays; `scene.reveal(1)` shows it from the start. Give the scene one `wait` (or other step) per item:
+
+```svelte
+<script lang="ts">
+	import { createScene } from '#lib/scene';
+
+	const scene = createScene().repeat(4, (s) => s.wait(1));
+
+	const opacity = scene.reveal();
+</script>
+
+<ul class="text-8xl">
+	<li style:opacity={opacity(0)}>1</li>
+	<li style:opacity={opacity(1)}>2</li>
+	<li style:opacity={opacity(2)}>3</li>
+	<li style:opacity={opacity(3)}>4</li>
+</ul>
+```
+
+### Crossfading between items
+
+`scene.crossfade(items)` swaps between items, one per step: the current item fades out, the next one swaps in at the step's midpoint (while it is invisible), and fades in. It returns reactive `{ index, item, opacity }`. Use `repeat(items.length - 1)` steps so the last item ends the scene, and drive extra per-step effects from `scene.progress`:
+
+```svelte
+<script lang="ts">
+	import { createScene } from '#lib/scene';
+
+	const items = ['🔥', '😎', '❤️', '🪄'];
+
+	const scene = createScene().repeat(items.length - 1, (s) => s.wait(0.4));
+
+	const fade = scene.crossfade(items);
+</script>
+
+<div class="text-8xl" style:opacity={fade.opacity} style:rotate="{scene.progress}turn">
+	{fade.item}
+</div>
+```
 
 ## Configuration
 
