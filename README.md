@@ -170,7 +170,7 @@ The `<Code />` component accepts a few props:
 
 ## Other steps
 
-- `wait(seconds = 1)`: holds the current scene state for the given duration so the viewer has time to read. During video rendering the frame is held for the full duration; in the live player, pressing next fast-forwards past the wait.
+- `wait(seconds = 1)`: keeps the previous step's finished frame on screen for `seconds` longer, so the viewer has time to read. Waits aren't steps: they don't count toward `scene.step` or `totalSteps`, and the live player skips them. They only show up in rendered video. A wait before anything else keeps the first frame up until the first step starts.
 
 ```svelte
 <script lang="ts">
@@ -221,7 +221,7 @@ The `<Code />` component accepts a few props:
 	import { createScene } from '#lib/scene';
 
 	const scene = createScene().repeat(4, (s) => {
-		s.wait(1);
+		s.tick(() => {}, 1);
 	});
 </script>
 ```
@@ -230,8 +230,8 @@ The `<Code />` component accepts a few props:
 
 `createScene` exposes two read-only reactive timeline fields that let scenes react to the timeline declaratively, without animating a counter:
 
-- `scene.step`: the 0-based index of the step currently being animated. It stays put when that step finishes and advances only when the next step starts.
-- `scene.progress`: linear progress `0..1` through that step. It is `0` when a step starts and `1` when the step completes (and stays `1` while paused on a completed step).
+- `scene.step`: the 0-based index of the step currently being animated. It stays put when that step finishes and advances only when the next step starts. Waits never occupy a slot, so `step` counts only steps that do something.
+- `scene.progress`: linear progress `0..1` through that step. It is `0` when a step starts and `1` when the step completes (and stays `1` while paused on a completed step). While a wait plays, it stays at `1`.
 
 ```svelte
 <script lang="ts">
@@ -249,13 +249,13 @@ The `<Code />` component accepts a few props:
 
 ### Revealing a list
 
-`scene.reveal(lead)` returns a function giving each item's opacity in a sequential reveal: item `i` fades in while step `i` plays, and earlier items stay fully visible. With `lead` left at its default `0`, item 0 is hidden until step 0 plays; `scene.reveal(1)` shows it from the start. Give the scene one `wait` (or other step) per item:
+`scene.reveal(lead)` returns a function giving each item's opacity in a sequential reveal: item `i` fades in while step `i` plays, and earlier items stay fully visible. With `lead` left at its default `0`, item 0 is hidden until step 0 plays; `scene.reveal(1)` shows it from the start. Give the scene one step per item — a timed `tick` works when there is nothing to animate:
 
 ```svelte
 <script lang="ts">
 	import { createScene } from '#lib/scene';
 
-	const scene = createScene().repeat(4, (s) => s.wait(1));
+	const scene = createScene().repeat(4, (s) => s.tick(() => {}, 1));
 
 	const opacity = scene.reveal();
 </script>
@@ -278,7 +278,7 @@ The `<Code />` component accepts a few props:
 
 	const items = ['🔥', '😎', '❤️', '🪄'];
 
-	const scene = createScene().repeat(items.length - 1, (s) => s.wait(0.4));
+	const scene = createScene().repeat(items.length - 1, (s) => s.tick(() => {}, 0.4));
 
 	const fade = scene.crossfade(items);
 </script>

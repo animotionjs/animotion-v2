@@ -10,7 +10,10 @@
 	setSceneManager(manager);
 	setSceneId(() => 'progress-test');
 
-	const scene = createScene({}).wait(1).wait(1);
+	const scene = createScene({})
+		.tick(() => {}, 1)
+		.wait(1)
+		.tick(() => {}, 1);
 </script>
 
 <p data-testid="position">{scene.step}:{scene.progress}</p>

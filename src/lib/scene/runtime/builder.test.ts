@@ -2,8 +2,8 @@ import { describe, expect, it, vi } from 'vitest';
 import { onMount } from 'svelte';
 import { createScene, type SceneBuilder } from './builder.svelte.js';
 import { SceneManager } from './runtime.svelte.js';
-import { WaitStep } from './steps.js';
 import { getSceneManager } from './context.svelte.js';
+import type { Step } from './steps.js';
 
 vi.mock('./context.svelte.js', () => ({
 	getSceneManager: vi.fn(),
@@ -16,6 +16,17 @@ vi.mock('svelte', async (importOriginal) => {
 	const actual = await importOriginal<typeof import('svelte')>();
 	return { ...actual, onMount: vi.fn() };
 });
+
+/** A step that does nothing except take up a second of the timeline. */
+class TimedStep implements Step {
+	duration = 1;
+	start() {}
+	setProgress(p: number) {
+		void p;
+	}
+	end() {}
+	revert() {}
+}
 
 function setupManager() {
 	const manager = new SceneManager();
@@ -32,7 +43,7 @@ describe('createScene step/progress', () => {
 		expect(scene.progress).toBe(0);
 
 		manager.enableRenderMode();
-		manager.load({ steps: [new WaitStep(1), new WaitStep(1)] });
+		manager.load({ steps: [new TimedStep(), new TimedStep()] });
 
 		manager.next();
 		expect(scene.step).toBe(0);
@@ -89,37 +100,40 @@ describe('createScene step/progress', () => {
 	});
 });
 
+/** Mounts a scene and captures what `createScene` hands to `manager.load`. */
+function stepsAfter(configure: (scene: SceneBuilder<Record<string, unknown>>) => void) {
+	const manager = setupManager();
+	let steps: { duration: number; wait: number }[] = [];
+	let holdBeforeFirstStep = 0;
+	const mount = vi.fn<(fn: () => void) => void>();
+	vi.mocked(onMount).mockImplementation((fn: () => void) => mount(fn));
+	vi.spyOn(manager, 'load').mockImplementation(({ steps: loaded, holdBeforeFirstStep: first }) => {
+		steps = loaded.map((step) => ({ duration: step.duration, wait: step.wait ?? 0 }));
+		holdBeforeFirstStep = first ?? 0;
+	});
+
+	const scene = createScene({});
+	configure(scene);
+	mount.mock.calls[0]?.[0]?.();
+
+	return { steps, holdBeforeFirstStep, manager };
+}
+
 describe('createScene repeat', () => {
-	function stepsAfter(configure: (scene: SceneBuilder<Record<string, unknown>>) => void) {
-		const manager = setupManager();
-		let durations: number[] = [];
-		const mount = vi.fn<(fn: () => void) => void>();
-		vi.mocked(onMount).mockImplementation((fn: () => void) => mount(fn));
-		vi.spyOn(manager, 'load').mockImplementation(({ steps }) => {
-			durations = steps.map((step) => step.duration);
-		});
-
-		const scene = createScene({});
-		configure(scene);
-		mount.mock.calls[0]?.[0]?.();
-
-		return { durations, manager };
-	}
-
 	it('appends the callback steps once per repetition', () => {
-		const { durations } = stepsAfter((scene) => {
-			scene.repeat(3, (s) => s.wait(1));
+		const { steps } = stepsAfter((scene) => {
+			scene.repeat(3, (s) => s.tick(() => {}, 1));
 		});
 
-		expect(durations).toEqual([1, 1, 1]);
+		expect(steps.map((s) => s.duration)).toEqual([1, 1, 1]);
 	});
 
 	it('passes the repetition index to the callback', () => {
-		const { durations } = stepsAfter((scene) => {
-			scene.repeat(2, (s, i) => s.wait(i + 1));
+		const { steps } = stepsAfter((scene) => {
+			scene.repeat(2, (s, i) => s.tick(() => {}, i + 1));
 		});
 
-		expect(durations).toEqual([1, 2]);
+		expect(steps.map((s) => s.duration)).toEqual([1, 2]);
 	});
 
 	it('rejects a negative or non-integer count', () => {
@@ -131,10 +145,40 @@ describe('createScene repeat', () => {
 	});
 });
 
+describe('createScene wait', () => {
+	it('a wait adds its seconds to the step before it', () => {
+		const { steps } = stepsAfter((scene) => {
+			scene.tick(() => {}, 1).wait(2);
+		});
+
+		expect(steps).toEqual([{ duration: 1, wait: 2 }]);
+	});
+
+	it('stacks consecutive waits on the same step', () => {
+		const { steps } = stepsAfter((scene) => {
+			scene
+				.tick(() => {}, 1)
+				.wait(1)
+				.wait(2);
+		});
+
+		expect(steps).toEqual([{ duration: 1, wait: 3 }]);
+	});
+
+	it("a wait before any step holds the scene's first frame", () => {
+		const { steps, holdBeforeFirstStep } = stepsAfter((scene) => {
+			scene.wait(2).tick(() => {}, 1);
+		});
+
+		expect(holdBeforeFirstStep).toBe(2);
+		expect(steps).toEqual([{ duration: 1, wait: 0 }]);
+	});
+});
+
 describe('createScene reveal', () => {
 	function loadTwoSteps(manager: SceneManager) {
 		manager.enableRenderMode();
-		manager.load({ steps: [new WaitStep(1), new WaitStep(1)] });
+		manager.load({ steps: [new TimedStep(), new TimedStep()] });
 	}
 
 	it('fades item i in as step i plays and keeps earlier items visible', () => {
@@ -178,7 +222,7 @@ describe('createScene crossfade', () => {
 		const scene = createScene({});
 		const fade = scene.crossfade(['a', 'b']);
 		manager.enableRenderMode();
-		manager.load({ steps: [new WaitStep(1)] });
+		manager.load({ steps: [new TimedStep()] });
 
 		expect(fade.index).toBe(0);
 		expect(fade.item).toBe('a');

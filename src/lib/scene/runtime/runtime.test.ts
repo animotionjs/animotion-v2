@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { SceneManager, type TransitionBuild } from './runtime.svelte';
-import { TickStep, TweenStep, WaitStep, type Step, type TickFrame } from './steps';
+import { ParallelStep, TickStep, TweenStep, type Step, type TickFrame } from './steps';
 
 class SpyStep implements Step {
 	starts = 0;
@@ -43,44 +43,83 @@ describe('SceneManager + TickStep (render mode)', () => {
 	});
 });
 
-describe('SceneManager + WaitStep', () => {
-	it('holds for the full duration in render mode', () => {
+describe('SceneManager + waits', () => {
+	it('a wait keeps the finished step on screen for its full duration in render mode', () => {
 		const manager = new SceneManager();
 		manager.enableRenderMode();
 
-		manager.load({ steps: [new WaitStep(1)] });
+		const state = { x: 0 };
+		const step: Step = new TweenStep(state, 'x', 100, 0.5);
+		step.wait = 0.5;
+		manager.load({ steps: [step] });
+
 		manager.next();
+		manager.advanceFrame(0.25);
+		expect(state.x).toBeLessThan(100);
+		expect(manager.stepProgress).toBeGreaterThan(0);
 
-		let frames = 0;
-		let guard = 0;
-		while (!manager.finished && guard++ < 100) {
-			manager.advanceFrame(0.1);
-			frames++;
-		}
+		manager.advanceFrame(0.25);
+		expect(state.x).toBe(100);
+		expect(manager.stepProgress).toBe(1);
+		expect(manager.finished).toBe(false);
 
-		expect(guard).toBeLessThan(100);
-		expect(frames).toBeGreaterThanOrEqual(9);
-		expect(frames).toBeLessThanOrEqual(12);
+		// progress stays pinned at 1 while the wait plays out
+		manager.advanceFrame(0.25);
+		expect(manager.stepProgress).toBe(1);
+		expect(manager.finished).toBe(false);
+
+		manager.advanceFrame(0.25);
 		expect(manager.finished).toBe(true);
 	});
 
-	it('fast-forwards past a playing wait in live mode', () => {
-		vi.stubGlobal(
-			'requestAnimationFrame',
-			vi.fn(() => 1)
-		);
-		vi.stubGlobal('cancelAnimationFrame', vi.fn());
+	it('live playback skips waits entirely', () => {
 		const manager = new SceneManager();
-
-		manager.load({ steps: [new WaitStep(1), new SpyStep()] });
+		const beat: Step = new TickStep(() => {}, 0);
+		beat.wait = 10;
+		manager.load({ steps: [beat] });
 
 		manager.next();
-		expect(manager.step).toBe(0);
+
+		expect(manager.finished).toBe(true);
+	});
+
+	it('a wait before the first step holds the first frame until it begins', () => {
+		const manager = new SceneManager();
+		manager.enableRenderMode();
+
+		const frames: TickFrame[] = [];
+		manager.load({
+			steps: [new TickStep((f) => frames.push(f), 0.5)],
+			holdBeforeFirstStep: 0.5
+		});
+
+		manager.next();
+		manager.advanceFrame(0.25);
+		// the first frame is still up, the animation has not begun
+		expect(frames.at(-1)!.time).toBe(0);
 		expect(manager.finished).toBe(false);
 
+		manager.advanceFrame(0.75);
+		expect(frames.at(-1)!.time).toBeCloseTo(0.5);
+		expect(manager.finished).toBe(true);
+	});
+
+	it('a parallel step lasts as long as its slowest child, waits included', () => {
+		const manager = new SceneManager();
+		manager.enableRenderMode();
+
+		const state = { x: 0 };
+		const child: Step = new TweenStep(state, 'x', 100, 1);
+		child.wait = 0.5;
+		manager.load({ steps: [new ParallelStep([child])] });
+
 		manager.next();
-		expect(manager.step).toBe(1);
-		vi.unstubAllGlobals();
+		manager.advanceFrame(1);
+		expect(state.x).toBe(100);
+		expect(manager.finished).toBe(false);
+
+		manager.advanceFrame(0.5);
+		expect(manager.finished).toBe(true);
 	});
 });
 
@@ -596,7 +635,7 @@ describe('SceneManager stepProgress', () => {
 	it('ramps 0→1 through a step and resets to 0 on advance', () => {
 		const manager = new SceneManager();
 		manager.enableRenderMode();
-		manager.load({ steps: [new WaitStep(1), new WaitStep(1)] });
+		manager.load({ steps: [new TickStep(() => {}, 1), new TickStep(() => {}, 1)] });
 
 		expect(manager.stepProgress).toBe(0);
 
@@ -620,7 +659,7 @@ describe('SceneManager stepProgress', () => {
 	it('returns to 1 on prev of a completed step and 0 when rewound to the start', () => {
 		const manager = new SceneManager();
 		manager.enableRenderMode();
-		manager.load({ steps: [new WaitStep(1), new WaitStep(1)] });
+		manager.load({ steps: [new TickStep(() => {}, 1), new TickStep(() => {}, 1)] });
 
 		manager.next();
 		let guard = 0;
@@ -647,7 +686,9 @@ describe('SceneManager stepProgress', () => {
 	it('lands on the right progress after seek', () => {
 		const manager = new SceneManager();
 		manager.enableRenderMode();
-		manager.load({ steps: [new WaitStep(1), new WaitStep(1), new WaitStep(1)] });
+		manager.load({
+			steps: [new TickStep(() => {}, 1), new TickStep(() => {}, 1), new TickStep(() => {}, 1)]
+		});
 
 		manager.seek(1, true);
 		expect(manager.step).toBe(1);
@@ -663,7 +704,7 @@ describe('SceneManager zero-duration steps', () => {
 	it('completes a zero-duration first step on the first next', () => {
 		const manager = new SceneManager();
 		manager.enableRenderMode();
-		manager.load({ steps: [new WaitStep(0)] });
+		manager.load({ steps: [new TickStep(() => {}, 0)] });
 
 		manager.next();
 
@@ -675,7 +716,9 @@ describe('SceneManager zero-duration steps', () => {
 	it('completes a zero-duration step in place after a played step', () => {
 		const manager = new SceneManager();
 		manager.enableRenderMode();
-		manager.load({ steps: [new WaitStep(1), new WaitStep(0), new WaitStep(1)] });
+		manager.load({
+			steps: [new TickStep(() => {}, 1), new TickStep(() => {}, 0), new TickStep(() => {}, 1)]
+		});
 
 		manager.next();
 		manager.advanceFrame(1);
@@ -706,7 +749,7 @@ describe('SceneManager zero-duration steps', () => {
 	});
 
 	it('rejects negative step durations', () => {
-		expect(() => new WaitStep(-1)).toThrow(/duration/i);
+		expect(() => new TickStep(() => {}, -1)).toThrow(/duration/i);
 		expect(() => new TweenStep({}, 'x', 1, -1)).toThrow(/duration/i);
 	});
 });

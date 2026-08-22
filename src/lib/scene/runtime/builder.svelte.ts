@@ -6,7 +6,6 @@ import {
 	CodeStep,
 	SelectionStep,
 	TickStep,
-	WaitStep,
 	type Step,
 	type TickFrame,
 	type LayoutOptions
@@ -141,6 +140,7 @@ export function createScene<T extends Object>(initial: T = {} as T) {
 
 	const state = $state(rawInitial) as Scene<T>;
 	let steps: Step[] = [];
+	let holdBeforeFirstStep = 0;
 	let enterBuild: TransitionBuild | null = null;
 	let exitBuild: TransitionBuild | null = null;
 
@@ -177,11 +177,18 @@ export function createScene<T extends Object>(initial: T = {} as T) {
 	};
 
 	/**
-	 * Holds the current frame for `seconds`. In render the step occupies the
-	 * full duration, giving the viewer time to read; live, → fast-forwards.
+	 * Keeps the previous step's finished frame on screen for `seconds`
+	 * longer. Waits aren't steps: they don't show up in `step` or
+	 * `totalSteps`, and the live player skips them. As the first call, a
+	 * wait keeps the scene's first frame up until the first step starts.
 	 */
 	state.wait = function (seconds = 1) {
-		steps.push(new WaitStep(seconds));
+		const last = steps.at(-1);
+		if (!last) {
+			holdBeforeFirstStep += seconds;
+		} else {
+			last.wait = (last.wait ?? 0) + seconds;
+		}
 		return this;
 	};
 
@@ -549,7 +556,13 @@ export function createScene<T extends Object>(initial: T = {} as T) {
 	}
 
 	onMount(() => {
-		manager.load({ steps, enterBuild, exitBuild, id: getSceneId()?.() });
+		manager.load({
+			steps,
+			holdBeforeFirstStep,
+			enterBuild,
+			exitBuild,
+			id: getSceneId()?.()
+		});
 	});
 
 	return state;

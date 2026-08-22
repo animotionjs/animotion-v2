@@ -65,6 +65,7 @@ export class SceneManager {
 	#lastFrame = 0;
 	#transitionLastFrame = 0;
 	#transitionElapsed = 0;
+	#holdBeforeFirstStep = 0;
 	#savedStates = new SvelteMap<string, SavedState>();
 
 	#transitionState = $state({ opacity: 1, x: 0, y: 0, scale: 1 });
@@ -252,15 +253,19 @@ export class SceneManager {
 	load({
 		steps,
 		id,
+		holdBeforeFirstStep = 0,
 		enterBuild,
 		exitBuild
 	}: {
 		steps: Step[];
 		id?: string;
+		/** Seconds to keep the first frame up before the first step starts. */
+		holdBeforeFirstStep?: number;
 		enterBuild?: TransitionBuild | null;
 		exitBuild?: TransitionBuild | null;
 	}) {
 		this.#softClear();
+		this.#holdBeforeFirstStep = holdBeforeFirstStep;
 
 		if (enterBuild) this.#enterBuild = enterBuild;
 		if (exitBuild) this.#exitBuild = exitBuild;
@@ -343,6 +348,7 @@ export class SceneManager {
 		this.#stepProgress = 0;
 		this.#stepCompleted = false;
 		this.#needsStart = false;
+		this.#holdBeforeFirstStep = 0;
 	}
 
 	/**
@@ -663,16 +669,21 @@ export class SceneManager {
 	#currentStep(): Step | undefined {
 		return this.#steps[this.#stepIndex];
 	}
+	/**
+	 * Total seconds spent on `step`: its animation plus any waits after it.
+	 * Live playback only spends the animation duration on each step.
+	 */
+	#totalFor(step: Step): number {
+		const before = this.#renderMode && this.#stepIndex === 0 ? this.#holdBeforeFirstStep : 0;
+		const after = this.#renderMode ? (step.wait ?? 0) : 0;
+		return step.duration + before + after;
+	}
 
 	#playCurrent() {
 		const step = this.#currentStep();
 		if (!step) return;
 
-		// A zero-duration step completes in place: running the frame loop would
-		// divide by `duration` and schedule a stall timer that only fires after
-		// the step's (nonexistent) length, so it would never resolve in render
-		// mode. Commit it immediately on the same press that starts it.
-		if (step.duration <= 0) {
+		if (this.#totalFor(step) <= 0) {
 			step.setProgress(1);
 			this.#completeStepTween(step);
 			return;
@@ -719,17 +730,21 @@ export class SceneManager {
 		this.#lastFrame = this.#scheduler.now();
 		this.#emitStepChange();
 
+		const before = this.#renderMode && this.#stepIndex === 0 ? this.#holdBeforeFirstStep : 0;
+		const total = this.#totalFor(step);
+
 		const frame = (now: number) => {
 			const delta = (now - this.#lastFrame) / 1000;
 			this.#lastFrame = now;
 
 			this.#elapsed += delta;
-			const progress = this.#elapsed / step.duration;
-			this.#stepProgress = Math.min(progress, 1);
+			const animating = Math.min(Math.max(this.#elapsed - before, 0), step.duration);
+			const progress = step.duration > 0 ? animating / step.duration : 1;
+			this.#stepProgress = progress;
 			step.setProgress(progress);
 			if (this.#renderMode) flushSync();
 
-			if (progress >= 1) {
+			if (this.#elapsed >= total) {
 				this.#completeStepTween(step);
 				return;
 			}
@@ -759,7 +774,7 @@ export class SceneManager {
 						this.#completeStepTween(step);
 					}
 				},
-				step.duration * 1000 + 50
+				total * 1000 + 50
 			);
 		}
 	}

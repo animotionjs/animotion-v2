@@ -32,6 +32,12 @@ function assertDuration(duration: number) {
  */
 export interface Step {
 	readonly duration: number;
+	/**
+	 * Extra seconds the finished frame stays up after the animation, so
+	 * viewers have time to read. Only used when rendering video; live
+	 * playback ignores it. Set by the builder's `wait`.
+	 */
+	wait?: number;
 	setProgress(p: number): void;
 	start(): void;
 	end(): void;
@@ -155,27 +161,6 @@ export class TickStep implements Step {
 		this.#time = 0;
 		this.#frame = 0;
 	}
-}
-
-/** Holds the current frame for `seconds`; nothing animates while it plays. */
-export class WaitStep implements Step {
-	#duration: number;
-
-	constructor(duration: number) {
-		this.#duration = duration;
-		assertDuration(duration);
-	}
-
-	get duration(): number {
-		return this.#duration;
-	}
-
-	setProgress(p: number) {
-		void p;
-	}
-	start() {}
-	end() {}
-	revert() {}
 }
 
 /** Visual transition applied to entering/exiting `data-layout` elements. */
@@ -1827,8 +1812,9 @@ export class LayoutStep implements Step {
 
 /**
  * Runs several steps concurrently as one step. Duration is the longest
- * sub-step; each sub-step's progress is scaled by its own duration relative to
- * the longest, and a sub-step's `end()` fires exactly once when it completes.
+ * sub-step including its wait; each sub-step animates over its own duration,
+ * keeps its finished frame up for its wait, and `end()` fires exactly once
+ * when its animation completes.
  */
 export class ParallelStep implements Step {
 	#steps: Step[];
@@ -1839,16 +1825,19 @@ export class ParallelStep implements Step {
 	}
 
 	get duration(): number {
-		return Math.max(0, ...this.#steps.map((s) => s.duration));
+		return Math.max(0, ...this.#steps.map((s) => s.duration + (s.wait ?? 0)));
 	}
 
 	setProgress(p: number) {
+		const total = this.duration;
 		const progress = clamp(p, 0, 1);
 		for (let i = 0; i < this.#steps.length; i++) {
 			if (this.#done[i]) continue;
 			const step = this.#steps[i];
+			// Each sub-step keeps its own pace: it reaches progress 1 when the
+			// parallel timeline has played exactly its duration, then waits.
 			const stepProgress =
-				step.duration > 0 ? clamp(progress * (this.duration / step.duration), 0, 1) : progress;
+				step.duration > 0 ? clamp((progress * total) / step.duration, 0, 1) : progress;
 			step.setProgress(stepProgress);
 			if (stepProgress >= 1) {
 				this.#done[i] = true;
