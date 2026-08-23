@@ -17,7 +17,7 @@
 </script>
 
 <section
-	class="@container flex flex-col items-center justify-center overflow-hidden p-8 text-foreground"
+	class="@container flex flex-col items-center justify-center overflow-hidden text-foreground"
 	style:width="min(100dvw, calc(100dvh * {ratio}))"
 	style:aspect-ratio={ratio}
 	style:opacity={transition.opacity}
