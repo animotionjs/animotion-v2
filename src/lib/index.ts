@@ -77,6 +77,7 @@ export {
 	code,
 	getCodeState
 } from './scene/index.js';
+export { Camera, CameraStep, frameCenter, type CameraOptions, type CameraTarget } from './scene/camera/index.js';
 
 export type { Direction, TransitionBuild } from './scene/runtime/runtime.svelte.js';
 export type { SceneEntry, Sequence } from './scene/runtime/sequence.js';

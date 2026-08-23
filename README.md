@@ -1,6 +1,6 @@
 # Animotion
 
-A Svelte engine for building animated presentations. A presentation is a sequence of scenes, each written as a Svelte component. Scenes drive their own animation with a scene builder, mixing value tweens, layout changes with FLIP animations, code that morphs between versions, and per-frame ticks.
+A Svelte engine for building animated presentations. A presentation is a sequence of scenes, each written as a Svelte component. Scenes drive their own animation with a scene builder, mixing value tweens, layout changes with FLIP animations, code that morphs between versions, per-frame ticks, and camera flights across an oversized canvas.
 
 ## Getting started
 
@@ -35,7 +35,7 @@ A presentation is an ordered `sequence` of scenes. Each scene is a component tha
 </div>
 ```
 
-The library provides the player shell (`Scene`), the animation engine (`createScene`, `SceneManager`, step types), a code component (`Code`) that morphs between source states, and a plugin system (`PluginManager`, `fullscreenPlugin`).
+The library provides the player shell (`Scene`), the animation engine (`createScene`, `SceneManager`, step types), a code component (`Code`) that morphs between source states, a camera component (`Camera`) for flying across an oversized canvas, and a plugin system (`PluginManager`, `fullscreenPlugin`).
 
 Scenes live in `src/scenes/`. A scene is either a file (`04-code.svelte`) or a folder containing a `scene.svelte` component (`04-code/scene.svelte`), so you can colocate assets and helper components with the scene. Each scene must be prefixed with a number that sets its order in the sequence: `01-intro.svelte` plays before `02-about.svelte`. The rest of the name becomes the scene id (`intro`). The sequence is built automatically by `src/lib/config/scenes.ts`.
 
@@ -113,6 +113,33 @@ configure({ transition: { type: 'slide', duration: 0.4 } });
 ```
 
 The enter transition plays when a scene loads; the exit transition plays before navigating to the next scene. Presets set both builds, so you can mix them with custom ones: `.slideTransition({ duration: 0.4 }).transitionOut((b) => { ... })` keeps the slide enter and overrides only the exit. Each call replaces whichever side(s) it defines.
+
+## Camera
+
+Every scene carries a built-in camera: a reactive `{ x, y, zoom, deg }` state that `<Camera />` applies to its children as a single transform. Tag the elements you want to visit with a `data-frame` attribute, then chain `.frame()` steps to fly between them:
+
+```svelte
+<script lang="ts">
+	import { Camera, createScene } from '#lib/scene';
+
+	const scene = createScene({ camera: { zoom: 1.4 } })
+		.noTransition()
+		.frame('title').wait(1)
+		.frame('detail', { zoom: 1.8 }).wait(1);
+</script>
+
+<Camera {scene}>
+	<div data-frame="title">...</div>
+	<div data-frame="detail" style:left="900px">...</div>
+</Camera>
+```
+
+- The target is a framed element's id or raw canvas coordinates: `.frame({ x: -500, y: 500 })`.
+- Options are optional: `{ zoom, deg, duration = 1.4, ease = easeInOut }`. Anything left out keeps its current value, so `.frame('detail')` pans there without changing the framing.
+- Initial values come from `createScene({ camera: { zoom: 1.4 } })`; scenes that never mention the camera start centered at zoom 1.
+- The camera is ordinary state, so you can read it anywhere reactive (`scene.camera.zoom`) or move it by hand (`scene.camera.deg += 15`).
+- Rotation always turns the short way around.
+- Framed elements are measured when their flight starts, not when it is declared, so layout changes earlier in the timeline are picked up automatically.
 
 ## Code animations
 

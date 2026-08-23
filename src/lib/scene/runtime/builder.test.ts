@@ -119,6 +119,40 @@ function stepsAfter(configure: (scene: SceneBuilder<Record<string, unknown>>) =>
 	return { steps, holdBeforeFirstStep, manager };
 }
 
+describe('createScene camera', () => {
+	it('merges the initial overrides over the defaults', () => {
+		setupManager();
+		const scene = createScene({ camera: { zoom: 1.4 } });
+
+		expect(scene.camera.zoom).toBe(1.4);
+		expect(scene.camera.x).toBe(0);
+		expect(scene.camera.y).toBe(0);
+		expect(scene.camera.deg).toBe(0);
+	});
+
+	it('rejects a non-object camera initial value', () => {
+		setupManager();
+		expect(() => createScene({ camera: 2 })).toThrow(/camera/);
+	});
+
+	it('leaves the caller initial object untouched', () => {
+		setupManager();
+		const initial = { camera: { zoom: 1.4 } };
+
+		createScene(initial);
+
+		expect(initial).toEqual({ camera: { zoom: 1.4 } });
+	});
+
+	it('frame appends a flight step with its duration', () => {
+		const { steps } = stepsAfter((scene) => {
+			scene.frame({ x: 100 }, { zoom: 2, duration: 2 });
+		});
+
+		expect(steps.map((s) => s.duration)).toEqual([2]);
+	});
+});
+
 describe('createScene repeat', () => {
 	it('appends the callback steps once per repetition', () => {
 		const { steps } = stepsAfter((scene) => {

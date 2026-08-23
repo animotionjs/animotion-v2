@@ -10,6 +10,7 @@ import {
 	type TickFrame,
 	type LayoutOptions
 } from './steps';
+import { CameraStep, type CameraOptions, type CameraTarget } from '../camera/steps';
 import { getSceneManager, getSceneId } from './context.svelte';
 import { TransitionBuilder, type TransitionBuild } from './runtime.svelte';
 import { clamp, easeInOut, type Easing } from '../easing';
@@ -28,6 +29,7 @@ import {
 	type RangeResolver,
 	type RawCodeFragment
 } from '../code/code.svelte';
+import type { Camera } from '../camera/frame';
 
 /**
  * The chainable scene builder returned by {@link createScene}. Step methods
@@ -91,6 +93,13 @@ export interface SceneBuilder<T> {
 	 * `repeat(items.length - 1)` so the last item ends the scene.
 	 */
 	crossfade<U>(items: readonly U[]): { index: number; item: U; opacity: number };
+	/**
+	 * Flies the camera to a framed element (a `data-frame` id) or to canvas
+	 * coordinates, keeping whatever `zoom`/`deg` the options leave out.
+	 */
+	frame(target?: CameraTarget, options?: CameraOptions): this;
+	/** The scene's built-in camera. Initial values come from `createScene({ camera })`. */
+	readonly camera: Camera;
 }
 type Scene<T> = T & SceneBuilder<T>;
 type Object = Record<string, unknown>;
@@ -119,6 +128,14 @@ export function createScene<T extends Object>(initial: T = {} as T) {
 			? rawInitial.indent
 			: '  ';
 	delete rawInitial.indent;
+	if (
+		'camera' in initial &&
+		(typeof rawInitial.camera !== 'object' ||
+			rawInitial.camera === null ||
+			Array.isArray(rawInitial.camera))
+	) {
+		throw new Error('createScene: `camera` must be an object.');
+	}
 	const manager = getSceneManager();
 
 	// `step`/`progress` are read-only views of the timeline, not scene state.
@@ -137,6 +154,18 @@ export function createScene<T extends Object>(initial: T = {} as T) {
 		configurable: true,
 		get: () => manager.stepProgress
 	});
+
+	/*
+		The camera is ordinary scene state with defaults, so scenes that never
+		mention it still render centered at zoom 1.
+	*/
+	rawInitial.camera = {
+		x: 0,
+		y: 0,
+		zoom: 1,
+		deg: 0,
+		...((rawInitial.camera as Partial<Camera> | undefined) ?? {})
+	};
 
 	const state = $state(rawInitial) as Scene<T>;
 	let steps: Step[] = [];
@@ -546,6 +575,16 @@ export function createScene<T extends Object>(initial: T = {} as T) {
 		if (!codeState)
 			throw new Error('codeSelection: no code state. Pass initial `code` to createScene().');
 		steps.push(new SelectionStep(codeState, range, duration));
+		return this;
+	};
+
+	/**
+	 * Flies the camera to a framed element or to canvas coordinates. The
+	 * destination is measured when the step starts, so it frames the element
+	 * wherever it actually sits at that point in the timeline.
+	 */
+	state.frame = function (target: CameraTarget = {}, options: CameraOptions = {}) {
+		steps.push(new CameraStep(state.camera as Camera, target, options));
 		return this;
 	};
 
