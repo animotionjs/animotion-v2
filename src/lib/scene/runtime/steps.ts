@@ -210,7 +210,8 @@ export interface LayoutOptions {
 	 * is smooth and the endpoint is pixel-perfect by construction, but glyphs
 	 * rasterize at a changing scale (soft mid-flight). `width`/`height`
 	 * re-lays-out every frame — keeping text and images crisp — at the cost
-	 * of per-frame re-layout. Defaults to `true`.
+	 * of per-frame re-layout. Text whose own font-size changes tweens the
+	 * font per frame in either mode. Defaults to `true`.
 	 */
 	scale?: boolean;
 	/**
@@ -269,8 +270,21 @@ interface FlipTween {
 	/**
 	 * (`scale: false`): the box's previous and final bounds, lerped as
 	 * `width`/`height` so nested text and images rasterize at native size.
+	 * The heights are `null` when the element re-wraps via a font tween: its
+	 * height stays auto so the box hugs the text's actual wrap each frame.
 	 */
-	size?: { fromW: number; fromH: number; toW: number; toH: number };
+	size?: {
+		fromW: number;
+		fromH: number | null;
+		toW: number;
+		toH: number | null;
+	};
+	/**
+	 * Present when the element's own font-size changed: the computed size
+	 * (and pixel line-height) lerps each frame, so the text genuinely wraps
+	 * at every intermediate size instead of riding a transform scale.
+	 */
+	font?: { fromSize: number; toSize: number; line?: { from: number; to: number } };
 	/**
 	 * Present when the element morphs between sizes; `x`/`y` track the current
 	 * frame's scale so the border-radius can be counter-scaled against it.
@@ -549,12 +563,6 @@ interface LayoutBounds {
 	opacity: number;
 	/** The element cloned before the step's change, so exit ghosts render the state being left. */
 	clone?: HTMLElement;
-	/**
-	 * The text glyph ink position (Range over the contents), distinct from the
-	 * layout box because the ink sits at a different offset within the box at
-	 * different font sizes. Only present for direct-text elements.
-	 */
-	ink?: { left: number; top: number };
 	/** The parsed computed `transform`, or `null` when the element has none. */
 	matrix: Matrix2D | null;
 	/** The element's computed transform-origin as an offset from its top-left. */
@@ -596,11 +604,11 @@ function hasDirectText(el: HTMLElement): boolean {
  * Whether a retained element's bounds change enough to need morphing.
  * transform-scale stretches an element's own text, so a box whose size change
  * comes from its content (a shrink-wrapped text run that becomes a full-width
- * block) is treated as position-only and glides crisply — unless the font-size
- * itself changed, in which case the text element scales its own glyphs (the one
- * way a text-size change animates) regardless of the `scale` option. Both boxes
- * are the untransformed layout boxes so an element's own rotation doesn't
- * inflate its measured size into a false scale.
+ * block) is treated as position-only and glides crisply. A font-size change
+ * re-wraps the text and always moves the bounds; those elements tween their
+ * font instead of scaling (see {@link FlipTween.font}). Both boxes are the
+ * untransformed layout boxes so an element's own rotation doesn't inflate its
+ * measured size into a false scale.
  */
 function morphsSize(
 	prev: LayoutBounds,
@@ -613,7 +621,21 @@ function morphsSize(
 	);
 }
 
-/** Measures one `data-layout` element's state (box, transform, text, ink). */
+/** The value as pixels, or `undefined` when it isn't a px length. */
+function pxLength(value: string): number | undefined {
+	return value.endsWith('px') ? parseFloat(value) : undefined;
+}
+
+/** A px line-height pair, present only when both states resolve to pixels. */
+function lineTween(from: string, to: string): { from: number; to: number } | undefined {
+	const fromLine = pxLength(from);
+	const toLine = pxLength(to);
+	return fromLine !== undefined && toLine !== undefined
+		? { from: fromLine, to: toLine }
+		: undefined;
+}
+
+/** Measures one `data-layout` element's state (box, transform, text). */
 function captureBounds(el: HTMLElement, rect: DOMRect): LayoutBounds {
 	const computed = getComputedStyle(el);
 	const width = el.offsetWidth || rect.width;
@@ -634,21 +656,8 @@ function captureBounds(el: HTMLElement, rect: DOMRect): LayoutBounds {
 		text: snapshotTextMetrics(el),
 		display: computed.display,
 		borderWidth: computed.borderTopWidth,
-		opacity: parseFloat(computed.opacity),
-		ink: textInkRect(el)
+		opacity: parseFloat(computed.opacity)
 	};
-}
-
-/**
- * The top-left of the element's text glyph ink, as opposed to its layout box.
- * Must run while the element is untransformed.
- */
-function textInkRect(el: HTMLElement): { left: number; top: number } | undefined {
-	if (!hasDirectText(el)) return undefined;
-	const range = document.createRange();
-	range.selectNodeContents(el);
-	const rect = range.getBoundingClientRect();
-	return rect.width > 0 && rect.height > 0 ? { left: rect.left, top: rect.top } : undefined;
 }
 
 function createLayoutPropTween(
@@ -724,6 +733,8 @@ interface LayoutInlineStyles {
 	rotate: string;
 	scale: string;
 	translate: string;
+	fontSize: string;
+	lineHeight: string;
 	/**
 	 * The author's inline values of the auto-tweened visual props. A step only
 	 * ever overrides these while it runs, so clearing them at the end would wipe
@@ -741,6 +752,8 @@ function snapshotInline(el: HTMLElement): LayoutInlineStyles {
 		rotate: el.style.rotate,
 		scale: el.style.scale,
 		translate: el.style.translate,
+		fontSize: el.style.fontSize,
+		lineHeight: el.style.lineHeight,
 		layoutProps: {}
 	};
 	for (const prop of Object.keys(LAYOUT_PROPS)) {
@@ -1117,7 +1130,17 @@ export class LayoutStep implements Step {
 				}
 				if (tween.size) {
 					tween.el.style.width = `${lerp(tween.size.fromW, tween.size.toW, eased)}px`;
-					tween.el.style.height = `${lerp(tween.size.fromH, tween.size.toH, eased)}px`;
+					if (tween.size.fromH !== null && tween.size.toH !== null)
+						tween.el.style.height = `${lerp(tween.size.fromH, tween.size.toH, eased)}px`;
+				}
+				if (tween.font) {
+					tween.el.style.fontSize = `${lerp(tween.font.fromSize, tween.font.toSize, eased)}px`;
+					if (tween.font.line)
+						tween.el.style.lineHeight = `${lerp(
+							tween.font.line.from,
+							tween.font.line.to,
+							eased
+						)}px`;
 				}
 				let flip = '';
 				if (tween.parentScale) {
@@ -1346,11 +1369,14 @@ export class LayoutStep implements Step {
 			return { prev: { left: 0, top: 0 }, final: { left: 0, top: 0 } };
 		};
 
-		// Retained elements that morph between sizes scale via a transform (see
-		// below); children look this map up to cancel the ancestor's scale so
-		// their content stays crisp while the ancestor morphs. Font-changed text
-		// scales uniformly by its font ratio — a uniform scale is what reads as
-		// the text genuinely growing — while boxes scale by their bounds.
+		/*
+			Retained elements that morph between sizes scale via a transform
+			(see below); children look this map up to cancel the ancestor's
+			scale so their content stays crisp while the ancestor morphs.
+			Font-changing text is absent by design: it tweens its font per
+			frame and re-flows, so it never rides (or needs a counter-scale
+			against) a transform.
+		*/
 		const scaling = new Map<
 			string,
 			{ x0: number; y0: number; x: number; y: number; dx0: number; dy0: number }
@@ -1358,14 +1384,12 @@ export class LayoutStep implements Step {
 		for (const [key, { el, layout, text }] of lastBounds) {
 			const prev = firstBounds.get(key);
 			if (!prev) continue;
-			const fontChanged = prev.text.fontSize !== text.fontSize;
-			const sizeChanged = morphsSize(prev, { el, layout, text });
-			if (!((this.#scale || (hasDirectText(el) && fontChanged)) && sizeChanged)) continue;
-			const finalFont = parseFloat(text.fontSize);
-			const uniform =
-				hasDirectText(el) && fontChanged && finalFont > 0
-					? parseFloat(prev.text.fontSize) / finalFont
-					: undefined;
+			/*
+				Font-changing text tweens its font instead of
+				transform-scaling, in either `scale` mode.
+			*/
+			if (hasDirectText(el) && prev.text.fontSize !== text.fontSize) continue;
+			if (!(this.#scale && morphsSize(prev, { el, layout, text }))) continue;
 			// The ancestor's own FLIP offset (previous minus final local spot),
 			// measured like the retained tween's `offset` below. Entering
 			// children cancel it so new content stays at its destination
@@ -1374,8 +1398,8 @@ export class LayoutStep implements Step {
 			const finalLeft = layout.left - originAt.final.left;
 			const finalTop = layout.top - originAt.final.top;
 			scaling.set(key, {
-				x0: uniform ?? prev.layout.width / layout.width,
-				y0: uniform ?? prev.layout.height / layout.height,
+				x0: prev.layout.width / layout.width,
+				y0: prev.layout.height / layout.height,
 				x: 1,
 				y: 1,
 				dx0: prev.layout.left - originAt.prev.left - finalLeft,
@@ -1391,7 +1415,7 @@ export class LayoutStep implements Step {
 
 		for (const [
 			key,
-			{ el, styles, text, ink, matrix, origin, layout, individual, borderWidth, opacity }
+			{ el, styles, text, matrix, origin, layout, individual, borderWidth, opacity }
 		] of lastBounds) {
 			const prev = firstBounds.get(key);
 			if (prev) {
@@ -1412,6 +1436,24 @@ export class LayoutStep implements Step {
 				el.style.maxHeight = 'none';
 				const finalLeft = layout.left - originAt.final.left;
 				const finalTop = layout.top - originAt.final.top;
+				const fontChanged = prev.text.fontSize !== text.fontSize;
+				const sizeChanged = morphsSize(prev, { el, layout, text });
+				const scale = scaling.get(key);
+				const parentScale = parentScaleOf(el);
+				/*
+					A font-size change on direct text tweens the computed font
+					itself (and pixel line-height), so the text re-wraps at
+					every intermediate size and always rasterizes natively, in
+					either `scale` mode.
+				*/
+				const font =
+					fontChanged && hasDirectText(el)
+						? {
+								fromSize: parseFloat(prev.text.fontSize),
+								toSize: parseFloat(text.fontSize),
+								line: lineTween(prev.text.lineHeight, text.lineHeight)
+							}
+						: undefined;
 				// Pin at the final bounds so a shrink-wrapped box (e.g. an
 				// absolutely-positioned text run that becomes a full-width block)
 				// doesn't snap to its final size when the step ends. A
@@ -1420,11 +1462,12 @@ export class LayoutStep implements Step {
 				el.style.left = px(finalLeft);
 				el.style.top = px(finalTop);
 				el.style.width = px(layout.width);
-				el.style.height = px(layout.height);
-				const fontChanged = prev.text.fontSize !== text.fontSize;
-				const sizeChanged = morphsSize(prev, { el, layout, text });
-				const scale = scaling.get(key);
-				const parentScale = parentScaleOf(el);
+				/*
+					A re-wrapping font morph keeps its height auto, so the box
+					hugs the text's actual wrap every frame instead of sliding
+					against it on a straight-line lerp.
+				*/
+				if (!(font && sizeChanged)) el.style.height = px(layout.height);
 				const props: LayoutPropTween[] = [];
 				// Measured as a local delta, not absolute: an ancestor that moves
 				// exactly as much as the element's own reflow (leaving its
@@ -1435,29 +1478,20 @@ export class LayoutStep implements Step {
 					x: prev.layout.left - originAt.prev.left - finalLeft,
 					y: prev.layout.top - originAt.prev.top - finalTop
 				};
-				if (scale && fontChanged && prev.ink && ink) {
-					// The glyph ink sits at a different offset within the box at
-					// each font size, so aligning the boxes leaves the text a few
-					// pixels off on the first frame. Shift the offset so the
-					// uniformly-scaled text lands on the previous ink instead.
-					const finalFont = parseFloat(text.fontSize);
-					if (finalFont > 0) {
-						const r = parseFloat(prev.text.fontSize) / finalFont;
-						offset.x += prev.ink.left - prev.layout.left - (ink.left - layout.left) * r;
-						offset.y += prev.ink.top - prev.layout.top - (ink.top - layout.top) * r;
-					}
-				}
-				// `scale: false` opts into morphing width/height so nested text
-				// and images rasterize at native size at the cost of per-frame
-				// re-layout; the default pins the final size and scales the box
-				// back, keeping the motion on the compositor.
+				/*
+					The box follows the font: its bounds lerp alongside so the
+					wrapping matches at both endpoints. `scale: false` opts
+					every other element into the same width/height morph; the
+					default pins the final size and scales back on the
+					compositor.
+				*/
 				const size =
-					!scale && sizeChanged
+					sizeChanged && (font || !scale)
 						? {
 								fromW: prev.layout.width,
-								fromH: prev.layout.height,
+								fromH: font ? null : prev.layout.height,
 								toW: layout.width,
-								toH: layout.height
+								toH: font ? null : layout.height
 							}
 						: undefined;
 				// The element's own transform is tweened across the flip — from
@@ -1528,6 +1562,7 @@ export class LayoutStep implements Step {
 					props,
 					offset,
 					size,
+					font,
 					scale,
 					parentScale,
 					localFinal: { x: finalLeft, y: finalTop },
@@ -1767,6 +1802,8 @@ export class LayoutStep implements Step {
 			tween.el.style.rotate = inline.rotate;
 			tween.el.style.scale = inline.scale;
 			tween.el.style.translate = inline.translate;
+			tween.el.style.fontSize = inline.fontSize;
+			tween.el.style.lineHeight = inline.lineHeight;
 			tween.el.style.position = '';
 			tween.el.style.margin = '';
 			tween.el.style.left = '';

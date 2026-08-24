@@ -199,7 +199,12 @@
 
 <svelte:window {onkeydown} />
 
-<div class="flex h-dvh w-dvw items-center justify-center overflow-hidden bg-background">
+<!-- Every letter is drawn at its true size instead of snapped to the pixel
+	grid. -->
+<div
+	class="flex h-dvh w-dvw items-center justify-center overflow-hidden bg-background"
+	style:text-rendering="geometricprecision"
+>
 	<Scene>
 		<Content />
 	</Scene>

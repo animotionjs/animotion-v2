@@ -27,6 +27,10 @@ function ghosts(selector: string): HTMLElement[] {
 	) as HTMLElement[];
 }
 
+/** Long enough to wrap across several lines inside a narrow column. */
+const LONG =
+	'This is a fairly long paragraph that wraps across multiple lines when rendered at a narrow width so we can exercise multi-line text morphing.';
+
 /** The top-left of the text glyph ink, as it visually appears on screen. */
 function inkRect(el: HTMLElement): { left: number; top: number } {
 	const range = document.createRange();
@@ -767,46 +771,64 @@ describe('LayoutStep', () => {
 		expect(getComputedStyle(el).backgroundColor).toBe('rgb(0, 0, 255)');
 	});
 
-	it('sets font-size to its final value and scales the box instead of tweening it', () => {
+	it('animates font-size frame by frame so text grows instead of being scaled', () => {
 		setBody('<div data-layout="a" style="font-size:16px">text</div>');
+		let beforeHeight = 0;
+		let beforeInkWidth = 0;
 		const step = new LayoutStep(
 			{},
 			() => {
+				const before = element('[data-layout="a"]');
+				beforeHeight = before.getBoundingClientRect().height;
+				const range = document.createRange();
+				range.selectNodeContents(before);
+				beforeInkWidth = range.getBoundingClientRect().width;
 				element('[data-layout="a"]').style.fontSize = '32px';
 			},
 			0.5
 		);
+		const inkWidth = () => {
+			const range = document.createRange();
+			range.selectNodeContents(element('[data-layout="a"]'));
+			return range.getBoundingClientRect().width;
+		};
 		step.start();
 
-		// font-size jumps to its final value (rasterized once, natively) while
-		// the box scales back; it is never re-rasterized at intermediate sizes.
+		/*
+			The computed font lerps each frame and the box hugs the text (auto
+			height), so the block grows exactly as much as its glyphs do. A
+			pure font morph needs no transform at all.
+		*/
 		const el = element('[data-layout="a"]');
-		const [, sx, sy] = el.style.transform.match(/scale\(([-\d.]+), ([-\d.]+)\)/)!;
-		// The scale is the uniform font ratio (16/32), so the glyphs grow
-		// without being squashed. Chromium serializes transforms to 6
-		// significant figures, hence the parsed closeTo comparison.
-		expect(parseFloat(sx)).toBeCloseTo(0.5, 6);
-		expect(parseFloat(sy)).toBeCloseTo(0.5, 6);
-		expect(el.style.fontSize).toBe('32px');
+		expect(el.style.transform).toBe('');
+		expect(el.getBoundingClientRect().height).toBeCloseTo(beforeHeight, 6);
 
 		step.setProgress(0.5);
-		expect(el.style.fontSize).toBe('32px');
+		const midFont = parseFloat(el.style.fontSize);
+		expect(midFont).toBeGreaterThan(16);
+		expect(midFont).toBeLessThan(32);
+		const midHeight = el.getBoundingClientRect().height;
+		expect(midHeight).toBeGreaterThan(beforeHeight);
+		const midInkWidth = inkWidth();
+		expect(midInkWidth).toBeGreaterThan(beforeInkWidth);
+
+		step.setProgress(0.75);
+		expect(inkWidth()).toBeGreaterThan(midInkWidth);
 
 		step.setProgress(1);
-		expect(el.style.transform).toBe('translate(0px, 0px) scale(1, 1)');
+		expect(el.style.fontSize).toBe('32px');
 
 		step.end();
-		// font-size isn't animation-managed anymore, so its final value
-		// persists after the step (end() only clears the pinned styles).
+		// The author's inline font-size survives the step.
 		expect(el.style.fontSize).toBe('32px');
 	});
 
 	it('starts font-changing text on its previous glyph ink', () => {
-		// A fixed line-height makes the ink sit at a different offset within
-		// the box at each font size, so box alignment alone would leave the
-		// glyphs off by a few pixels on the first frame. Inline-block makes the
-		// box shrink-wrap the text, so the font change also changes its size
-		// and the element scales.
+		/*
+			A fixed line-height makes the ink sit at a different offset within
+			the box at each font size. Inline-block makes the box shrink-wrap
+			the text, so the font change also changes its size.
+		*/
 		setBody(
 			'<div data-layout="a" style="font-size:16px;line-height:60px;display:inline-block">text</div>'
 		);
@@ -821,14 +843,108 @@ describe('LayoutStep', () => {
 		);
 		step.start();
 
-		// The pinned text is scaled back to its previous size and offset so
-		// its ink lands exactly where the smaller text was.
+		/*
+			The element truly starts at its previous layout, lerped font and
+			lerped bounds included, so its ink lands exactly where the smaller
+			text was, with no transform compensation.
+		*/
+		expect(el.style.fontSize).toBe('16px');
 		const atStart = inkRect(el);
 		expect(atStart.left).toBeCloseTo(before.left, 1);
 		expect(atStart.top).toBeCloseTo(before.top, 1);
 
 		step.setProgress(1);
-		expect(el.style.transform).toBe('translate(0px, 0px) scale(1, 1)');
+		expect(el.style.transform).toBe('');
+
+		step.end();
+	});
+
+	it('re-wraps a multi-line paragraph as its font grows (scale: false)', () => {
+		setBody(`<p data-layout="a" style="font-size:16px;width:140px">${LONG}</p>`);
+		let prevTop = 0;
+		let prevHeight = 0;
+		const step = new LayoutStep(
+			{},
+			() => {
+				const el = element('[data-layout="a"]');
+				const rect = el.getBoundingClientRect();
+				prevTop = rect.top;
+				prevHeight = rect.height;
+				el.style.fontSize = '32px';
+			},
+			0.5,
+			{ scale: false }
+		);
+		step.start();
+
+		/*
+			The paragraph starts exactly on its previous layout, not on a
+			scaled-down copy of the final wrap, then re-wraps natively as the
+			font lerps, so there is no first-frame snap. A transform may ride
+			along because the UA's em-based paragraph margin grows with the
+			font.
+		*/
+		const el = element('[data-layout="a"]');
+		expect(el.style.fontSize).toBe('16px');
+		expect(el.getBoundingClientRect().top).toBeCloseTo(prevTop, 1);
+		expect(el.getBoundingClientRect().height).toBeCloseTo(prevHeight, 1);
+
+		step.setProgress(0.5);
+		const midFont = parseFloat(el.style.fontSize);
+		expect(midFont).toBeGreaterThan(16);
+		expect(midFont).toBeLessThan(32);
+		const midRect = el.getBoundingClientRect();
+		expect(midRect.height).toBeGreaterThan(prevHeight * 0.9);
+		/*
+			The box hugs the current wrap: the text's ink bottom sits flush
+			with the box's bottom edge instead of floating inside a lerped
+			height (or poking past it).
+		*/
+		const contentRange = document.createRange();
+		contentRange.selectNodeContents(el);
+		const contentBottom = contentRange.getBoundingClientRect().bottom;
+		expect(contentBottom).toBeLessThan(midRect.bottom + 2);
+		expect(midRect.bottom).toBeLessThan(contentBottom + 2);
+
+		step.setProgress(1);
+		expect(el.style.fontSize).toBe('32px');
+
+		step.end();
+	});
+
+	it('grows a nested paragraph while its parent stretches around it (scale: true)', () => {
+		setBody(
+			`<div data-layout="box" style="width:200px;height:200px"><p data-layout="para" style="font-size:16px;width:180px">${LONG}</p></div>`
+		);
+		const step = new LayoutStep(
+			{},
+			() => {
+				element('[data-layout="box"]').style.width = '300px';
+				const p = element('[data-layout="para"]');
+				p.style.width = '280px';
+				p.style.fontSize = '32px';
+			},
+			0.5,
+			{ scale: true }
+		);
+		step.start();
+
+		const para = element('[data-layout="para"]');
+		/*
+			The paragraph tweens its own font starting from the previous size;
+			its only transform is the counter-scale against the box, so the
+			glyphs re-wrap natively instead of riding a stretched final wrap.
+		*/
+		expect(para.style.fontSize).toBe('16px');
+		expect(para.style.transform).not.toBe('');
+
+		step.setProgress(0.5);
+		const midFont = parseFloat(para.style.fontSize);
+		expect(midFont).toBeGreaterThan(16);
+		expect(midFont).toBeLessThan(32);
+
+		step.setProgress(1);
+		expect(para.style.fontSize).toBe('32px');
 
 		step.end();
 	});
@@ -1328,7 +1444,7 @@ describe('LayoutStep', () => {
 		expect(ghosts('[data-layout="item"]').length).toBe(0);
 	});
 
-	it('adds a retained ancestor\'s own translate to the ghost ride', () => {
+	it("adds a retained ancestor's own translate to the ghost ride", () => {
 		setBody(`
 			<div data-layout="card" style="position:absolute;left:0px;top:0px;width:200px;height:200px;transform:translate(20px, 30px);transform-origin:0px 0px">
 				<div data-layout="item" style="position:absolute;left:120px;top:130px;width:40px;height:40px"></div>
