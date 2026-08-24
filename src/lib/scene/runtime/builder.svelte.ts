@@ -253,6 +253,7 @@ export function createScene<T extends Object>(initial: T = {} as T) {
 	 * Animates a DOM change with a FLIP transition: snapshots every element
 	 * tagged with a `data-layout` key, runs `change`, then animates retained,
 	 * added, and removed elements per the `enter`/`exit` {@link LayoutOptions}.
+	 * Only one layout step may run at a time.
 	 */
 	state.layout = function (
 		change: (scene: Scene<T>) => void,
@@ -263,7 +264,7 @@ export function createScene<T extends Object>(initial: T = {} as T) {
 		return this;
 	};
 
-	/** Runs every step added inside `fn` in parallel as a single step. */
+	/** Runs every step added inside `fn` in parallel as a single step. At most one of them may be a layout step. */
 	state.all = function (this: Scene<T>, fn: (scene: Scene<T>) => void) {
 		const saved = steps;
 		const parallelSteps: Step[] = [];

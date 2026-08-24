@@ -205,13 +205,12 @@ export interface LayoutOptions {
 	/** Easing applied to every tween in the step. Defaults to `easeInOut`. */
 	ease?: Easing;
 	/**
-	 * Morph size changes with `transform: scale` instead of `width`/`height`.
-	 * Scale stays on the compositor and never triggers layout, so the motion
-	 * is smooth and the endpoint is pixel-perfect by construction, but glyphs
-	 * rasterize at a changing scale (soft mid-flight). `width`/`height`
-	 * re-lays-out every frame — keeping text and images crisp — at the cost
-	 * of per-frame re-layout. Text whose own font-size changes tweens the
-	 * font per frame in either mode. Defaults to `true`.
+	 * Resize by stretching the final box with a `transform` instead of
+	 * laying out `width`/`height` every frame. Stretching stays on the
+	 * compositor, so heavy scenes resize smoothly even on weak hardware,
+	 * but everything inside warps mid-flight. It defaults to `false`: real
+	 * layout keeps nested text and images crisp, and text whose own
+	 * font-size changes always tweens the font per frame in either mode.
 	 */
 	scale?: boolean;
 	/**
@@ -1065,6 +1064,14 @@ function absoluteContainingBlock(el: Element): Element | null {
 	return null;
 }
 
+/*
+	Concurrent layout steps corrupt each other: the later one snapshots the
+	earlier one's temporary pins as author styles, can no longer see the real
+	layout underneath, and re-bakes those pins on cleanup. Only ever play
+	one at a time.
+*/
+let liveLayoutSteps = 0;
+
 /**
  * Animates a DOM change with a FLIP transition. On `start()` it snapshots the
  * bounds of every element tagged `data-layout`, runs `change()` (flushing
@@ -1100,7 +1107,15 @@ export class LayoutStep implements Step {
 		this.#ease = options.ease ?? easeInOut;
 		this.#enter = options.enter ?? DEFAULT_ENTER;
 		this.#exit = options.exit ?? DEFAULT_EXIT;
-		this.#scale = options.scale ?? true;
+		/*
+			Crispness is the default and stretching is opt-in. Stretching used
+			to be the default when it was the only way to animate size
+			smoothly. Now that text tweens its font and boxes hug their content
+			every frame, stretching only buys GPU speed at the cost of warping
+			whatever sits inside the box. Rendered video never drops frames,
+			so only heavy live presentations have a good reason to enable it.
+		*/
+		this.#scale = options.scale ?? false;
 		this.#enterEnd = clamp(options.enterEnd ?? 1, 0, 1);
 		this.#exitEnd = clamp(options.exitEnd ?? 1, 0, 1);
 		this.#stagger = clamp(options.stagger ?? 0, 0, 1);
@@ -1278,6 +1293,11 @@ export class LayoutStep implements Step {
 	}
 
 	start() {
+		if (liveLayoutSteps > 0)
+			console.warn(
+				"Two layout animations are running at the same time. They overwrite each other's styles and break. Play them one after another instead."
+			);
+		liveLayoutSteps++;
 		this.#snapshot = {};
 		for (const key of Object.keys(this.#state)) {
 			const val = this.#state[key];
@@ -1833,11 +1853,13 @@ export class LayoutStep implements Step {
 	}
 
 	end() {
+		liveLayoutSteps = Math.max(0, liveLayoutSteps - 1);
 		for (const tween of this.#tweens) this.#clearStyles(tween);
 		this.#tweens = [];
 	}
 
 	revert() {
+		liveLayoutSteps = Math.max(0, liveLayoutSteps - 1);
 		for (const key of Object.keys(this.#snapshot)) {
 			this.#state[key] = this.#snapshot[key];
 		}

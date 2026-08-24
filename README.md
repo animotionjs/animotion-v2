@@ -49,7 +49,7 @@ layout(change, (duration = 0.5), { scale, ease, enter, exit, enterEnd, exitEnd }
 
 For each element it decides what happened:
 
-- **Retained**: present in both states (like the title in the intro), glide from their old position and size to the new one — position via a translate tween, size via `transform: scale` (the motion stays on the compositor and the endpoint is pixel-perfect by construction). Elements whose size change is a font-size change scale uniformly by the font ratio (that's how text-size morphs animate), and are offset so they start on their previous glyph ink — glyphs are rasterized once at the final size, so the shape of the letters animates, not their rendering. Text that stays the same size is kept crisp and only glides. Set `scale: false` to morph `width`/`height` instead, keeping nested text and images crisp at the cost of per-frame re-layout. If their `border-radius`, `background-color`, `color`, `border-color`, or `opacity` changed, those morph along too.
+- **Retained**: present in both states (like the title in the intro), glide from their old position and size to the new one — position via a translate tween, size via a real `width`/`height` tween. The browser lays the box out every frame, so nested text and images stay crisp, and text whose own `font-size` changed tweens the font per frame, re-wrapping live instead of riding a scaled snapshot. If `border-radius`, `background-color`, `color`, `border-color`, or `opacity` changed, those morph along too. Set `scale: true` to opt out of the per-frame layout: the final box is pinned and stretched on the GPU instead, which keeps heavy scenes smooth on weak hardware at the cost of warping whatever sits inside while it moves (children counter-scale so they end pixel-perfect).
 - **New**: added by the change (including `{#if}` and `{#each}` items), animate in with the `enter` transition.
 - **Removed**: dropped from the DOM by the change, cloned into a fixed-position "ghost" at their old spot, animated out with the `exit` transition, then removed.
 
@@ -124,8 +124,10 @@ Every scene carries a built-in camera: a reactive `{ x, y, zoom, deg }` state th
 
 	const scene = createScene({ camera: { zoom: 1.4 } })
 		.noTransition()
-		.frame('title').wait(1)
-		.frame('detail', { zoom: 1.8 }).wait(1);
+		.frame('title')
+		.wait(1)
+		.frame('detail', { zoom: 1.8 })
+		.wait(1);
 </script>
 
 <Camera {scene}>

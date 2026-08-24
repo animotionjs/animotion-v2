@@ -1,4 +1,4 @@
-import { describe, expect, it, beforeEach } from 'vitest';
+import { describe, expect, it, beforeEach, vi } from 'vitest';
 import { flushSync, mount, unmount } from 'svelte';
 import { LayoutStep } from './steps';
 import { linear } from '../easing';
@@ -80,7 +80,7 @@ describe('LayoutStep', () => {
 		expect(el.style.width).toBe('');
 	});
 
-	it('morphs a resized element via width and height', () => {
+	it('morphs a resized element via width and height by default', () => {
 		setBody('<div data-layout="a" style="width:100px;height:50px"></div>');
 		const step = new LayoutStep(
 			{},
@@ -88,8 +88,7 @@ describe('LayoutStep', () => {
 				element('[data-layout="a"]').style.width = '200px';
 				element('[data-layout="a"]').style.height = '80px';
 			},
-			0.5,
-			{ scale: false }
+			0.5
 		);
 		step.start();
 
@@ -120,7 +119,7 @@ describe('LayoutStep', () => {
 		expect(el.style.minWidth).toBe('');
 	});
 
-	it('morphs a resized element via transform scale by default', () => {
+	it('morphs a resized element via transform scale when opted in', () => {
 		setBody('<div data-layout="a" style="width:100px;height:50px"></div>');
 		const step = new LayoutStep(
 			{},
@@ -128,11 +127,12 @@ describe('LayoutStep', () => {
 				element('[data-layout="a"]').style.width = '200px';
 				element('[data-layout="a"]').style.height = '80px';
 			},
-			0.5
+			0.5,
+			{ scale: true }
 		);
 		step.start();
 
-		// The default morph pins the final size and scales the box back to the
+		// The opt-in morph pins the final size and scales the box back to the
 		// previous bounds, gliding to identity — no width/height re-layout.
 		const el = element('[data-layout="a"]');
 		expect(el.style.width).toBe('200px');
@@ -195,7 +195,8 @@ describe('LayoutStep', () => {
 				element('[data-layout="a"]').style.width = '200px';
 				element('[data-layout="a"]').style.height = '100px';
 			},
-			0.5
+			0.5,
+			{ scale: true }
 		);
 		step.start();
 
@@ -352,7 +353,8 @@ describe('LayoutStep', () => {
 				titleEl.style.top = '90px';
 				titleEl.style.left = '90px';
 			},
-			0.5
+			0.5,
+			{ scale: true }
 		);
 		step.start();
 
@@ -769,6 +771,38 @@ describe('LayoutStep', () => {
 		const el = element('[data-layout="a"]');
 		expect(el.style.backgroundColor).toBe('');
 		expect(getComputedStyle(el).backgroundColor).toBe('rgb(0, 0, 255)');
+	});
+
+	it('warns when a second layout step starts while one is live', () => {
+		const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+		setBody('<div data-layout="a" style="width:100px;height:50px"></div>');
+
+		const first = new LayoutStep(
+			{},
+			() => {
+				element('[data-layout="a"]').style.width = '200px';
+			},
+			0.5
+		);
+		first.start();
+		expect(warn).not.toHaveBeenCalled();
+
+		const second = new LayoutStep({}, () => {}, 0.5);
+		second.start();
+		expect(warn).toHaveBeenCalledTimes(1);
+
+		// Ending the overlapping steps frees the engine: the next step is
+		// clean again.
+		second.end();
+		first.end();
+		expect(warn).toHaveBeenCalledTimes(1);
+
+		const third = new LayoutStep({}, () => {}, 0.5);
+		third.start();
+		expect(warn).toHaveBeenCalledTimes(1);
+
+		third.end();
+		warn.mockRestore();
 	});
 
 	it('animates font-size frame by frame so text grows instead of being scaled', () => {
@@ -1312,7 +1346,7 @@ describe('LayoutStep', () => {
 				`);
 			},
 			0.5,
-			{ ease: linear }
+			{ ease: linear, scale: true }
 		);
 		step.start();
 
@@ -1390,7 +1424,7 @@ describe('LayoutStep', () => {
 				document.body.appendChild(list);
 			},
 			0.5,
-			{ ease: linear }
+			{ ease: linear, scale: true }
 		);
 		step.start();
 
@@ -1957,7 +1991,8 @@ describe('LayoutStep', () => {
 				box.style.left = '200px';
 				box.style.width = '200px';
 			},
-			0.5
+			0.5,
+			{ scale: true }
 		);
 		step.start();
 
@@ -2211,7 +2246,7 @@ describe('LayoutStep', () => {
 				box.appendChild(added);
 			},
 			0.5,
-			{ enter: 'scale' }
+			{ enter: 'scale', scale: true }
 		);
 		step.start();
 
@@ -2242,7 +2277,7 @@ describe('LayoutStep', () => {
 				box.appendChild(added);
 			},
 			0.5,
-			{ enter: 'slide' }
+			{ enter: 'slide', scale: true }
 		);
 		step.start();
 
@@ -2275,7 +2310,7 @@ describe('LayoutStep', () => {
 				box.appendChild(added);
 			},
 			0.5,
-			{ ease: linear }
+			{ ease: linear, scale: true }
 		);
 		step.start();
 
@@ -2361,7 +2396,7 @@ describe('LayoutStep', () => {
 				);
 			},
 			0.5,
-			{ ease: linear }
+			{ ease: linear, scale: true }
 		);
 		step.start();
 
@@ -2391,7 +2426,7 @@ describe('LayoutStep', () => {
 				);
 			},
 			0.5,
-			{ ease: linear }
+			{ ease: linear, scale: true }
 		);
 		step.start();
 
@@ -2519,7 +2554,7 @@ describe('LayoutStep', () => {
 				);
 			},
 			0.5,
-			{ ease: linear }
+			{ ease: linear, scale: true }
 		);
 		step.start();
 
