@@ -2,7 +2,7 @@
 import { spawn, type ChildProcess, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { once } from 'node:events';
 import { mkdir, rm, writeFile } from 'node:fs/promises';
-import { availableParallelism } from 'node:os';
+import { availableParallelism, tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import ffmpeg from 'ffmpeg-static';
 import { chromium, type Browser, type Page } from 'playwright';
@@ -144,7 +144,10 @@ Options:
   --no-slices        never split scenes across workers. By default, when
                      there are fewer scenes than --jobs, long scenes are split
                      automatically so no worker sits idle.
-  --bench            measure per-frame capture cost (png vs jpeg) without rendering
+  --bench            measure per-frame capture cost, then time full renders of
+                     the selected scene across settings (png vs jpeg, normal
+                     vs --no-slices) and print the comparison. Pick one scene
+                     so the end-to-end part has something to compare
   --separate         write one video per scene (rendered/<id>.mp4) instead of one
                      combined video
   --frames-only      save frames without encoding video
@@ -465,6 +468,20 @@ Examples:
 	const totalFrames = sceneStats.reduce((s, x) => s + x.frames, 0);
 	const captureElapsed = (performance.now() - renderStart) / 1000;
 	if (args.bench) {
+		if (!streaming) {
+			console.warn('Skipping end-to-end comparison because streaming capture is off.');
+		} else if (targets.length > 1) {
+			console.warn('Skipping end-to-end comparison. Pick one scene so timings stay comparable.');
+		} else {
+			// Each timed render starts its own server, so ours has to let go of
+			// the shared port first. Its exit handler would treat the shutdown
+			// as a crash, so quiet it before pulling the plug.
+			server?.removeAllListeners('exit');
+			server?.kill();
+			server = null;
+			await waitUntilPortFree(4173);
+			await benchEndToEnd(targets[0], args);
+		}
 		console.log(`Bench complete (${args.gpu ? 'gpu' : 'software'} rendering).`);
 		return;
 	}
@@ -804,6 +821,78 @@ async function benchScene(page: Page, id: string, args: ResolvedArgs, renderQs: 
 		];
 		console.log(parts.join('  '));
 	}
+}
+
+/** The configurations the end-to-end comparison renders for you. */
+const BENCH_CONFIGS = [
+	{ label: 'normal', flags: [] },
+	{ label: 'no split', flags: ['--no-slices'] }
+];
+
+/**
+ * Times full real renders of one scene across the settings people actually
+ * choose between, then prints a small comparison table. Each configuration
+ * runs twice and only the second run is reported, so every number enjoys
+ * equally warm caches. Renders go to a temp file that is deleted afterwards.
+ */
+async function benchEndToEnd(target: string, args: ResolvedArgs) {
+	let rows: { config: string; format: string; seconds: number; frames: number }[] = [];
+	for (let pass = 0; pass < 2; pass++) {
+		const current: typeof rows = [];
+		for (const config of BENCH_CONFIGS) {
+			for (const format of ['png', 'jpeg'] as const) {
+				const { seconds, frames } = await timedRender(target, args, config.flags, format);
+				current.push({ config: config.label, format, seconds, frames });
+			}
+		}
+		rows = current;
+	}
+	console.log('end-to-end');
+	for (const row of rows) {
+		console.log(
+			`${target.padEnd(14)} ${row.config.padEnd(9)} ${row.format.padEnd(5)} ${row.seconds.toFixed(1).padStart(6)}s   ${row.frames} frames`
+		);
+	}
+}
+
+/** Runs one real render into a temp file and reports its wall time in seconds. */
+async function timedRender(
+	target: string,
+	args: ResolvedArgs,
+	extraFlags: string[],
+	format: 'png' | 'jpeg'
+): Promise<{ seconds: number; frames: number }> {
+	const out = join(tmpdir(), `animotion-bench-${process.pid}-${Date.now()}.mp4`);
+	const childArgv = [
+		resolve('src/cli/render.ts'),
+		target,
+		'--jobs',
+		String(args.jobs),
+		...(parsedArgs.fps !== undefined ? ['--fps', String(parsedArgs.fps)] : []),
+		...(parsedArgs.width !== undefined ? ['--width', String(parsedArgs.width)] : []),
+		...(parsedArgs.height !== undefined ? ['--height', String(parsedArgs.height)] : []),
+		...(parsedArgs.preview ? ['--preview'] : []),
+		...(format === 'jpeg' ? ['--jpeg'] : []),
+		...(args.gpu ? ['--gpu'] : []),
+		...extraFlags,
+		'--out',
+		out
+	];
+	const start = performance.now();
+	const child = spawn(process.execPath, childArgv, { stdio: ['ignore', 'pipe', 'pipe'] });
+	let stdout = '';
+	let stderr = '';
+	child.stdout.on('data', (chunk: Buffer) => (stdout += chunk));
+	child.stderr.on('data', (chunk: Buffer) => (stderr += chunk));
+	const code = await new Promise<number>((resolveExit) => child.on('exit', resolveExit));
+	const seconds = (performance.now() - start) / 1000;
+	rm(out, { force: true }).catch(() => {});
+	if (code !== 0) {
+		console.error(stderr.slice(-2000) || stdout.slice(-2000));
+		throw new Error(`Bench render failed with exit code ${code}`);
+	}
+	const match = /Captured \d+ scenes?, (\d+) frames/.exec(stdout);
+	return { seconds, frames: match ? Number(match[1]) : 0 };
 }
 
 /** Advances the scene and captures until done or {@link BENCH_FRAMES} frames, timing each stage. */
@@ -1205,6 +1294,19 @@ function autoJobs(): number {
  */
 function encoderThreadBudget(jobs: number): number {
 	return Math.min(4, Math.max(1, Math.floor(availableParallelism() / (jobs * 2))));
+}
+
+/** Waits until nothing responds on the port anymore, so a new server can claim it. */
+async function waitUntilPortFree(port: number, timeoutMs = 5000) {
+	const deadline = Date.now() + timeoutMs;
+	while (Date.now() < deadline) {
+		try {
+			await fetch(`http://127.0.0.1:${port}`);
+			await new Promise((r) => setTimeout(r, 200));
+		} catch {
+			return;
+		}
+	}
 }
 
 /** Halves `n` to an even number, with a floor of 2, for preview renders. */
