@@ -246,7 +246,10 @@ export function makeCodeTree(code: string): string {
  *   - a line starting with a closing bracket or closing tag aligns with the
  *     block it closes (`top.level`);
  *   - a line continuing a chained method call (starting with `.` or `?.`) sits
- *     one level beyond the statement it belongs to (`base + 1`).
+ *     one level beyond the statement it belongs to (`base + 1`);
+ *   - a Svelte block opener pushes a block so its body sits one level deeper
+ *     until the matching closer line shows up, while middles like `{:else}`
+ *     line up with the opener and leave nesting untouched;
  * Every opening bracket or tag pushes an entry (even when several appear on
  * the same line, e.g. `foo({` or `<button onclick={...}>`), and every closing
  * bracket or tag pops its own kind, so braces and tags stay balanced.
@@ -261,9 +264,9 @@ export function makeCodeTree(code: string): string {
  * and at the start of the line or preceded by whitespace or `>`; closing tags
  * (`</`) are always recognised. TS generics (`foo<number>`) and comparisons
  * (`a < b`) are therefore not misread as tags.
- * Statement continuations — chained calls (`.foo(...)`) or `?.` chains, and a
- * line starting with `=` after an unfinished statement — indent one level
- * deeper than the statement they continue.
+ * Statement continuations, meaning chained calls such as `.foo(...)` or `?.`
+ * chains plus lines starting with an equals sign after an unfinished
+ * statement, indent one level deeper than the statement they continue.
  * Leading and trailing blank lines are dropped. Idempotent.
  */
 const CHAIN_START = /^(\?\.|\.\s*[$A-Z_a-z(])/;
@@ -285,7 +288,7 @@ const VOID_ELEMENTS = new Set([
 	'wbr'
 ]);
 
-type BlockKind = 'brace' | 'tag';
+type BlockKind = 'brace' | 'tag' | 'block';
 
 interface IndentBlock {
 	kind: BlockKind;
@@ -329,6 +332,7 @@ function scanTag(raw: string, start: number): TagScan | null {
 	while (i < raw.length && /[A-Za-z0-9-]/.test(raw[i])) i++;
 	const name = raw.slice(nameStart, i);
 	let quote: string | null = null;
+	let depth = 0;
 	let selfClosing = false;
 	while (i < raw.length) {
 		const c = raw[i];
@@ -336,9 +340,18 @@ function scanTag(raw: string, start: number): TagScan | null {
 			if (c === quote) quote = null;
 		} else if (c === '"' || c === "'") {
 			quote = c;
-		} else if (c === '/' && raw[i + 1] === '>') {
+			/*
+				Attribute expressions can contain > characters, so braces are
+				counted here just as scanTagEnd counts them and the tag only
+				ends outside of an expression.
+			*/
+		} else if (c === '{') {
+			depth++;
+		} else if (c === '}') {
+			depth = Math.max(0, depth - 1);
+		} else if (c === '/' && raw[i + 1] === '>' && depth === 0) {
 			selfClosing = true;
-		} else if (c === '>') {
+		} else if (c === '>' && depth === 0) {
 			return { closing, selfClosing, name, end: i, completed: true };
 		}
 		i++;
@@ -416,10 +429,25 @@ export function smartIndent(code: string, unit = '  '): string {
 			const top = stack[stack.length - 1];
 			const closesBracket = trimmed[0] === '}' || trimmed[0] === ')' || trimmed[0] === ']';
 			const closesTag = trimmed[0] === '<' && trimmed[1] === '/';
-			const closes = closesBracket || closesTag;
-			// A leading `=` continues an assignment whose left-hand side ended
-			// the previous line, so the RHS indents one level deeper; a fresh
-			// statement after `;`, `{` or `}` never matches.
+			const closesBlock = !closesBracket && !closesTag && trimmed.startsWith('{/');
+			/*
+				A block that opens and closes on one line, such as
+				{#if x}yes{/if}, balances itself out. It must never push a
+				block or everything after it would sit one level too deep.
+			*/
+			const opensBlock = !closesBlock && trimmed.startsWith('{#') && !trimmed.includes('{/');
+			/*
+				Middles like {:else} belong to the open block above them. They
+				line up with its opener and leave nesting alone.
+			*/
+			const continuesBlock = !opensBlock && !closesBlock && trimmed.startsWith('{:');
+			const closes = closesBracket || closesTag || closesBlock;
+			/*
+				A line starting with an equals sign continues the assignment
+				that began on the previous line, so its value sits one level
+				deeper. A fresh statement after a semicolon or a closing brace
+				never continues anything.
+			*/
 			const assignment =
 				trimmed[0] === '=' &&
 				prevTrimmed.length > 0 &&
@@ -428,14 +456,22 @@ export function smartIndent(code: string, unit = '  '): string {
 
 			if (chain) {
 				level = base + 1;
-			} else if (closes) {
+			} else if (closes || continuesBlock) {
 				level = top ? top.level : 0;
 			} else {
 				level = top ? top.level + 1 : 0;
 			}
 
 			out.push(unit.repeat(level) + trimmed);
-			if (!chain && !closes) base = level;
+			if (opensBlock) {
+				stack.push({ kind: 'block', level, base });
+				base = level;
+			} else if (closesBlock) {
+				const popped = popKind(stack, 'block');
+				if (popped) base = popped.base;
+			} else if (!chain && !closes && !continuesBlock) {
+				base = level;
+			}
 		}
 
 		for (let i = 0; i < raw.length; i++) {

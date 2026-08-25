@@ -323,6 +323,43 @@ count is {count}
 		expect(smartIndent(once)).toBe(once);
 	});
 
+	it('indents svelte each blocks and their contents', () => {
+		const input = `<div class="hand">\n{#each hand as card (card)}\n<div data-layout={card}>{card}</div>\n{/each}\n</div>`;
+		expect(smartIndent(input)).toBe(
+			`<div class="hand">\n  {#each hand as card (card)}\n    <div data-layout={card}>{card}</div>\n  {/each}\n</div>`
+		);
+	});
+
+	it('aligns if blocks, else branches and closers with their opener', () => {
+		const input = `{#if hand.length}\n<ul>\n{#each hand as card (card)}\n<li>{card}</li>\n{/each}\n</ul>\n{:else}\n<p>Empty</p>\n{/if}`;
+		expect(smartIndent(input)).toBe(
+			`{#if hand.length}\n  <ul>\n    {#each hand as card (card)}\n      <li>{card}</li>\n    {/each}\n  </ul>\n{:else}\n  <p>Empty</p>\n{/if}`
+		);
+	});
+
+	it('aligns await middles without changing nesting', () => {
+		const input = `{#await promise}\n<p>Loading</p>\n{:then value}\n<p>{value}</p>\n{:catch error}\n<p>{error}</p>\n{/await}`;
+		expect(smartIndent(input)).toBe(
+			`{#await promise}\n  <p>Loading</p>\n{:then value}\n  <p>{value}</p>\n{:catch error}\n  <p>{error}</p>\n{/await}`
+		);
+	});
+
+	it('does not open a block for a single-line svelte block', () => {
+		const input = `<p>\n{#if count > 0}{count}{/if}\n</p>`;
+		expect(smartIndent(input)).toBe(`<p>\n  {#if count > 0}{count}{/if}\n</p>`);
+	});
+
+	it('is idempotent with svelte blocks', () => {
+		const input = `<div class="hand">\n{#each hand as card (card)}\n<div data-layout={card}>{card}</div>\n{/each}\n</div>`;
+		const once = smartIndent(input);
+		expect(smartIndent(once)).toBe(once);
+	});
+
+	it('keeps self-closing tags with expression attributes from opening a block', () => {
+		const input = `<Card title={a > b} />\n<p>\nText\n</p>`;
+		expect(smartIndent(input)).toBe(`<Card title={a > b} />\n<p>\n  Text\n</p>`);
+	});
+
 	it('re-indents a demo scene mixing script, chain and multiline tag', () => {
 		const input = `
 		<script>
