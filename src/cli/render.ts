@@ -290,7 +290,7 @@ Examples:
 	progress.length = 0;
 	for (const id of targets) progress.push({ id, frames: 0, done: false, startMs: 0, finalMs: 0 });
 
-	if (args.slices !== 0 && !streaming) {
+	if (args.slices > 1 && !streaming) {
 		console.warn(
 			'Slicing requires streaming capture; ignoring it (pass neither --frames-only nor --keep-frames).'
 		);
