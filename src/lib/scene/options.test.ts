@@ -13,7 +13,7 @@ describe('options', () => {
 			fps: 60,
 			width: 1920,
 			height: 1080,
-			jobs: 4,
+			jobs: 'auto',
 			out: 'rendered/video.mp4',
 			framesOnly: false,
 			keepFrames: false,

@@ -26,17 +26,21 @@
 
 	setSceneId(() => id);
 
-	// Seed the current scene's position from the URL hash (`/scene#N`) before
-	// the scene child mounts and calls `manager.load`. No-op on the server,
-	// where the hash is never sent.
+	/*
+	 * Seed the current scene's position from the URL hash (`/scene#N`) before
+	 * the scene child mounts and calls `manager.load`. No-op on the server,
+	 * where the hash is never sent.
+	 */
 	untrack(() => applyUrlStep(id, page.url));
 
 	const index = $derived(sequence.findIndex((s) => s.id === id));
 	const scene = $derived(sequence.find((s) => s.id === id) ?? sequence[0]);
 
-	// Force every declared webfont to load before the scenes render, so the
-	// layout engine never measures glyphs at a fallback width and reflows text
-	// mid-animation when the real font swaps in.
+	/*
+	 * Force every declared webfont to load before the scenes render, so the
+	 * layout engine never measures glyphs at a fallback width and reflows
+	 * text mid-animation when the real font swaps in.
+	 */
 	if (typeof document !== 'undefined') {
 		await Promise.all([...document.fonts].map((font) => font.load()));
 		await document.fonts.ready;
@@ -48,9 +52,11 @@
 		!page.url.searchParams.has('render') || page.url.searchParams.has('progress')
 	);
 
-	// Reactive snapshot of the presentation, exposed to plugins via `ctx.state`.
-	// The scene fields capture the initial values once; navigation and step
-	// changes update the snapshot below.
+	/*
+	 * Reactive snapshot of the presentation, exposed to plugins via
+	 * `ctx.state`. The scene fields capture the initial values once;
+	 * navigation and step changes update the snapshot below.
+	 */
 	const state = $state<PresentationState>(
 		untrack(() => ({
 			sceneId: id,
@@ -64,8 +70,10 @@
 		}))
 	);
 
-	// Subscribed here (before the scene child mounts) so the first scene's
-	// `manager.load` step change is captured.
+	/*
+	 * Subscribed here (before the scene child mounts) so the first scene's
+	 * `manager.load` step change is captured.
+	 */
 	const syncStep = manager.onStepChange((step, total) => {
 		state.step = step;
 		state.totalSteps = total;
@@ -78,13 +86,16 @@
 
 	const pluginManager = createPluginManager();
 
-	// True while a scene-change navigation is in flight, so a second press at
-	// the boundary (which has no exit-transition window while the window is
-	// hidden) cannot start a second `goto` that would abort the first.
+	/*
+	 * True while a scene-change navigation is in flight, so a second press at
+	 * the boundary (which has no exit-transition window while the window is
+	 * hidden) cannot start a second `goto` that would abort the first.
+	 */
 	let navigating = false;
 
 	onMount(() => {
 		pluginManager.setup();
+		signalReady();
 		return () => pluginManager.cleanup();
 	});
 
@@ -102,6 +113,13 @@
 		if (!to) return;
 		applyUrlStep(to.params?.scene ?? sequence[0].id, to.url);
 	});
+
+	/*
+	 * The renderer waits for this flag before taking any screenshot, so
+	 * nothing ever captures a half-loaded image or video.
+	 */
+	let resolveReady: (() => void) | undefined;
+	const ready = new Promise<void>((resolve) => (resolveReady = resolve));
 
 	if (typeof window !== 'undefined' && page.url.searchParams.has('render')) {
 		setupRenderBridge();
@@ -123,9 +141,47 @@
 			scheduler,
 			scenes: sequence.map((s) => s.id),
 			renderOptions: getOptions().render,
+			ready,
 			navigateTo,
 			advanceFrame: (delta: number) => manager.advanceFrame(delta)
 		};
+	}
+
+	/** Raises the ready flag once media has settled and a couple of frames painted. */
+	function signalReady() {
+		const resolve = resolveReady;
+		if (!resolve) return;
+		void settleMedia().then(() => {
+			// Wait two frames so the browser has actually painted the result.
+			requestAnimationFrame(() => requestAnimationFrame(resolve));
+		});
+	}
+
+	/**
+	 * Waits until every image and video on the page has finished loading (or
+	 * failed). Media created later by steps isn't covered, since mid-timeline
+	 * slice prerolls already tolerate that.
+	 */
+	function settleMedia(): Promise<unknown> {
+		return Promise.all(
+			Array.from(document.querySelectorAll('img, video'), (el) => {
+				if (el instanceof HTMLImageElement) return waitUntil(el.complete, el, ['load', 'error']);
+				if (el instanceof HTMLVideoElement)
+					return waitUntil(el.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA, el, [
+						'loadeddata',
+						'error'
+					]);
+				return Promise.resolve();
+			})
+		);
+	}
+
+	/** Resolves immediately when `done`, else once one of `events` fires on `el`. */
+	function waitUntil(done: boolean, el: Element, events: string[]): Promise<void> {
+		if (done) return Promise.resolve();
+		return new Promise((resolve) => {
+			for (const event of events) el.addEventListener(event, () => resolve(), { once: true });
+		});
 	}
 
 	function navigateTo(targetId: string) {

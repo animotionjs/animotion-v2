@@ -2,6 +2,7 @@
 import { spawn, type ChildProcess, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { once } from 'node:events';
 import { mkdir, rm, writeFile } from 'node:fs/promises';
+import { availableParallelism } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import ffmpeg from 'ffmpeg-static';
 import { chromium, type Browser, type Page } from 'playwright';
@@ -42,6 +43,8 @@ type ResolvedArgs = {
 	width: number;
 	height: number;
 	jobs: number;
+	/** How many CPU threads each worker's video encoder may use. */
+	encoderThreads: number;
 	framesOnly: boolean;
 	keepFrames: boolean;
 	progressBar: boolean;
@@ -49,12 +52,13 @@ type ResolvedArgs = {
 	jpegQuality: number;
 	gpu: boolean;
 	bench: boolean;
+	/** Slice mode. 0 disables slicing, 1 fills idle workers automatically, larger numbers force that many slices per scene. */
 	slices: number;
 	separate: boolean;
 	scenes: string[];
 };
 
-/** A unit of work popped by a worker: one scene, or one frame range of one scene. */
+/** A unit of work popped by a worker, either a whole scene or one frame range of one scene. */
 type WorkItem = {
 	id: string;
 	sceneIndex: number;
@@ -67,11 +71,24 @@ type WorkItem = {
 	bench: boolean;
 };
 
-/** Destination for captured frames: ffmpeg stdin (streaming) or disk files. */
+/** Destination for captured frames, ffmpeg stdin while streaming or files on disk. */
 type FrameSink = {
 	write(buf: Buffer): Promise<void>;
 	close(): Promise<void>;
 	abort?(): void;
+};
+
+/**
+ * Thin wrapper around Chrome's DevTools protocol for the frame loop. We talk
+ * to the browser directly instead of going through Playwright's screenshot
+ * helper, which rechecks fonts, caret visibility and layout on every frame.
+ * Those extra round trips add up fast at 60 fps, and skipping them is safe
+ * because our runtime is deterministic. Frames only change when we say so,
+ * and page readiness is handled by the bridge.
+ */
+type PageClient = {
+	evaluate<T>(expression: string): Promise<T>;
+	capture(): Promise<Buffer>;
 };
 
 const parsedArgs = parseArgs(process.argv.slice(2));
@@ -90,9 +107,9 @@ const progress: {
 let statusTimer: ReturnType<typeof setInterval> | null = null;
 
 /**
- * Render pipeline: starts a Vite dev server, launches headless Chromium,
- * probes the page for `window.__sequenceRenderer` to learn the scene list and
- * render options, then captures each scene with a pool of workers and encodes
+ * Render pipeline. Start a Vite dev server, launch headless Chromium, probe
+ * the page for `window.__sequenceRenderer` to learn the scene list and
+ * render options, then capture each scene with a pool of workers and encode
  * the frames to video (unless `--frames-only`).
  */
 async function main() {
@@ -109,7 +126,8 @@ Options:
   --fps <number>     frames per second (default: from config render options)
   --width <number>   video width (default: from config render options)
   --height <number>  video height (default: from config render options)
-  --jobs <number>    parallel render workers (default: from config render options)
+  --jobs <number>    parallel render workers (default auto, roughly two
+                     thirds of your CPU cores between 1 and 8)
   --jpeg [quality]   capture frames as JPEG at the given quality (default 95)
                      instead of lossless PNG for faster rendering
   --png              force lossless PNG capture (default; use with --jpeg to
@@ -117,13 +135,15 @@ Options:
   --preview          fast draft render: half resolution, 30 fps, JPEG capture
   --gpu              prefer hardware acceleration (auto-falls back to software)
   --slices [count]   capture each scene's frames across count parallel workers,
-                     each handling a contiguous frame range (default 4). Helps
-                     when some workers would otherwise be idle (fewer scenes
-                     than --jobs); skipped otherwise. The scene must drive its
-                     state purely from time/frame (no Math.random, Date.now, or
-                     accumulated side-effects), since every slice runs in a
-                     fresh tab. Streaming mode only; ignored with
+                     each handling a contiguous frame range (default 4).
+                     Scenes shorter than ~2s render whole. The scene must
+                     drive its state purely from time/frame (no Math.random,
+                     Date.now, or accumulated side-effects), since every slice
+                     runs in a fresh tab. Streaming mode only; ignored with
                      --frames-only / --keep-frames / --bench
+  --no-slices        never split scenes across workers. By default, when
+                     there are fewer scenes than --jobs, long scenes are split
+                     automatically so no worker sits idle.
   --bench            measure per-frame capture cost (png vs jpeg) without rendering
   --separate         write one video per scene (rendered/<id>.mp4) instead of one
                      combined video
@@ -186,7 +206,9 @@ Examples:
 			isCrashed = true;
 		});
 		await tempPage.goto(`http://127.0.0.1:4173/?render`, { waitUntil: 'domcontentloaded' });
-		await tempPage.waitForFunction(() => window.__sequenceRenderer !== undefined);
+		await tempPage.waitForFunction(() => window.__sequenceRenderer !== undefined, undefined, {
+			timeout: 15000
+		});
 		const probe = await tempPage.evaluate(() => {
 			const r = window.__sequenceRenderer!;
 			return { scenes: r.scenes, renderOptions: r.renderOptions };
@@ -205,6 +227,7 @@ Examples:
 		probe = await acquireProbe();
 	}
 	const { scenes, renderOptions } = probe;
+	const jobs = parsedArgs.jobs ?? (renderOptions.jobs === 'auto' ? autoJobs() : renderOptions.jobs);
 
 	const args: ResolvedArgs = {
 		out: parsedArgs.out ?? renderOptions.out,
@@ -216,7 +239,8 @@ Examples:
 		height:
 			parsedArgs.height ??
 			(parsedArgs.preview ? previewDim(renderOptions.height) : renderOptions.height),
-		jobs: parsedArgs.jobs ?? renderOptions.jobs,
+		jobs,
+		encoderThreads: encoderThreadBudget(jobs),
 		framesOnly: parsedArgs.framesOnly ?? renderOptions.framesOnly,
 		keepFrames: parsedArgs.keepFrames ?? renderOptions.keepFrames,
 		progressBar: parsedArgs.progressBar ?? renderOptions.progressBar,
@@ -246,67 +270,92 @@ Examples:
 	}
 
 	const streaming = !args.framesOnly && !args.keepFrames;
-	// Slicing turns a scene into several workers. It only helps when some
-	// workers would otherwise sit idle — i.e. when there are fewer scenes than
-	// jobs. With as many scenes as jobs, the workers are already saturated by
-	// whole scenes, and slicing would only add page-load overhead (measured:
-	// full-deck renders gain ~6%, not worth the capture-mode switch). Within
-	// that constraint, only scenes long enough for the speedup to outweigh
-	// their own page-load overhead get sliced (see SLICE_MIN_SECONDS below).
-	const useSlices = args.slices > 1 && streaming && !args.bench && targets.length < args.jobs;
+	/*
+	 * One scene being one job is simple but wasteful whenever scene lengths
+	 * differ. So when there are fewer scenes than workers, we cut the long
+	 * ones into pieces and hand those out instead, proportional to how long
+	 * each scene is. This used to be opt in because every piece paid for a
+	 * fresh page load; now that pages report readiness directly, loads are
+	 * cheap enough to do it by default (see SLICE_MIN_SECONDS below).
+	 */
+	const useSlices =
+		args.slices !== 0 &&
+		streaming &&
+		!args.bench &&
+		(args.slices > 1 || targets.length < args.jobs);
 
 	progress.length = 0;
 	for (const id of targets) progress.push({ id, frames: 0, done: false, startMs: 0, finalMs: 0 });
 
-	if (args.slices > 1 && !streaming) {
+	if (args.slices !== 0 && !streaming) {
 		console.warn(
-			'--slices requires streaming capture; ignoring it (pass neither --frames-only nor --keep-frames).'
-		);
-	} else if (args.slices > 1 && targets.length >= args.jobs) {
-		console.warn(
-			`--slices skipped: all ${args.jobs} workers are already used by the ${targets.length} scenes. ` +
-				'Slicing only adds parallelism when there are idle workers (fewer scenes than --jobs).'
+			'Slicing requires streaming capture; ignoring it (pass neither --frames-only nor --keep-frames).'
 		);
 	}
 
 	const sliceCounts = new Map<string, number>();
 	const items: WorkItem[] = [];
 
-	// Minimum scene length (seconds of footage) for slicing to pay off: each
-	// slice adds a ~1-2s page load, so a scene must be long enough that the
-	// parallel speedup outweighs those loads.
-	const SLICE_MIN_SECONDS = 4;
+	/*
+	 * Scenes shorter than this render as one piece, since splitting them
+	 * would not buy enough parallel time to cover the extra page load
+	 * (roughly 100-200ms).
+	 */
+	const SLICE_MIN_SECONDS = 2;
 
 	if (useSlices) {
-		// Every slice must start from a known frame, so measure each scene's
-		// exact total frame count by driving it once without screenshots
-		// (cheap: advance-only, ~0.5ms per frame).
+		/*
+		 * To split a scene we need its exact frame count, so play each scene
+		 * once behind the scenes. Advancing without taking screenshots costs
+		 * well under a millisecond per frame.
+		 */
 		const dryPage = await browser!.newPage({ deviceScaleFactor: 1 });
 		dryPage.on('crash', () => {
 			isCrashed = true;
 		});
 		dryPage.on('pageerror', (err) => pageErrors.push(err.message));
+		const dryClient = await attachClient(dryPage, args);
 		console.log('Measuring scene frame counts...');
 		const totals: number[] = [];
 		for (let i = 0; i < targets.length; i++) {
 			const id = targets[i];
 			const isLast = i === targets.length - 1;
-			// settle=false: the frame count comes from the step math alone, so
-			// there's no need to wait for network idle or asset loads.
+			/*
+			 * settle stays false here because the frame count comes from the
+			 * step math alone, so there is no need to wait for readiness or
+			 * asset loads.
+			 */
 			await loadScenePage(dryPage, id, renderQs, false);
-			const { total } = await driveScene(dryPage, id, isLast, args, i, null, null);
+			const { total } = await driveScene(dryClient, id, isLast, args, i, null, null);
 			totals.push(total);
 			console.log(`  ${id}: ${total} frames`);
 		}
 		await dryPage.close().catch(() => {});
 
+		/*
+		 * These are the worker slots up for grabs. Scenes too short to split
+		 * each pin one worker, and everything left over is shared out among
+		 * the long scenes.
+		 */
+		const minFrames = SLICE_MIN_SECONDS * args.fps;
+		const shortUnits = totals.filter((total) => total < minFrames).length;
+		const capacity = args.slices > 1 ? 0 : Math.max(0, args.jobs - shortUnits);
+		const longTotal = totals.reduce((sum, total) => (total >= minFrames ? sum + total : sum), 0);
+
 		for (let i = 0; i < targets.length; i++) {
 			const id = targets[i];
 			const isLast = i === targets.length - 1;
-			// Only slice scenes long enough that the per-slice page-load
-			// overhead pays off (~4 seconds of footage at the render fps).
-			const sliceCount =
-				totals[i] >= SLICE_MIN_SECONDS * args.fps ? Math.min(args.slices, totals[i]) : 1;
+			/*
+			 * Long scenes share the spare workers based on their length, short
+			 * ones stay whole. A small slice is fine because it lands on a
+			 * worker that would otherwise sit idle anyway.
+			 */
+			let sliceCount = 1;
+			if (totals[i] >= minFrames && longTotal > 0) {
+				const wanted =
+					args.slices > 1 ? args.slices : Math.round((capacity * totals[i]) / longTotal);
+				sliceCount = Math.max(1, Math.min(wanted, totals[i]));
+			}
 			const ranges = sliceCount > 1 ? sliceRanges(totals[i], sliceCount) : null;
 			sliceCounts.set(id, ranges?.length ?? 1);
 			if (!ranges) {
@@ -362,13 +411,13 @@ Examples:
 	}
 
 	if (
-		args.slices > 1 &&
+		args.slices !== 0 &&
 		streaming &&
 		sliceCounts.size > 0 &&
 		![...sliceCounts.values()].some((n) => n > 1)
 	) {
 		console.warn(
-			`--slices had no effect: none of the ${targets.length} scene${targets.length === 1 ? '' : 's'} ` +
+			`Slicing had no effect: none of the ${targets.length} scene${targets.length === 1 ? '' : 's'} ` +
 				`has at least ${SLICE_MIN_SECONDS}s of footage (${SLICE_MIN_SECONDS * args.fps} frames at ${args.fps} fps), so every scene renders whole.`
 		);
 	}
@@ -427,9 +476,11 @@ Examples:
 		const encodeStart = performance.now();
 
 		if (streaming) {
-			// Frames were already piped into ffmpeg during capture. Sliced
-			// scenes have per-slice videos to stitch first; then only a
-			// per-scene concat remains for full-presentation renders.
+			/*
+			 * Frames were already piped into ffmpeg during capture. Sliced
+			 * scenes have per-slice videos to stitch first, then only a
+			 * per-scene concat remains for full-presentation renders.
+			 */
 			if (useSlices) {
 				for (const id of targets) {
 					const count = sliceCounts.get(id) ?? 1;
@@ -486,7 +537,7 @@ function printStatus() {
 }
 
 /**
- * Worker loop: owns one browser page and captures work items one at a time,
+ * Worker loop. Owns one browser page and captures work items one at a time,
  * popping them off a shared queue. Collects page errors and crashes into
  * module-level state so the final exit code reflects them.
  */
@@ -501,6 +552,7 @@ async function runWorker(
 		deviceScaleFactor: 1
 	});
 	await page.setViewportSize({ width: args.width, height: args.height });
+	const client = await attachClient(page, args);
 
 	page.on('pageerror', (err) => {
 		pageErrors.push(err.message);
@@ -539,7 +591,7 @@ async function runWorker(
 			progress[item.sceneIndex].startMs ||= performance.now();
 			try {
 				const { written } = await driveScene(
-					page,
+					client,
 					item.id,
 					item.isLast,
 					args,
@@ -567,43 +619,64 @@ async function runWorker(
 }
 
 /**
- * Navigates a page to a scene in render mode, waits for the renderer, and
- * gives asynchronous scene setup (model/image/video loads, dynamic imports)
- * time to finish before capture starts. Without this, a slice starting
- * mid-timeline pre-rolls in milliseconds and can capture a page whose async
- * content has not loaded yet. Best-effort: capture proceeds if the page never
- * goes quiet within the timeout.
+ * Loads a scene and waits until it is genuinely ready to be photographed.
+ * The renderer must exist, and the app must raise its `ready` flag, meaning
+ * images and videos decoded and the first frame painted. Fonts and the
+ * scene module load even earlier, before that flag can exist, so this stays
+ * quick. The old network-idle approach cost half a second per scene no
+ * matter what. If readiness somehow never arrives we start capturing anyway
+ * after 15s rather than hanging forever.
  */
 async function loadScenePage(page: Page, id: string, renderQs: string, settle = true) {
 	await page.goto(`http://127.0.0.1:4173/${id}?${renderQs}`, {
 		waitUntil: 'domcontentloaded',
 		timeout: 10000
 	});
-	await page.waitForFunction(() => {
-		const r = window.__sequenceRenderer;
-		if (!r) return false;
-		const m = r.manager;
-		return m.totalSteps > 0 || m.phase !== 'finished' || m.transitionActive;
-	});
+	await page.waitForFunction(
+		() => {
+			const r = window.__sequenceRenderer;
+			if (!r) return false;
+			const m = r.manager;
+			return m.totalSteps > 0 || m.phase !== 'finished' || m.transitionActive;
+		},
+		undefined,
+		{ timeout: 15000 }
+	);
 	if (settle) {
-		// Wait for network idle plus a short buffer so asynchronous scene setup —
-		// model/image/video loads, dynamic imports — is complete before any frame
-		// is captured. Network idle already means nothing is in flight, so the
-		// buffer only needs to cover post-load settling (e.g. texture uploads).
-		await page.waitForLoadState('networkidle', { timeout: 15000 }).catch(() => {});
-		await page.waitForTimeout(150);
+		await withTimeout(
+			page.evaluate(() => window.__sequenceRenderer!.ready),
+			15000
+		).catch(() => {});
 	}
+}
+
+/** Rejects if `promise` does not settle within `ms`. */
+function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+	return new Promise<T>((resolve, reject) => {
+		const timer = setTimeout(() => reject(new Error(`Timed out after ${ms}ms`)), ms);
+		promise.then(
+			(value) => {
+				clearTimeout(timer);
+				resolve(value);
+			},
+			(err) => {
+				clearTimeout(timer);
+				reject(err);
+			}
+		);
+	});
 }
 
 /**
  * Drives one scene frame by frame through the enter transition, each step
  * (advanced via `manager.next()`), then the exit transition (skipped for the
  * last scene), advancing the render scheduler `1/fps` seconds at a time until
- * it reports idle. Hang guards abort on runaway loops.
+ * it reports idle. Scenes of any length are welcome; the trade-off is that a
+ * scene whose animation never ends will simply record forever.
  *
- * The same function powers three modes:
- * - serial capture (`sink` set, `range` null): captures every frame from 1;
- * - time-sliced capture (`sink` set, `range` set): pre-rolls the manager
+ * The same function powers three modes.
+ * - serial capture (`sink` set, `range` null) records every frame from 1;
+ * - time-sliced capture (`sink` and `range` set) pre-rolls the manager
  *   through the frames before `range.start` without screenshots (the exact
  *   same `next()`/`advanceFrame` sequence as serial, so the state at each
  *   frame is identical), then captures frames `start..end`; and
@@ -612,7 +685,7 @@ async function loadScenePage(page: Page, id: string, renderQs: string, settle = 
  * @returns `written` frames written to `sink`, and `total` frames covered.
  */
 async function driveScene(
-	page: Page,
+	client: PageClient,
 	id: string,
 	isLast: boolean,
 	args: ResolvedArgs,
@@ -629,54 +702,39 @@ async function driveScene(
 		progress[sceneIndex].frames = f;
 		if (!sink) return;
 		if (range && (f < range.start || f > range.end)) return;
-		await sink.write(await safeScreenshot(page, args));
+		await sink.write(await safeCapture(client));
 		written++;
 	};
 	const withinRange = () => !range || frameIndex <= range.end;
 
-	const maxFrames = args.fps * 60;
-	let guard = 0;
+	const advance = () =>
+		client.evaluate<{ done: boolean }>(`window.__sequenceRenderer.advanceFrame(${1 / args.fps})`);
 
 	await writeFrame();
 
 	// enter transition + initial step animation
 	while (true) {
 		if (isCrashed) throw new Error(`Page crashed during enter of ${id}`);
-		if (++guard > maxFrames) throw new Error(`Enter hang on ${id}: >${maxFrames} frames`);
-		const { done } = await page.evaluate(
-			(delta: number) => window.__sequenceRenderer!.advanceFrame(delta),
-			1 / args.fps
-		);
+		const { done } = await advance();
 		await writeFrame();
 		if (done) break;
 		if (!withinRange()) break;
 	}
 
 	// steps
-	guard = 0;
 	while (true) {
 		if (isCrashed) throw new Error(`Page crashed during steps of ${id}`);
 		if (!withinRange()) break;
-		const finished = await page.evaluate(() => window.__sequenceRenderer!.manager.finished);
+		const finished = await client.evaluate<boolean>('window.__sequenceRenderer.manager.finished');
 		if (finished) break;
-		if (++guard > 200) {
-			throw new Error(`Step loop hang on ${id}: too many step invocations`);
-		}
 
-		await page.evaluate(() => window.__sequenceRenderer!.manager.next());
+		await client.evaluate('window.__sequenceRenderer.manager.next()');
 		await writeFrame();
 
-		let stepGuard = 0;
 		while (true) {
 			if (isCrashed) throw new Error(`Page crashed during step animation of ${id}`);
 			if (!withinRange()) break;
-			if (++stepGuard > maxFrames) {
-				throw new Error(`Step animation hang on ${id}: >${maxFrames} frames`);
-			}
-			const { done } = await page.evaluate(
-				(delta: number) => window.__sequenceRenderer!.advanceFrame(delta),
-				1 / args.fps
-			);
+			const { done } = await advance();
 			await writeFrame();
 			if (done) break;
 		}
@@ -685,21 +743,16 @@ async function driveScene(
 	if (isLast) return { written, total: frameIndex - 1 };
 
 	// exit transition
-	guard = 0;
-	await page.evaluate(() => {
-		const d = window.__sequenceRenderer!;
+	await client.evaluate(`(() => {
+		const d = window.__sequenceRenderer;
 		d.manager.setDirection('forward');
 		d.manager.playExit();
-	});
+	})()`);
 	await writeFrame();
 	while (true) {
 		if (isCrashed) throw new Error(`Page crashed during exit of ${id}`);
 		if (!withinRange()) break;
-		if (++guard > maxFrames) throw new Error(`Exit hang on ${id}: >${maxFrames} frames`);
-		const { done } = await page.evaluate(
-			(delta: number) => window.__sequenceRenderer!.advanceFrame(delta),
-			1 / args.fps
-		);
+		const { done } = await advance();
 		await writeFrame();
 		if (done) break;
 	}
@@ -709,8 +762,8 @@ async function driveScene(
 const BENCH_FRAMES = 60;
 
 /**
- * Measures per-frame cost without rendering anything to disk: reloads the
- * scene fresh, then times the `advanceFrame` round-trip and the screenshot
+ * Measures per-frame cost without rendering anything to disk. Reloads the
+ * scene fresh, then times the `advanceFrame` round-trip and the capture
  * separately while the enter transition plays and again while the first step
  * runs. Both phases are measured for PNG and JPEG. Prints an aggregate line
  * per format.
@@ -721,21 +774,24 @@ async function benchScene(page: Page, id: string, args: ResolvedArgs, renderQs: 
 			waitUntil: 'domcontentloaded',
 			timeout: 10000
 		});
-		await page.waitForFunction(() => {
-			const r = window.__sequenceRenderer;
-			if (!r) return false;
-			const m = r.manager;
-			return m.totalSteps > 0 || m.phase !== 'finished' || m.transitionActive;
-		});
+		await page.waitForFunction(
+			() => {
+				const r = window.__sequenceRenderer;
+				if (!r) return false;
+				const m = r.manager;
+				return m.totalSteps > 0 || m.phase !== 'finished' || m.transitionActive;
+			},
+			undefined,
+			{ timeout: 15000 }
+		);
+		const client = await attachClient(page, { ...args, format });
 
-		const opts: { type: 'png' } | { type: 'jpeg'; quality: number } =
-			format === 'jpeg' ? { type: 'jpeg', quality: args.jpegQuality } : { type: 'png' };
-		const enter = await timedLoop(page, args, opts);
-		const finished = await page.evaluate(() => window.__sequenceRenderer!.manager.finished);
+		const enter = await timedLoop(client, args);
+		const finished = await client.evaluate<boolean>('window.__sequenceRenderer.manager.finished');
 		let step: { evaluate: number[]; capture: number[] } | null = null;
 		if (!finished) {
-			await page.evaluate(() => window.__sequenceRenderer!.manager.next());
-			step = await timedLoop(page, args, opts);
+			await client.evaluate('window.__sequenceRenderer.manager.next()');
+			step = await timedLoop(client, args);
 		}
 
 		const parts = [
@@ -750,22 +806,20 @@ async function benchScene(page: Page, id: string, args: ResolvedArgs, renderQs: 
 	}
 }
 
-/** Advances the scene and screenshots until done or {@link BENCH_FRAMES} frames, timing each stage. */
+/** Advances the scene and captures until done or {@link BENCH_FRAMES} frames, timing each stage. */
 async function timedLoop(
-	page: Page,
-	args: ResolvedArgs,
-	opts: { type: 'png' } | { type: 'jpeg'; quality: number }
+	client: PageClient,
+	args: ResolvedArgs
 ): Promise<{ evaluate: number[]; capture: number[] }> {
 	const evaluate: number[] = [];
 	const capture: number[] = [];
 	for (let i = 0; i < BENCH_FRAMES; i++) {
 		const t0 = performance.now();
-		const { done } = await page.evaluate(
-			(delta: number) => window.__sequenceRenderer!.advanceFrame(delta),
-			1 / args.fps
+		const { done } = await client.evaluate<{ done: boolean }>(
+			`window.__sequenceRenderer.advanceFrame(${1 / args.fps})`
 		);
 		const t1 = performance.now();
-		await page.screenshot(opts);
+		await client.capture();
 		const t2 = performance.now();
 		evaluate.push(t1 - t0);
 		capture.push(t2 - t1);
@@ -980,9 +1034,9 @@ function launchBrowser(gpu: boolean): Promise<Browser> {
 }
 
 /**
- * Verifies the GPU-enabled browser can actually render: a WebGL context must
- * be creatable and a screenshot must not be blank. Returns false so the caller
- * can fall back to software rendering.
+ * Verifies that a GPU-enabled browser can actually render. A WebGL context
+ * must be creatable and a screenshot must not be blank. Returns false so the
+ * caller can fall back to software rendering.
  */
 async function checkGpuHealth(page: Page): Promise<boolean> {
 	try {
@@ -1009,7 +1063,7 @@ async function checkGpuHealth(page: Page): Promise<boolean> {
 	}
 }
 
-/** Heuristic: a buffer whose sampled bytes are all identical is treated as blank. */
+/** Treats a buffer whose sampled bytes are all identical as blank. */
 function isBlankBuffer(buf: Buffer): boolean {
 	const step = Math.max(1, Math.floor(buf.length / 200));
 	const first = buf[0];
@@ -1025,21 +1079,45 @@ function cleanup() {
 }
 
 /**
- * Takes a screenshot (PNG or JPEG per `args.format`), retrying after a delay
- * on transient failures. Fails fast if the page has crashed.
+ * Opens the direct line to Chrome for a page. The session survives
+ * navigations, so one of these lasts a worker its whole shift.
  */
-async function safeScreenshot(page: Page, args: ResolvedArgs, retries = 3): Promise<Buffer> {
-	if (isCrashed) throw new Error('Page has crashed, aborting');
+async function attachClient(page: Page, args: ResolvedArgs): Promise<PageClient> {
+	const session = await page.context().newCDPSession(page);
 	const options =
 		args.format === 'jpeg'
-			? ({ type: 'jpeg', quality: args.jpegQuality } as const)
-			: ({ type: 'png' } as const);
+			? ({ format: 'jpeg', quality: args.jpegQuality, optimizeForSpeed: true } as const)
+			: ({ format: 'png', optimizeForSpeed: true } as const);
+	return {
+		async evaluate<T>(expression: string): Promise<T> {
+			const { result, exceptionDetails } = await session.send('Runtime.evaluate', {
+				expression,
+				returnByValue: true
+			});
+			if (exceptionDetails) {
+				throw new Error(exceptionDetails.exception?.description ?? exceptionDetails.text);
+			}
+			return result.value as T;
+		},
+		async capture(): Promise<Buffer> {
+			const { data } = await session.send('Page.captureScreenshot', options);
+			return Buffer.from(data, 'base64');
+		}
+	};
+}
+
+/**
+ * Captures a frame, retrying after a delay on transient failures. Fails fast
+ * if the page has crashed.
+ */
+async function safeCapture(client: PageClient, retries = 3): Promise<Buffer> {
+	if (isCrashed) throw new Error('Page has crashed, aborting');
 	for (let attempt = 0; attempt < retries; attempt++) {
 		try {
-			return await page.screenshot(options);
+			return await client.capture();
 		} catch (err) {
 			if (attempt === retries - 1) throw err;
-			console.warn(`Screenshot failed (attempt ${attempt + 1}/${retries}), retrying...`);
+			console.warn(`Capture failed (attempt ${attempt + 1}/${retries}), retrying...`);
 			await new Promise((r) => setTimeout(r, 1000));
 		}
 	}
@@ -1075,6 +1153,12 @@ function createStreamSink(args: ResolvedArgs, out: string): FrameSink {
 		String(args.fps),
 		'-i',
 		'-',
+		/*
+		 * Left alone, x264 tries to use every core at once, right while the
+		 * workers need them for drawing frames. The cap keeps the peace.
+		 */
+		'-threads',
+		String(args.encoderThreads),
 		...encodeFlags(out)
 	]) as ChildProcessWithoutNullStreams;
 
@@ -1101,6 +1185,26 @@ function createStreamSink(args: ResolvedArgs, out: string): FrameSink {
 			rm(out, { force: true }).catch(() => {});
 		}
 	};
+}
+
+/**
+ * Picks a worker count for machines where none was configured. Rendering
+ * wants most of the CPU, but drawing frames and encoding video share it, so
+ * leave a little headroom. The cap keeps browser pages from eating all
+ * memory.
+ */
+function autoJobs(): number {
+	return Math.min(8, Math.max(1, Math.round((availableParallelism() * 2) / 3)));
+}
+
+/**
+ * How many cores each worker may spend on video encoding while recording is
+ * still running. Drawing frames needs about one core per worker, so encoding
+ * gets an even share of whatever is left, never zero and never more than
+ * four.
+ */
+function encoderThreadBudget(jobs: number): number {
+	return Math.min(4, Math.max(1, Math.floor(availableParallelism() / (jobs * 2))));
 }
 
 /** Halves `n` to an even number, with a floor of 2, for preview renders. */
@@ -1182,6 +1286,9 @@ function parseArgs(argv: string[]): ParsedArgs {
 				} else {
 					args.slices = 4;
 				}
+				break;
+			case '--no-slices':
+				args.slices = 0;
 				break;
 			case '--bench':
 				args.bench = true;

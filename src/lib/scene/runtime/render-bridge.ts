@@ -11,6 +11,12 @@ export interface RenderBridge {
 	scheduler: RenderScheduler;
 	scenes: string[];
 	renderOptions: RenderOptions;
+	/**
+	 * Resolves when the mounted scene is safe to photograph, meaning images
+	 * and videos have loaded and a frame has painted. Fonts and the scene
+	 * module load even earlier, before the bridge exists.
+	 */
+	ready: Promise<void>;
 	navigateTo: (id: string) => unknown;
 	advanceFrame: (deltaSeconds: number) => { done: boolean };
 }

@@ -27,7 +27,8 @@ export interface RenderOptions {
 	fps: number;
 	width: number;
 	height: number;
-	jobs: number;
+	/** Worker count, or `'auto'` to let the renderer pick from the CPU core count. */
+	jobs: number | 'auto';
 	out: string;
 	framesOnly: boolean;
 	keepFrames: boolean;
@@ -45,7 +46,8 @@ export interface RenderOptionsInput {
 	resolution?: ResolutionName;
 	width?: number;
 	height?: number;
-	jobs?: number;
+	/** Worker count, or `'auto'` to let the renderer pick from the CPU core count. */
+	jobs?: number | 'auto';
 	out?: string;
 	framesOnly?: boolean;
 	keepFrames?: boolean;
@@ -54,7 +56,7 @@ export interface RenderOptionsInput {
 	jpegQuality?: number;
 }
 
-/** A resolved aspect ratio: preset name plus pixel dimensions. */
+/** A resolved aspect ratio, the preset name plus its pixel dimensions. */
 export interface AspectRatioEntry {
 	name: AspectRatio;
 	width: number;
@@ -91,7 +93,7 @@ type RenderDefaults = Omit<RenderOptions, 'width' | 'height'>;
 
 const DEFAULT_RENDER: RenderDefaults = {
 	fps: 60,
-	jobs: 4,
+	jobs: 'auto',
 	out: 'rendered/video.mp4',
 	framesOnly: false,
 	keepFrames: false,
