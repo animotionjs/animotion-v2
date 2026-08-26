@@ -1,0 +1,170 @@
+import { clamp } from '../scene/easing';
+import type { SceneManager } from '../scene/runtime/runtime.svelte';
+
+/**
+ * Plays a single scene exactly like the video renderer would. Time advances
+ * in whole frames and the scene steps forward whenever it goes idle, which
+ * is the same protocol `animotion render` follows, so any playhead position
+ * shows the frame the encoder would write there.
+ *
+ * Positioning always goes through {@link SceneManager.seekToTime} and snaps
+ * to the frame grid, so scrubbing, stepping and playback land on identical
+ * frames.
+ */
+export class TimelineController {
+	/** Playhead position in seconds, always on the frame grid. */
+	time = $state(0);
+	playing = $state(false);
+	speed = $state(1);
+	loop = $state(false);
+
+	#manager: SceneManager;
+	#fps: number;
+	#rafId: number | null = null;
+	#lastNow = 0;
+	#accumulator = 0;
+
+	constructor(manager: SceneManager, fps: number) {
+		this.#manager = manager;
+		this.#fps = fps > 0 ? fps : 60;
+	}
+
+	/** Total seconds of the scene's video timeline. */
+	get duration() {
+		return this.#manager.timeline.totalDuration;
+	}
+
+	/** The scene's segment layout, for drawing the ruler. */
+	get timeline() {
+		return this.#manager.timeline;
+	}
+
+	/** The frame quantum both playback and stepping operate on. */
+	get frameDuration() {
+		return 1 / this.#fps;
+	}
+
+	/** Snaps `seconds` onto the frame grid, clamped to the scene. */
+	snap(seconds: number) {
+		const quantum = this.frameDuration;
+		const clamped = clamp(seconds, 0, this.duration);
+		return Math.min(Math.round(clamped / quantum) * quantum, this.duration);
+	}
+
+	/** Segment boundary times (scene start, enter end, every step span end). */
+	boundaries() {
+		const timeline = this.timeline;
+		const points: number[] = [0];
+		let cursor = timeline.enterDuration;
+		if (cursor > 0) points.push(cursor);
+		timeline.steps.forEach((step, index) => {
+			cursor += (index === 0 ? timeline.introHold : 0) + step.duration + step.wait;
+			points.push(cursor);
+		});
+		return points;
+	}
+
+	/** Pauses (if playing) and jumps to the snapped position. */
+	seekTo(seconds: number) {
+		this.pause();
+		this.time = this.snap(seconds);
+		this.#manager.seekToTime(this.time);
+	}
+
+	/** Moves the playhead by whole rendered frames. */
+	nudge(frames: number) {
+		this.seekTo(this.time + frames * this.frameDuration);
+	}
+
+	/** Jumps to the previous segment boundary (or the scene start). */
+	jumpPrev() {
+		const target = [...this.boundaries()].reverse().find((point) => point < this.time - 1e-6);
+		this.seekTo(target ?? 0);
+	}
+
+	/** Jumps to the next segment boundary (or the scene end). */
+	jumpNext() {
+		const target = this.boundaries().find((point) => point > this.time + 1e-6);
+		this.seekTo(target ?? this.duration);
+	}
+
+	toggle() {
+		if (this.playing) this.pause();
+		else this.play();
+	}
+
+	play() {
+		if (this.playing || this.duration <= 0) return;
+		if (this.time >= this.duration - 1e-6) {
+			this.time = 0;
+			this.#manager.seekToTime(0);
+		}
+		this.#startPlayback();
+	}
+
+	pause() {
+		if (this.#rafId !== null) {
+			cancelAnimationFrame(this.#rafId);
+			this.#rafId = null;
+		}
+		this.playing = false;
+	}
+
+	destroy() {
+		this.pause();
+	}
+
+	#startPlayback() {
+		this.playing = true;
+		this.#lastNow = performance.now();
+		this.#accumulator = 0;
+		if (this.#rafId === null) this.#rafId = requestAnimationFrame(this.#frame);
+
+		const enterDuration = this.timeline.enterDuration;
+		if (this.time < enterDuration) {
+			// awaiting playEnter here would start the next step unplayed
+			this.#manager.playEnter(enterDuration > 0 ? this.time / enterDuration : 0);
+			return;
+		}
+		/*
+		 * Past the enter segment the manager already sits at the playhead from
+		 * an earlier seek, so its current step can simply resume.
+		 */
+		this.#manager.play();
+	}
+
+	#frame = (now: number) => {
+		this.#rafId = null;
+		if (!this.playing) return;
+
+		// ignore huge gaps from tab switches so frames stay exact
+		const delta = Math.min((now - this.#lastNow) / 1000, 0.25) * this.speed;
+		this.#lastNow = now;
+		this.#accumulator += delta;
+
+		const quantum = this.frameDuration;
+		while (this.#accumulator >= quantum) {
+			this.#accumulator -= quantum;
+			this.time = Math.min(this.time + quantum, this.duration);
+			const { done } = this.#manager.advanceFrame(quantum);
+			if (!done) continue;
+			if (this.#manager.finished || this.time >= this.duration) {
+				this.#onEnded();
+				return;
+			}
+			this.#manager.next();
+		}
+
+		this.#rafId = requestAnimationFrame(this.#frame);
+	};
+
+	#onEnded() {
+		if (this.loop && this.duration > 0) {
+			this.time = 0;
+			this.#manager.seekToTime(0);
+			this.#startPlayback();
+			return;
+		}
+		this.pause();
+	}
+}

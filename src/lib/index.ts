@@ -19,6 +19,7 @@ export {
 export { TickStep } from './scene/runtime/steps.js';
 export { default as Scene } from './components/Scene.svelte';
 export { default as Scenes } from './components/Scenes.svelte';
+export * from './timeline/index.js';
 export {
 	clamp,
 	lerp,
@@ -77,7 +78,13 @@ export {
 	code,
 	getCodeState
 } from './scene/index.js';
-export { Camera, CameraStep, frameCenter, type CameraOptions, type CameraTarget } from './scene/camera/index.js';
+export {
+	Camera,
+	CameraStep,
+	frameCenter,
+	type CameraOptions,
+	type CameraTarget
+} from './scene/camera/index.js';
 
 export type { Direction, TransitionBuild } from './scene/runtime/runtime.svelte.js';
 export type { SceneEntry, Sequence } from './scene/runtime/sequence.js';

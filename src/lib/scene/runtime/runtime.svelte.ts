@@ -2,10 +2,34 @@ import { flushSync } from 'svelte';
 import { SvelteMap, SvelteSet } from 'svelte/reactivity';
 import { TweenStep, ParallelStep, type Step } from './steps';
 import { RealTimeScheduler, RenderScheduler, type FrameScheduler } from './scheduler';
-import { easeInOut, type Easing } from '../easing';
+import { clamp, easeInOut, type Easing } from '../easing';
 
 /** Which way the user is moving through the presentation. */
 export type Direction = 'forward' | 'backward';
+
+/** Timing of one step on the video timeline covering its animation and wait tail. */
+export interface TimelineStep {
+	/** Seconds the step's animation runs for. */
+	duration: number;
+	/** Extra seconds the finished frame stays up (`wait`); `0` when unset. */
+	wait: number;
+}
+
+/**
+ * The scene's timing as the video renderer lays it out. An enter transition,
+ * an optional hold before the first step, then per-step spans of
+ * `duration + wait`. This is what a scrubber draws and seeks against.
+ */
+export interface SceneTimeline {
+	/** Seconds the enter transition occupies; `0` when the scene has none. */
+	enterDuration: number;
+	/** Seconds the first frame is held before the first step begins. */
+	introHold: number;
+	/** Per-step spans, in play order. */
+	steps: TimelineStep[];
+	/** Total seconds across the enter, intro hold and every step span. */
+	totalDuration: number;
+}
 
 type SavedState = {
 	stepIndex: number;
@@ -39,7 +63,7 @@ export class TransitionBuilder {
 	}
 
 	/** Returns the accumulated tween steps. */
-	getSteps(): Step[] {
+	getSteps() {
 		return this.#steps;
 	}
 }
@@ -52,6 +76,12 @@ export class SceneManager {
 	#phase: 'paused' | 'tweening' | 'finished' = $state('finished');
 	#stepIndex = $state(0);
 	#totalSteps = $state(0);
+	/**
+	 * Changes whenever a scene loads. Most timing fields are plain values, so
+	 * without this the timeline getter would have nothing reactive to watch
+	 * and enter-only scenes would never refresh.
+	 */
+	#loadVersion = $state(0);
 	#steps: Step[] = [];
 	#elapsed = 0;
 	#stepProgress = $state(0);
@@ -80,7 +110,7 @@ export class SceneManager {
 	#stepChangeListeners = new SvelteSet<(step: number, total: number) => void>();
 
 	/** Subscribes to step changes; returns an unsubscribe function. */
-	onStepChange(listener: (step: number, total: number) => void): () => void {
+	onStepChange(listener: (step: number, total: number) => void) {
 		this.#stepChangeListeners.add(listener);
 		return () => this.#stepChangeListeners.delete(listener);
 	}
@@ -92,12 +122,12 @@ export class SceneManager {
 	}
 
 	/** Whether all steps have completed. */
-	get finished(): boolean {
+	get finished() {
 		return this.#phase === 'finished';
 	}
 
 	/** The 0-based index of the current step. */
-	get step(): number {
+	get step() {
 		return this.#stepIndex;
 	}
 
@@ -105,32 +135,32 @@ export class SceneManager {
 	 * The step the user is currently on: a completed step counts as the next
 	 * one, so a scene with the first step played reports `1`.
 	 */
-	get currentStep(): number {
+	get currentStep() {
 		return this.#stepCompleted ? this.#stepIndex + 1 : this.#stepIndex;
 	}
 
 	/** Total number of steps in the loaded scene. */
-	get totalSteps(): number {
+	get totalSteps() {
 		return this.#totalSteps;
 	}
 
 	/** Whether the current step's animation has fully played. */
-	get stepCompleted(): boolean {
+	get stepCompleted() {
 		return this.#stepCompleted;
 	}
 
 	/** Whether the current step's animation is playing. */
-	get playing(): boolean {
+	get playing() {
 		return this.#phase === 'tweening';
 	}
 
 	/** Whether the scene is at its first step with nothing played yet. */
-	get atStart(): boolean {
+	get atStart() {
 		return this.#stepIndex === 0 && !this.#stepCompleted;
 	}
 
 	/** Overall progress through the scene as a fraction of total steps. */
-	get completion(): number {
+	get completion() {
 		if (this.#phase === 'finished') return 1;
 		if (this.#totalSteps === 0) return 0;
 		const done = this.#phase !== 'paused' || this.#stepCompleted;
@@ -138,7 +168,7 @@ export class SceneManager {
 	}
 
 	/** Progress 0..1 through the current step; 1 while paused on a completed step. */
-	get stepProgress(): number {
+	get stepProgress() {
 		return this.#stepProgress;
 	}
 
@@ -148,27 +178,27 @@ export class SceneManager {
 	}
 
 	/** The last direction set via {@link setDirection}. */
-	get direction(): Direction {
+	get direction() {
 		return this.#direction;
 	}
 
 	/** Current phase: `'paused'`, `'tweening'`, or `'finished'`. */
-	get phase(): string {
+	get phase() {
 		return this.#phase;
 	}
 
 	/** Whether a scene transition is currently animating. */
-	get transitionActive(): boolean {
+	get transitionActive() {
 		return this.#transitionRafId !== null;
 	}
 
 	/** Whether a step or transition is currently animating. */
-	get isAnimating(): boolean {
+	get isAnimating() {
 		return this.#phase === 'tweening' || this.#transitionRafId !== null;
 	}
 
 	/** Whether the exit transition is still playing. */
-	get exitBusy(): boolean {
+	get exitBusy() {
 		return this.#exitBusy;
 	}
 
@@ -191,7 +221,7 @@ export class SceneManager {
 	 * Switches to deterministic, render-driven scheduling. Only used during
 	 * video rendering; returns the scheduler to drive manually.
 	 */
-	enableRenderMode(): RenderScheduler {
+	enableRenderMode() {
 		this.#stopLoop();
 		this.#stopTransitionLoop();
 		const render = new RenderScheduler();
@@ -202,12 +232,24 @@ export class SceneManager {
 		return render;
 	}
 
-	/** Advances the render scheduler by `deltaSeconds`; resolves when idle. */
-	advanceFrame(deltaSeconds: number): { done: boolean } {
+	/** Advances the render scheduler by `deltaSeconds` and reports whether the scene went idle. */
+	advanceFrame(deltaSeconds: number) {
 		const pending = (this.#scheduler as RenderScheduler).tick(deltaSeconds);
 		return {
 			done: pending === 0 && !this.transitionActive && !this.isAnimating
 		};
+	}
+
+	/**
+	 * Leaves deterministic render mode, returning to realtime scheduling for
+	 * live playback. Pending render-scheduler frames are dropped; position the
+	 * scene explicitly afterwards (e.g. via {@link seekToTime}).
+	 */
+	disableRenderMode() {
+		this.#stopLoop();
+		this.#stopTransitionLoop();
+		this.#scheduler = new RealTimeScheduler();
+		this.#renderMode = false;
 	}
 
 	/** Records the current step position under `id` for later {@link load}. */
@@ -228,12 +270,12 @@ export class SceneManager {
 	}
 
 	/** Whether a state was saved for `id`. */
-	hasSavedState(id: string): boolean {
+	hasSavedState(id: string) {
 		return this.#savedStates.has(id);
 	}
 
 	/** Returns the saved state for `id`, or `undefined` if none was saved. */
-	getSavedState(id: string): SavedState | undefined {
+	getSavedState(id: string) {
 		return this.#savedStates.get(id);
 	}
 
@@ -244,6 +286,164 @@ export class SceneManager {
 	 */
 	restoreState(id: string, step: number) {
 		this.#savedStates.set(id, { stepIndex: step, stepCompleted: false });
+	}
+
+	/** The scene's timing laid out exactly as the video renderer plays it. */
+	get timeline() {
+		/*
+		 * Reading the version keeps this getter reactive. Steps, holds and the
+		 * enter duration are plain values that arrive with each load, and an
+		 * enter-only scene leaves the step count unchanged.
+		 */
+		void this.#loadVersion;
+		const count = this.#totalSteps;
+		const steps = this.#steps
+			.slice(0, count)
+			.map((step) => ({ duration: step.duration, wait: step.wait ?? 0 }));
+		const enterDuration = this.#enterDuration();
+		const introHold = steps.length > 0 ? this.#holdBeforeFirstStep : 0;
+		const body = steps.reduce((sum, step) => sum + step.duration + step.wait, 0);
+		return {
+			enterDuration,
+			introHold,
+			steps,
+			totalDuration: enterDuration + introHold + body
+		};
+	}
+
+	/**
+	 * Measures the enter transition by dry-building it against a throwaway
+	 * state; builds are pure descriptions, so nothing is animated. Parallel
+	 * tweens overlap, so the transition lasts as long as its longest tween.
+	 */
+	#enterDuration() {
+		if (!this.#enterBuild) return 0;
+		const probe = new TransitionBuilder({});
+		this.#enterBuild(probe, this.#direction);
+		return Math.max(0, ...probe.getSteps().map((step) => step.duration));
+	}
+
+	/**
+	 * Positions the loaded scene at an absolute point on its video timeline.
+	 * Values inside the enter transition freeze it at the matching progress.
+	 * Later values land inside their step, which may sit in its hold, its
+	 * animation or its wait tail. Past the end finishes the scene.
+	 *
+	 * Previously started steps revert first and earlier ones replay in full,
+	 * so layout snapshots and code diffs rebuild in play order and scrubbing
+	 * backwards reaches exactly the state forward playback produced. Time
+	 * spent in the entered step is remembered so {@link play} resumes there
+	 * rather than restarting it.
+	 */
+	seekToTime(seconds: number) {
+		this.#stopLoop();
+		this.#stopTransitionLoop();
+
+		const steps = this.#steps;
+		this.#totalSteps = steps.length;
+
+		if (steps.length === 0) {
+			this.#phase = 'finished';
+			this.#stepProgress = 1;
+			this.#emitStepChange();
+			this.#resetTransitionState();
+			return;
+		}
+
+		const time = Math.max(0, seconds);
+		const { enterDuration, introHold } = this.timeline;
+
+		/*
+		 * Undo every started step so the replays below begin from pristine
+		 * state. Unstarted steps guard themselves inside `revert()`.
+		 */
+		for (let i = this.#stepIndex; i >= 0; i--) {
+			steps[i]?.revert();
+		}
+
+		const restAtStart = () => {
+			this.#stepIndex = 0;
+			this.#elapsed = 0;
+			this.#stepProgress = 0;
+			this.#stepCompleted = false;
+			this.#needsStart = true;
+			this.#phase = 'paused';
+		};
+
+		if (time <= 0) {
+			restAtStart();
+			this.#resetTransitionState();
+			this.#emitStepChange();
+			return;
+		}
+
+		if (time < enterDuration) {
+			restAtStart();
+			this.#applyTransitionAt(time / enterDuration);
+			this.#emitStepChange();
+			return;
+		}
+
+		const total = this.timeline.totalDuration;
+		if (time >= total) {
+			this.#positionTo(steps.length, false, true);
+			this.#resetTransitionState();
+			return;
+		}
+
+		/*
+		 * Walk the segments to find the step under the playhead. A boundary
+		 * time lands on the later segment's start, which renders identically
+		 * to the previous one's completed frame.
+		 */
+		let cursor = enterDuration;
+		let target = steps.length - 1;
+		for (let index = 0; index < steps.length; index++) {
+			const step = steps[index]!;
+			const span = (index === 0 ? introHold : 0) + step.duration + (step.wait ?? 0);
+			if (time < cursor + span) {
+				target = index;
+				break;
+			}
+			cursor += span;
+		}
+
+		for (let i = 0; i < target; i++) {
+			const step = steps[i]!;
+			step.start();
+			step.setProgress(1);
+			step.end();
+		}
+
+		const step = steps[target]!;
+		step.start();
+		this.#needsStart = false;
+
+		const hold = target === 0 ? introHold : 0;
+		const local = time - cursor;
+		const fraction = step.duration > 0 ? clamp((local - hold) / step.duration, 0, 1) : 1;
+		step.setProgress(fraction);
+
+		this.#stepIndex = target;
+		this.#elapsed = local;
+		this.#stepProgress = fraction;
+		this.#stepCompleted = fraction >= 1;
+		this.#phase = 'paused';
+		this.#resetTransitionState();
+		this.#emitStepChange();
+	}
+
+	/** Freezes the enter transition at `progress` (0..1) without ending it. */
+	#applyTransitionAt(progress: number) {
+		this.#resetTransitionState();
+		if (!this.#enterBuild) return;
+		const builder = new TransitionBuilder(this.#transitionState);
+		this.#enterBuild(builder, this.#direction);
+		const built = builder.getSteps();
+		if (built.length === 0) return;
+		const composite = built.length === 1 ? built[0]! : new ParallelStep(built);
+		composite.start();
+		composite.setProgress(clamp(progress, 0, 1));
 	}
 
 	/**
@@ -301,30 +501,38 @@ export class SceneManager {
 				this.#stepCompleted = true;
 				this.#stepProgress = 1;
 			} else if (target > 0) {
-				// Resumed past the start: steps 0..target-1 are complete, so we
-				// pause between them and the next step (the state normal playback
-				// reaches after the previous step finishes). This keeps `prev()`
-				// from being a no-op when the resumed step is entered but unplayed.
+				/*
+				 * Steps 0..target-1 are complete, so pause between them and the next
+				 * step, which is where normal playback ends up after a step
+				 * finishes. This keeps `prev()` working when the resumed step is
+				 * entered but unplayed.
+				 */
 				this.#stepIndex = target - 1;
 				this.#stepCompleted = true;
 				this.#phase = 'paused';
 				this.#stepProgress = 1;
 			} else {
-				// A fresh scene rests at its initial state; the first step is
-				// started on the first `next` (or a mirror's `play`). Starting
-				// it eagerly would show a layout step's mid-animation frame on
-				// load instead of the scene's true start.
+				/*
+				 * A fresh scene rests at its initial state; the first step starts
+				 * on the first `next` (or a mirror's `play`). Starting it eagerly
+				 * would show a layout step's mid-animation frame on load instead
+				 * of the scene's true start.
+				 */
 				this.#needsStart = true;
 				this.#phase = 'paused';
 			}
 		}
 
 		this.#emitStepChange();
+		this.#loadVersion++;
 
-		// The enter transition plays when navigating between scenes; on the very
-		// first load of a page session it is skipped so a reload jumps straight
-		// to the resumed step. Render mode always plays it: the renderer drives
-		// it explicitly and every render scene is a fresh-page first load.
+		/*
+		 * The enter transition plays when navigating between scenes. On the
+		 * first load of a page session it is skipped, so a reload jumps
+		 * straight to the resumed step. Render mode always plays it: the
+		 * renderer drives it explicitly and every render scene is a fresh-page
+		 * first load.
+		 */
 		if (this.#enterBuild && (this.#renderMode || !this.#firstLoad)) {
 			this.playEnter();
 		} else {
@@ -385,9 +593,11 @@ export class SceneManager {
 		const s = Math.max(0, Math.min(stepIndex, steps.length - 1));
 		const target = finished || stepCompleted ? s + 1 : s;
 
-		// Undo every step that has been started, in reverse, so previously
-		// applied layout side-effects and state are removed before replaying
-		// the position below. This is what lets the scene move backwards.
+		/*
+		 * Undo every started step in reverse, removing the layout side-effects
+		 * and state they applied, before replaying the position below. This is
+		 * what lets the scene move backwards.
+		 */
 		for (let i = this.#stepIndex; i >= 0; i--) {
 			steps[i]?.revert();
 		}
@@ -450,9 +660,13 @@ export class SceneManager {
 		this.#resetTransitionState();
 	}
 
-	/** Plays the enter transition and resolves when it completes. */
-	playEnter(): Promise<void> {
-		return this.#playTransition(this.#enterBuild);
+	/**
+	 * Plays the enter transition and resolves when it completes. A
+	 * `fromProgress` in 0..1 resumes mid-transition instead of restarting,
+	 * matching a scrubbed playhead inside the enter segment.
+	 */
+	playEnter(fromProgress = 0) {
+		return this.#playTransition(this.#enterBuild, fromProgress);
 	}
 
 	/**
@@ -462,7 +676,7 @@ export class SceneManager {
 	 * virtual desktop), which would otherwise block the navigation that awaits
 	 * `playExit`.
 	 */
-	playExit(): Promise<void> {
+	playExit() {
 		const promise = this.#playTransition(this.#exitBuild);
 		this.#exitBusy = true;
 		promise.then(() => {
@@ -479,8 +693,8 @@ export class SceneManager {
 		this.#transitionState.scale = 1;
 	}
 
-	#playTransition(buildFn: TransitionBuild | null): Promise<void> {
-		return new Promise((resolve) => {
+	#playTransition(buildFn: TransitionBuild | null, startProgress = 0) {
+		return new Promise<void>((resolve) => {
 			if (!buildFn) {
 				this.#resetTransitionState();
 				resolve();
@@ -499,15 +713,16 @@ export class SceneManager {
 			}
 
 			const composite = steps.length === 1 ? steps[0] : new ParallelStep(steps);
-			this.#playStep(composite, resolve);
+			this.#playStep(composite, resolve, startProgress * composite.duration);
 		});
 	}
 
-	#playStep(step: Step, onComplete: () => void) {
+	#playStep(step: Step, onComplete: () => void, startElapsed = 0) {
 		this.#stopTransitionLoop();
 		step.start();
-		this.#transitionElapsed = 0;
+		this.#transitionElapsed = startElapsed;
 		this.#transitionLastFrame = this.#scheduler.now();
+		if (startElapsed > 0) step.setProgress(Math.min(startElapsed / step.duration, 1));
 
 		let done = false;
 		const complete = () => {
@@ -544,18 +759,14 @@ export class SceneManager {
 
 		this.#transitionRafId = this.#scheduler.request(frame);
 
-		// A window the compositor is not presenting (e.g. on a non-active
-		// virtual desktop) never receives animation frames, so the tween above
-		// would stall and the transition promise would never resolve, blocking
-		// the navigation that awaits it. The two timers below cover that:
-		//   - a short stall force-completes the transition when no frame has
-		//     arrived at all (the window was already hidden);
-		//   - a deadline at the transition's nominal duration force-completes
-		//     it when frames stop arriving mid-transition (the window hid
-		//     after it had begun).
-		// A visible window delivers frames throughout and finishes the tween
-		// first, clearing both. Render mode drives frames deterministically,
-		// so it skips the timers.
+		/*
+		 * Hidden windows never receive animation frames, so the tween could
+		 * stall forever and block whoever awaits this promise. Two timers
+		 * guard against that: a stall timer fires when no frame arrives at
+		 * all, and a deadline fires when frames stop mid-transition. A visible
+		 * window finishes the tween first and clears both. Render mode skips
+		 * the timers because it drives frames itself.
+		 */
 		if (!this.#renderMode) {
 			this.#transitionStall = setTimeout(() => {
 				this.#transitionStall = null;
@@ -666,14 +877,14 @@ export class SceneManager {
 		this.#emitStepChange();
 	}
 
-	#currentStep(): Step | undefined {
+	#currentStep() {
 		return this.#steps[this.#stepIndex];
 	}
 	/**
 	 * Total seconds spent on `step`: its animation plus any waits after it.
 	 * Live playback only spends the animation duration on each step.
 	 */
-	#totalFor(step: Step): number {
+	#totalFor(step: Step) {
 		const before = this.#renderMode && this.#stepIndex === 0 ? this.#holdBeforeFirstStep : 0;
 		const after = this.#renderMode ? (step.wait ?? 0) : 0;
 		return step.duration + before + after;
@@ -756,14 +967,12 @@ export class SceneManager {
 
 		this.#rafId = this.#scheduler.request(frame);
 
-		// A window the compositor is not presenting (e.g. on a non-active
-		// virtual desktop) never receives animation frames, so this tween would
-		// never complete and the step would need an extra press to fast-forward
-		// past it. A stall timer at the step's duration finishes it on its own,
-		// in step with a visible mirror's animation; a visible window finishes
-		// the tween first and clears it. The timer stays armed for the whole
-		// step, so it also catches a window that hides mid-tween. Render mode
-		// drives frames deterministically, so it skips the timer.
+		/*
+		 * Same protection as in `#playStep`: hidden windows get no frames, so
+		 * a timer armed for slightly longer than the step completes it on its
+		 * own, staying in sync with a visible mirror instead of waiting for an
+		 * extra press to fast-forward. Render mode skips the timer.
+		 */
 		if (!this.#renderMode) {
 			this.#stepStall = setTimeout(
 				() => {

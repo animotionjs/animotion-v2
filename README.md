@@ -317,6 +317,29 @@ The `<Code />` component accepts a few props:
 </div>
 ```
 
+## Previewing a scene
+
+The `/timeline/[[scene]]` route is a scrubbable editor for one scene at a time. Visit `/timeline` to open the first scene, or `/timeline/<id>` (e.g. `/timeline/about`) to jump straight to a scene. The URL stays in sync as you move between scenes, so a link deep-links to the exact scene.
+
+The track shows the scene as four kinds of segment laid out left to right:
+
+- **Enter** (shaded): the scene's enter transition, measured by dry-building it. An enter-only scene (no steps) is still the length of this segment.
+- **Hold** (plain): `holdBeforeFirstStep` — the first frame held before step 0 starts.
+- **Steps** (numbered): one segment per `.tween`, `.layout`, `.tick`, `.frame`, `.code` step, labelled with its index.
+- **Wait** (hatched): the `wait()` that follows a step, where the scene rests without animating.
+
+Drag anywhere on the track to scrub the playhead, or use the transport controls:
+
+| Key | Action |
+| --- | --- |
+| `space` | Play / pause |
+| `←` / `→` | Jump to the previous / next segment |
+| `,` / `.` | Nudge one frame back / forward |
+| `Home` / `End` | Restart / jump to the end |
+| `l` | Toggle loop (ignored with `cmd`/`ctrl`/`alt`) |
+
+The speed selector plays at 0.25×, 0.5×, 1×, or 2×. The aspect picker (video / vertical / square) changes only the preview frame, seeded from the deck config and never written back to it — it does not alter the rendered video. Every frame is driven by the same engine and FPS used to render, so what you scrub is what the renderer produces.
+
 ## Configuration
 
 The `src/lib/config/` directory holds the presentation settings.
