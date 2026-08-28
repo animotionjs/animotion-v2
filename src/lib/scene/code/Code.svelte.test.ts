@@ -49,8 +49,17 @@ function maskOf(element: HTMLElement): string {
 		: styles.getPropertyValue('-webkit-mask-image');
 }
 
-function drive(manager: SceneManager, frames = 10) {
-	for (let i = 0; i < frames; i++) manager.advanceFrame(0.1);
+async function drive(manager: SceneManager, frames = 10) {
+	for (let i = 0; i < frames; i++) {
+		manager.advanceFrame(0.1);
+		flushSync();
+		/*
+		 * The component polls scene state on animation frames instead of
+		 * effects, so yield between pumped frames for its loop to observe
+		 * every morph boundary the way live playback does.
+		 */
+		await new Promise((resolve) => requestAnimationFrame(resolve));
+	}
 	flushSync();
 }
 
@@ -65,11 +74,12 @@ describe('Code scrolling and masking', () => {
 		manager.next();
 		manager.advanceFrame(0.1);
 		flushSync();
+		await new Promise((resolve) => requestAnimationFrame(resolve));
 
 		let codeBlock = document.querySelector('.code-block') as HTMLElement;
 		expect(maskOf(codeBlock)).toBe('none');
 
-		drive(manager);
+		await drive(manager);
 
 		codeBlock = document.querySelector('.code-block') as HTMLElement;
 		expect(maskOf(codeBlock)).toContain('linear-gradient');
@@ -90,6 +100,7 @@ describe('Code scrolling and masking', () => {
 		for (let i = 0; i < 8; i++) {
 			manager.advanceFrame(0.1);
 			flushSync();
+			await new Promise((resolve) => requestAnimationFrame(resolve));
 			positions.push((document.querySelector('.code-block') as HTMLElement).scrollTop);
 		}
 
@@ -107,12 +118,12 @@ describe('Code scrolling and masking', () => {
 		const manager = managers.at(-1)!;
 		manager.enableRenderMode();
 		manager.next();
-		drive(manager);
+		await drive(manager);
 		const codeBlock = document.querySelector('.code-block') as HTMLElement;
 		expect(codeBlock.scrollTop).toBeGreaterThan(0);
 
 		manager.next();
-		drive(manager);
+		await drive(manager);
 		expect(codeBlock.scrollTop).toBeLessThan(4);
 
 		unmount(app);
@@ -129,7 +140,7 @@ describe('Code scrolling and masking', () => {
 		const manager = managers.at(-1)!;
 		manager.enableRenderMode();
 		manager.next();
-		drive(manager);
+		await drive(manager);
 
 		const codeBlock = document.querySelector('.code-block') as HTMLElement;
 		expect(codeBlock.scrollTop).toBe(0);
@@ -145,16 +156,17 @@ describe('Code scrolling and masking', () => {
 		manager.enableRenderMode();
 
 		manager.next();
-		drive(manager);
+		await drive(manager);
 		const codeBlock = document.querySelector('.code-block') as HTMLElement;
 		expect(maskOf(codeBlock)).toContain('linear-gradient');
 
 		manager.next();
 		manager.advanceFrame(0.2);
 		flushSync();
+		await new Promise((resolve) => requestAnimationFrame(resolve));
 		expect(maskOf(codeBlock)).toContain('linear-gradient');
 
-		drive(manager);
+		await drive(manager);
 		expect(maskOf(codeBlock)).toContain('linear-gradient');
 		unmount(app);
 	});

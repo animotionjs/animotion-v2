@@ -69,6 +69,35 @@ export function computeSelectionTarget(
 }
 
 /**
+ * Computes the resting `scrollTop` for a frame where nothing animates. The
+ * position is anchored to the top of the content so seeking backwards through
+ * a selection climbs back up instead of staying parked at an older position.
+ *
+ * @returns `0` before any selection happened, the target measured from the top
+ *   while a past selection still owns the view, or `null` to keep the current
+ *   scroll as it is
+ */
+export function computeIdleTarget(
+	selection: CodeRange[],
+	lineCount: number,
+	lineHeightPx: number,
+	clientHeight: number,
+	scrollHeight: number,
+	fadePx: number
+): number | null {
+	if (selection.length === 0) return 0;
+	return computeSelectionTarget(
+		selection,
+		lineCount,
+		lineHeightPx,
+		clientHeight,
+		scrollHeight,
+		fadePx,
+		0
+	);
+}
+
+/**
  * Computes the `scrollTop` in px needed to reveal the line below `bottomLine`.
  *
  * @returns the target `scrollTop`, or `null` if the line is already in view

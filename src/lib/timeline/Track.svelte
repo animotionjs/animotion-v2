@@ -17,6 +17,7 @@
 	let { controller }: Props = $props();
 
 	let trackElement: HTMLDivElement | null = null;
+	let trackWidth = $state(0);
 	let scrubbing = $state(false);
 
 	const duration = $derived(controller.duration);
@@ -74,6 +75,14 @@
 		return marks;
 	});
 
+	// drop tick labels once the space each tick gets is narrower than the text needs
+	const MIN_TICK_GAP_PX = 30;
+	const showTickLabels = $derived(
+		trackWidth <= 0 || duration <= 0
+			? true
+			: (tickInterval / duration) * trackWidth >= MIN_TICK_GAP_PX
+	);
+
 	const playheadLeft = $derived(duration > 0 ? (controller.time / duration) * 100 : 0);
 
 	function describeSegment(segment: Segment) {
@@ -114,9 +123,10 @@
 	}
 </script>
 
-<div class="px-4 pb-3">
+<div class="px-3 pb-2 sm:px-4 sm:pb-3">
 	<div
 		{@attach attachTrack}
+		bind:clientWidth={trackWidth}
 		class={['relative h-12 cursor-ew-resize touch-none select-none', duration <= 0 && 'opacity-50']}
 		role="slider"
 		tabindex={0}
@@ -155,7 +165,7 @@
 						></div>
 					{/if}
 					<span
-						class="absolute inset-0 flex items-center justify-center text-[10px] font-medium text-foreground/70"
+						class="absolute inset-0 flex items-center justify-center text-xs font-medium text-foreground/70"
 					>
 						{segment.label}
 					</span>
@@ -170,21 +180,27 @@
 
 		{#if duration > 0}
 			{#each ticks as tick (tick)}
-				<div
-					class="absolute top-9 text-[10px] text-foreground/40"
-					style:left="{(tick / duration) * 100}%"
-				>
-					{tick.toFixed(tickInterval < 1 ? 2 : 0)}s
-				</div>
+				{#if showTickLabels}
+					<div
+						class="absolute top-9 text-xs text-foreground/40"
+						style:left="{(tick / duration) * 100}%"
+					>
+						{tick.toFixed(tickInterval < 1 ? 2 : 0)}s
+					</div>
+				{/if}
 			{/each}
 
 			<div
 				class="pointer-events-none absolute inset-y-0 w-px bg-accent"
 				style:left="{playheadLeft}%"
 			>
-				<div
-					class="absolute top-0 left-[-3.5px] h-0 w-0 border-x-[3.5px] border-t-[5px] border-x-transparent border-t-accent"
-				></div>
+				<svg
+					viewBox="0 0 9 6"
+					class="absolute top-0 left-[-4px] h-[6px] w-[9px] fill-accent"
+					aria-hidden="true"
+				>
+					<path d="M0 0h9L4.5 6z" />
+				</svg>
 			</div>
 		{/if}
 	</div>

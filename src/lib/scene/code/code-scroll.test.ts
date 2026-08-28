@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+	computeIdleTarget,
 	computeRevealTarget,
 	computeSelectionTarget,
 	fadeMaskImage,
@@ -56,6 +57,30 @@ describe('code scroll helpers', () => {
 		];
 		expect(computeSelectionTarget(all, 10, 20, 100, 1000, 10, 0)).toBeNull();
 		expect(computeSelectionTarget(visible, 10, 20, 100, 1000, 10, 0)).toBeNull();
+	});
+
+	it('parks an empty selection at the top of the code', () => {
+		expect(computeIdleTarget([], 20, 20, 100, 1000, 10)).toBe(0);
+	});
+
+	it('measures idle targets from the top so rewinds climb back up', () => {
+		const below: CodeRange[] = [
+			[
+				[8, 0],
+				[8, Infinity]
+			]
+		];
+		expect(computeIdleTarget(below, 20, 20, 100, 1000, 10)).toBe(90);
+	});
+
+	it('keeps the current scroll for idle all-lines selections', () => {
+		const all: CodeRange[] = [
+			[
+				[0, 0],
+				[Infinity, Infinity]
+			]
+		];
+		expect(computeIdleTarget(all, 10, 20, 100, 1000, 10)).toBeNull();
 	});
 
 	it('reports the correct mask at each scroll edge', () => {

@@ -26,15 +26,15 @@
 	let aspect = $state<AspectRatio>(getOptions().aspectRatio.name);
 	const ratio = $derived(ASPECT_RATIOS[aspect].width / ASPECT_RATIOS[aspect].height);
 
-	const loadScene = $derived(entry.component());
-
 	function select(id: string) {
 		if (id !== sceneId) goto(`/timeline/${id}`);
 	}
 </script>
 
 <div class="flex h-dvh flex-col overflow-hidden bg-background text-foreground">
-	<header class="flex items-center gap-2 border-b border-foreground/10 px-4 py-2">
+	<header
+		class="flex items-center gap-2 border-b border-foreground/10 px-3 py-1 ui-chrome sm:px-4 sm:py-2"
+	>
 		<button
 			type="button"
 			class="rounded px-2 py-1 text-xs text-foreground/60 hover:bg-surface disabled:opacity-30"
@@ -63,26 +63,27 @@
 		</button>
 
 		<div class="ml-auto">
-			<AspectPicker value={aspect} change={(next) => (aspect = next)} />
+			<AspectPicker bind:value={aspect} />
 		</div>
 	</header>
 
+	{#snippet loadError(message: string)}
+		<p class="flex flex-1 items-center justify-center text-foreground/50 ui-chrome">{message}</p>
+	{/snippet}
+
 	<svelte:boundary>
-		{const Content = (await loadScene).default}
 		{#key sceneId}
-			<TimelineStage {sceneId} {fps} {ratio}>
-				<Content />
-			</TimelineStage>
+			{#await entry.component() then { default: Content }}
+				<TimelineStage {sceneId} {fps} {ratio}>
+					<Content />
+				</TimelineStage>
+			{:catch error}
+				{@render loadError(error instanceof Error ? error.message : String(error))}
+			{/await}
 		{/key}
 
-		{#snippet pending()}
-			<p class="flex flex-1 items-center justify-center text-foreground/50">Loading…</p>
-		{/snippet}
-
-		{#snippet failed(error: unknown)}
-			<p class="flex flex-1 items-center justify-center text-foreground/50">
-				Could not load this scene: {error instanceof Error ? error.message : String(error)}
-			</p>
+		{#snippet failed(renderError: unknown)}
+			{@render loadError(renderError instanceof Error ? renderError.message : String(renderError))}
 		{/snippet}
 	</svelte:boundary>
 </div>

@@ -95,7 +95,7 @@
 		</Monitor>
 	</main>
 
-	<footer class="border-t border-foreground/10">
+	<footer class="ui-chrome border-t border-foreground/10">
 		<Transport controller={active} />
 		<Track controller={active} />
 	</footer>

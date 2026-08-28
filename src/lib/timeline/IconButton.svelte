@@ -15,12 +15,12 @@
 
 <button
 	type="button"
-	class={['rounded p-1.5', { 'bg-accent/30': accent, 'hover:bg-surface': !accent }]}
+	class={['rounded p-2', { 'bg-accent/30': accent, 'hover:bg-surface': !accent }]}
 	aria-label={label}
 	title={label}
 	{onclick}
 >
-	<svg viewBox="0 0 18 16" class="h-4 w-4 fill-current" aria-hidden="true">
+	<svg viewBox="0 0 18 16" class="h-5 w-5 fill-current" aria-hidden="true">
 		{@render children()}
 	</svg>
 </button>

@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { onDestroy } from 'svelte';
+	import { onDestroy, onMount } from 'svelte';
 	import {
 		computeMorphSpans,
 		computeSettledSpans,
@@ -9,6 +9,7 @@
 		type RenderSpan
 	} from '../scene/code/code-render.svelte.js';
 	import {
+		computeIdleTarget,
 		computeRevealTarget,
 		computeSelectionTarget,
 		fadeMaskImage,
@@ -132,8 +133,11 @@
 		}
 	}
 
-	// Re-measures when code bounds or typography change. These change the
-	// content height without resizing the scroll container itself.
+	/*
+	 * Content height can change without the scroll container resizing, so
+	 * take fresh measurements when the rendered bounds or typography change
+	 * to keep masks and reveal scrolling accurate.
+	 */
 	$effect(() => {
 		void bounds;
 		void classes;
@@ -141,9 +145,11 @@
 		refreshMeasurements();
 	});
 
-	// Observes the scroll container. Also catches changes caused by font
-	// loading and by the parent's max-height, neither of which necessarily
-	// changes a prop. Created once; cleanup on unmount.
+	/*
+	 * A resize observer catches height changes that the bounds effect misses,
+	 * such as fonts finishing load or the parent limiting its maximum height.
+	 * It is created once and disconnected on unmount.
+	 */
 	$effect(() => {
 		if (!codeBlock || typeof ResizeObserver === 'undefined') return;
 		const observer = new ResizeObserver(refreshMeasurements);
@@ -202,48 +208,52 @@
 		if (target !== null) applyScroll(target);
 	}
 
-	$effect(() => {
+	/*
+	 * Scrolling is driven by a frame poll instead of effects. Timeline seeks
+	 * change scene state between frames, which effects never observe, and
+	 * the result must match the rendered video. The poll idles when nothing
+	 * moves so the user keeps manual scrolling control.
+	 */
+	let selectionFrom = 0;
+	let selectionSession: CodeRange[] | null = null;
+	let lastTickActive = false;
+	let lastTickSelection: CodeRange[] | null = null;
+
+	function syncScroll() {
+		if (!codeBlock || scrollMode === 'none') return;
+
+		/*
+		 * Detect the morph start and end so reveal scrolling can anchor to the
+		 * position already on screen before the morph began.
+		 */
 		const tokens = slot.tokens;
 		if (Array.isArray(tokens) && !Array.isArray(previousTokens)) {
 			cancelRevealFrame();
 			revealViewportHeight = 0;
 			revealBottomLine = revealTargetLine(tokens);
-			if (codeBlock) {
-				revealFrom = codeBlock.scrollTop;
-				refreshMeasurements();
-			}
+			revealFrom = codeBlock.scrollTop;
+			refreshMeasurements();
 		} else if (!Array.isArray(tokens) && Array.isArray(previousTokens)) {
 			cancelRevealFrame();
 			revealFrame = requestAnimationFrame(applyFinalReveal);
 		}
 		previousTokens = tokens;
-	});
-	onDestroy(cancelRevealFrame);
 
-	let selectionFrom = $state(0);
-	let selectionSession: CodeRange[] | null = null;
-	$effect(() => {
+		// keep the scroll position a selection started from so its progress can lerp smoothly
 		const progress = slot.selectionProgress;
 		if (progress === null) {
 			selectionSession = null;
-			return;
-		}
-		if (selectionSession !== slot.selection && codeBlock) {
+		} else if (selectionSession !== slot.selection) {
 			selectionSession = slot.selection;
 			selectionFrom = codeBlock.scrollTop;
 		}
-	});
 
-	// selection scrolling is deliberately in the same effect as reveal
-	// scrolling: when both are active, the selection branch wins
-	$effect(() => {
-		if (!codeBlock || scrollMode === 'none') return;
 		const fontSize = fontSizePx();
 		const lineHeightPx = fontSize * lineHeight;
 		const fadeSizePx = fade ? fadeSize * fontSize : 0;
 		if (lineHeightPx <= 0 || clientHeight <= 0) return;
 
-		if (slot.selectionProgress !== null && scrollMode !== 'reveal') {
+		if (progress !== null && scrollMode !== 'reveal') {
 			const target = computeSelectionTarget(
 				slot.selection,
 				lineCount,
@@ -254,12 +264,35 @@
 				selectionFrom
 			);
 			if (target !== null) {
-				applyScroll(
-					lerp(selectionFrom, target, easeInOutSine(clamp(slot.selectionProgress, 0, 1)))
-				);
+				applyScroll(lerp(selectionFrom, target, easeInOutSine(clamp(progress, 0, 1))));
 			}
+			lastTickActive = true;
 			return;
 		}
+
+		/*
+		 * When the scene settles, park the code at the scroll position its
+		 * selection implies, so scrubbing or rewinding matches the rendered
+		 * video. This runs once per state change that just arrived, then idle
+		 * ticks leave manual scrolling alone.
+		 */
+		if (!Array.isArray(slot.tokens) && scrollMode !== 'reveal') {
+			const idleChanged = lastTickSelection !== null && slot.selection !== lastTickSelection;
+			if (lastTickActive || idleChanged) {
+				const parkTarget = computeIdleTarget(
+					slot.selection,
+					lineCount,
+					lineHeightPx,
+					clientHeight,
+					scrollHeight,
+					fadeSizePx
+				);
+				if (parkTarget !== null && Math.abs(parkTarget - codeBlock.scrollTop) > 0.5)
+					applyScroll(parkTarget);
+			}
+		}
+		lastTickActive = false;
+		lastTickSelection = slot.selection;
 
 		if (scrollMode === 'selection' || !Array.isArray(slot.tokens)) return;
 		const bottomLine = revealBottomLine;
@@ -271,7 +304,7 @@
 			finalBounds.height * lineHeightPx,
 			revealHeight
 		);
-		const target = computeRevealTarget(
+		const revealTarget = computeRevealTarget(
 			bottomLine,
 			lineHeightPx,
 			revealHeight,
@@ -279,9 +312,18 @@
 			fadeSizePx,
 			revealFrom
 		);
-		if (target !== null)
-			applyScroll(lerp(revealFrom, target, clamp(slot.progress ?? slot.rawProgress, 0, 1)));
+		if (revealTarget !== null)
+			applyScroll(lerp(revealFrom, revealTarget, clamp(slot.progress ?? slot.rawProgress, 0, 1)));
+	}
+
+	onMount(() => {
+		let frame = requestAnimationFrame(function drive() {
+			syncScroll();
+			frame = requestAnimationFrame(drive);
+		});
+		return () => cancelAnimationFrame(frame);
 	});
+	onDestroy(cancelRevealFrame);
 </script>
 
 <div

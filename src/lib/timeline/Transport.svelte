@@ -19,13 +19,13 @@
 	}
 </script>
 
-<div class="flex items-center gap-1 px-4 py-2">
+<div class="flex flex-wrap items-center gap-1 px-3 py-1 sm:px-4 sm:py-2">
 	<div class="flex items-center gap-1">
 		<IconButton label="Restart (Home)" onclick={() => controller.seekTo(0)}>
 			<path d="M4 3v10M13 3L6.5 8 13 13z" />
 		</IconButton>
 		<IconButton label="Previous segment (ArrowLeft)" onclick={() => controller.jumpPrev()}>
-			<path d="M12 3L5.5 8 12 13zM4 3v10" />
+			<path d="M9 3L3.5 8 9 13zM15.5 3L10 8l5.5 5z" />
 		</IconButton>
 		<IconButton label="One frame back (,)" onclick={() => controller.nudge(-1)}>
 			<path d="M11 4L6 8l5 4z" />
@@ -45,19 +45,19 @@
 			<path d="M7 4l5 4-5 4z" />
 		</IconButton>
 		<IconButton label="Next segment (ArrowRight)" onclick={() => controller.jumpNext()}>
-			<path d="M6 3l6.5 5L6 13zM14 3v10" />
+			<path d="M9 3l5.5 5L9 13zM3 3l5.5 5L3 13z" />
 		</IconButton>
 		<IconButton label="Jump to end (End)" onclick={() => controller.seekTo(controller.duration)}>
 			<path d="M14 3v10M5 3l6.5 5L5 13z" />
 		</IconButton>
 	</div>
 
-	<span class="ml-3 font-mono text-xs text-foreground/80 tabular-nums">{label}</span>
+	<span class="ml-2 font-mono text-xs text-foreground/80 tabular-nums sm:ml-3">{label}</span>
 
 	<label class="ml-auto flex items-center gap-1 text-xs text-foreground/60">
 		Speed
 		<select
-			class="rounded bg-surface px-1 py-0.5 text-xs text-foreground"
+			class="rounded bg-surface px-1 py-1 text-xs text-foreground"
 			name="speed"
 			bind:value={controller.speed}
 		>

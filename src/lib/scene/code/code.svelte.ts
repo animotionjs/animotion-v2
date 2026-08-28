@@ -449,9 +449,7 @@ export function smartIndent(code: string, unit = '  '): string {
 				never continues anything.
 			*/
 			const assignment =
-				trimmed[0] === '=' &&
-				prevTrimmed.length > 0 &&
-				!/[;{}]\s*$/.test(prevTrimmed);
+				trimmed[0] === '=' && prevTrimmed.length > 0 && !/[;{}]\s*$/.test(prevTrimmed);
 			const chain = !closes && (assignment || CHAIN_START.test(trimmed));
 
 			if (chain) {
@@ -613,6 +611,11 @@ export function createCodeState(language: string, initial: string): CodeState {
 	} catch {
 		settled = [];
 	}
+	/*
+	 * Start with no selection. An empty selection matches every span, so the
+	 * code renders undimmed, and a rewind restores this as the true resting
+	 * point that scroll parking returns to.
+	 */
 	const state = $state<CodeState>({
 		language,
 		resolved: initial,
@@ -621,7 +624,7 @@ export function createCodeState(language: string, initial: string): CodeState {
 		rawProgress: 1,
 		progress: 1,
 		morphProgress: 1,
-		selection: ALL_LINES,
+		selection: [],
 		selectionProgress: null,
 		previousSelection: null
 	});
