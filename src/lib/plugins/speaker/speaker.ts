@@ -13,7 +13,7 @@ export interface SpeakerPluginOptions {
 	/** Key that opens the speaker view. Defaults to `s`. */
 	shortcut?: string;
 	/**
-	 * Speaker session id shared with the speaker view; all windows of one
+	 * Speaker session id shared with the speaker view. All windows of one
 	 * presentation use the same id. Defaults to {@link SPEAKER_SESSION}.
 	 */
 	session?: string;
@@ -28,17 +28,19 @@ export interface SpeakerPluginOptions {
  * opens at `/?speaker` and shows the presentation mirrored in an iframe,
  * the current scene's notes, a timer, an outline, and next/prev controls.
  *
- * Loading the deck with `?embed` — as the mirror iframe does — turns this
- * plugin into a passive mirror instead of the presenter: it follows the
+ * Loading the deck with `?embed` (as the mirror iframe does) turns this
+ * plugin into a passive mirror instead of the presenter. It follows the
  * presenter's broadcasts in place and never broadcasts or opens the popup.
  */
 export function speakerPlugin(options: SpeakerPluginOptions = {}): Plugin {
 	const shortcut = options.shortcut ?? 's';
 
-	// The mirror iframe loads the deck with `?embed`; in that window the
-	// plugin becomes a passive mirror. Both the mirror and the popup learn
-	// their session from the URL the presenter opened, so the app shell never
-	// has to know about it.
+	/*
+		The mirror iframe loads the deck with `?embed`, which turns this
+		plugin into a passive mirror. Both windows learn their session from
+		the URL the presenter opened, so the app shell never has to know
+		about it.
+	*/
 	const params = typeof window !== 'undefined' ? new URLSearchParams(window.location.search) : null;
 	const embed = params?.has('embed') ?? false;
 	const sessionName = params?.get('session') ?? options.session ?? SPEAKER_SESSION;
@@ -64,8 +66,7 @@ export function speakerPlugin(options: SpeakerPluginOptions = {}): Plugin {
 			finished: ctx?.state.finished ?? false,
 			aspectRatio: { width: aspectRatio.width, height: aspectRatio.height },
 			scenes,
-			// The presentation window renders the active scene, so its own
-			// hidden `[data-notes]` box holds the current scene's notes.
+			// the presentation window renders the active scene, so its hidden `[data-notes]` box holds the notes
 			notes:
 				typeof document !== 'undefined'
 					? (document.querySelector('[data-notes]')?.innerHTML ?? '')
@@ -86,7 +87,7 @@ export function speakerPlugin(options: SpeakerPluginOptions = {}): Plugin {
 	/**
 	 * Re-broadcasts shortly after a scene change. The change fires before the
 	 * new scene's `[data-notes]` box mounts, so a synchronous broadcast would
-	 * forward the previous scene's notes; waiting lets the mounted scene's
+	 * forward the previous scene's notes. Waiting lets the mounted scene's
 	 * notes win out.
 	 */
 	function scheduleNotesRefresh() {
@@ -97,9 +98,7 @@ export function speakerPlugin(options: SpeakerPluginOptions = {}): Plugin {
 
 	function handleMessage(message: SpeakerMessage) {
 		if (embed) {
-			// The mirror is passive: it only adopts `state` broadcasts and never
-			// reacts to commands (next/prev/goto) or re-broadcasts, so the shared
-			// channel isn't polluted by its replies and its own commander.
+			// the mirror only adopts `state` broadcasts and never re-broadcasts, keeping the shared channel clean
 			if (message.type === 'state') embedState(message.state);
 			return;
 		}
@@ -114,8 +113,7 @@ export function speakerPlugin(options: SpeakerPluginOptions = {}): Plugin {
 				ctx?.navigateTo(message.id);
 				break;
 			case 'hello':
-				// A freshly opened speaker window never received past broadcasts,
-				// so send the current state even if nothing changed.
+				// a fresh speaker window never received past broadcasts, so send the current state even if unchanged
 				broadcast(true);
 				break;
 			case 'state':
@@ -126,7 +124,7 @@ export function speakerPlugin(options: SpeakerPluginOptions = {}): Plugin {
 	/**
 	 * Adopts a presenter's broadcast state in place. Moving to a different
 	 * scene navigates (the scene fast-forwards to the target step via its
-	 * pre-seeded state); moving within the current scene seeks the loaded
+	 * pre-seeded state). Moving within the current scene seeks the loaded
 	 * manager directly, so step changes never replay the entrance.
 	 *
 	 * `state.step` counts a completed step as the next one, matching
@@ -139,9 +137,11 @@ export function speakerPlugin(options: SpeakerPluginOptions = {}): Plugin {
 		if (!ctx) return;
 		const stepIndex = Math.max(0, state.step - (state.stepCompleted ? 1 : 0));
 		if (ctx.state.sceneId !== state.sceneId) {
-			// Seed the target scene so the navigation fast-forwards to the
-			// broadcast step, then navigate once per distinct target scene to
-			// avoid re-running the switch while it is still in flight.
+			/*
+				Seed the target scene so the navigation fast-forwards to the
+				broadcast step, then navigate once per distinct target scene to
+				avoid re-running the switch while it is still in flight.
+			*/
 			if (state.sceneId !== pendingSceneId) {
 				pendingSceneId = state.sceneId;
 				manager?.setStepState(state.sceneId, stepIndex, state.stepCompleted);
@@ -155,13 +155,10 @@ export function speakerPlugin(options: SpeakerPluginOptions = {}): Plugin {
 				state.finished === ctx.state.finished;
 			if (!position) {
 				manager?.seek(stepIndex, state.stepCompleted, state.finished);
-				// The presenter is animating this step, so play it in place; the
-				// mirror runs the same deck, so both finish at about the same time.
+				// play in place, the mirror runs the same deck so both finish at about the same time
 				if (state.playing) manager?.play();
 			} else if (state.playing && !ctx.state.playing) {
-				// The presenter started animating the step we already sit on.
-				// Play in place without seeking: re-seeking would tear down and
-				// rebuild DOM-driven steps (layout), losing their animation.
+				// play in place without seeking, re-seeking would rebuild DOM-driven steps and lose their animation
 				manager?.play();
 			}
 		}
@@ -179,7 +176,7 @@ export function speakerPlugin(options: SpeakerPluginOptions = {}): Plugin {
 				channel = new SpeakerSession(sessionName);
 				channel.onmessage = handleMessage;
 				if (embed) {
-					// Ask the presenter for its current state to mirror it.
+					// ask the presenter for its current state to mirror it
 					channel.post({ type: 'hello' });
 				} else {
 					broadcast();
@@ -210,10 +207,12 @@ export function speakerPlugin(options: SpeakerPluginOptions = {}): Plugin {
 
 		onKeydown(event) {
 			if (embed) {
-				// The mirror never navigates itself. Forward arrows to the
-				// presenter so keyboard input (focus often lives inside the
-				// embedded iframe) still drives the authoritative window the
-				// same as the speaker's buttons.
+				/*
+					The mirror never navigates itself. Forward arrows to the
+					presenter so keyboard input (focus often lives inside the
+					embedded iframe) still drives the authoritative window the
+					same as the speaker's buttons.
+				*/
 				if (event.metaKey || event.ctrlKey || event.altKey || event.repeat) return;
 				if (event.key === 'ArrowRight') {
 					channel?.post({ type: 'next' });

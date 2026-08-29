@@ -180,6 +180,13 @@
 		return `radial-gradient(circle, ${color} 0%, transparent 70%)`;
 	}
 
+	// top text is centered by its classes, so it needs no left offset
+	const TEXT_LEFT_OFFSET: Record<string, string | undefined> = {
+		top: undefined,
+		left: '20px',
+		right: '1000px'
+	};
+
 	const scene = createScene({ camera: { zoom: 0.2 } })
 		.noTransition()
 		.wait(0.5)
@@ -289,11 +296,7 @@
 					class="absolute {body.textPos === 'top'
 						? 'left-1/2 -translate-x-1/2'
 						: 'top-1/2 -translate-y-1/2'}"
-					style:left={body.textPos === 'top'
-						? undefined
-						: body.textPos === 'left'
-							? '20px'
-							: '1000px'}
+					style:left={TEXT_LEFT_OFFSET[body.textPos ?? 'right']}
 					style:bottom={body.textPos === 'top' ? '500px' : undefined}
 					style:width="25cqi"
 				>

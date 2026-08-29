@@ -21,8 +21,7 @@ export function frameCenter(
 	const sx = ((element.left + element.right) / 2 - canvas.left) / camera.zoom;
 	const sy = ((element.top + element.bottom) / 2 - canvas.top) / camera.zoom;
 
-	// Undo the camera's rotation so the destination reads as canvas coordinates,
-	// which is what the transform string consumes.
+	// undo the camera's rotation so the destination reads as canvas coordinates for the transform string
 	const rad = (camera.deg * Math.PI) / 180;
 	return {
 		x: sx * Math.cos(rad) + sy * Math.sin(rad),

@@ -526,9 +526,7 @@ export function smartIndent(code: string, unit = '  '): string {
 						continue;
 					}
 					if (!tag.closing) {
-						// An opening tag whose `>` is on a later line: the rest of
-						// this line and the next ones are attributes, so skip them
-						// and let the per-line handler track the tag's end.
+						// an opening tag spanning lines makes the rest of the raw text attributes, so the per-line handler tracks the tag end
 						inTag = { name: tag.name, level, base };
 						i = raw.length;
 						continue;
@@ -632,9 +630,7 @@ export function createCodeState(language: string, initial: string): CodeState {
 	onHighlighterReady(function refresh() {
 		if (state.tokens === null) {
 			state.settled = highlight(state.resolved, state.language);
-			// The highlighter may be ready while an extra language (e.g.
-			// `svelte`) is still loading; wait for the language-load
-			// notification and retry until the tokens resolve.
+			// the highlighter can be ready while an extra language (e.g. `svelte`) still loads, so retry until the tokens resolve
 			if (state.settled.length === 0 && state.resolved.length > 0) {
 				onHighlighterRefresh(refresh);
 			}

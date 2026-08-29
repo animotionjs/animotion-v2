@@ -27,14 +27,17 @@
 	const segments = $derived.by<Segment[]>(() => {
 		if (duration <= 0) return [];
 		const hasEnter = timeline.enterDuration > 0;
-		return timelineSegments(timeline).map((segment, position) => ({
-			kind: segment.enter ? ('enter' as const) : ('step' as const),
-			label: segment.enter ? 'enter' : String(position - (hasEnter ? 1 : 0) + 1),
-			start: segment.start,
-			hold: segment.hold,
-			duration: segment.duration,
-			wait: segment.wait
-		}));
+		return timelineSegments(timeline).map((segment, position) => {
+			const index = position - (hasEnter ? 1 : 0) + 1;
+			return {
+				kind: segment.enter ? ('enter' as const) : ('step' as const),
+				label: segment.enter ? 'enter' : String(index),
+				start: segment.start,
+				hold: segment.hold,
+				duration: segment.duration,
+				wait: segment.wait
+			};
+		});
 	});
 
 	// a ladder of round intervals keeps the ruler readable for any scene length

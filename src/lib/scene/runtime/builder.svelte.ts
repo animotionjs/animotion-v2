@@ -119,9 +119,11 @@ type Object = Record<string, unknown>;
  * `<Scenes>`) is available. Steps are loaded into the manager on mount.
  */
 export function createScene<T extends Object>(initial: T = {} as T) {
-	// The caller's object is never mutated: `indent` is stripped and the
-	// read-only timeline getters are installed on a copy, so the same initial
-	// state can back multiple scenes and frozen objects keep working.
+	/*
+		The caller's object is never mutated. `indent` is stripped and the
+		read-only timeline getters are installed on a copy, so the same
+		initial state can back multiple scenes and frozen objects keep working
+	*/
 	const rawInitial = { ...initial } as Record<string, unknown>;
 	const indent =
 		typeof rawInitial.indent === 'string' && rawInitial.indent.length > 0
@@ -138,9 +140,8 @@ export function createScene<T extends Object>(initial: T = {} as T) {
 	}
 	const manager = getSceneManager();
 
-	// `step`/`progress` are read-only views of the timeline, not scene state.
-	// The getters must live on the raw object before `$state` proxies it (the
-	// proxy rejects accessor descriptors) so reads track the manager's state.
+	// `step`/`progress` are read-only views of the timeline, not scene state
+	// the getters must live on the raw object before `$state` proxies it, because the proxy rejects accessor descriptors
 	if ('step' in initial || 'progress' in initial) {
 		throw new Error('createScene: `step` and `progress` are reserved scene fields.');
 	}

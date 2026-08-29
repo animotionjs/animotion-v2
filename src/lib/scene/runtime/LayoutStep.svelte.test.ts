@@ -60,9 +60,7 @@ describe('LayoutStep', () => {
 		step.start();
 
 		const el = element('[data-layout="a"]');
-		// Pinned at its final spot and transformed back to the previous one,
-		// so the position glides at float precision instead of stepping
-		// through device pixels.
+		// pinned at its final spot and transformed back to the previous one, so position glides at float precision
 		expect(el.style.position).toBe('absolute');
 		expect(el.style.left).toBe('100px');
 		expect(el.style.top).toBe('100px');
@@ -92,9 +90,7 @@ describe('LayoutStep', () => {
 		);
 		step.start();
 
-		// The box is pinned at its final size and its width/height are lerped
-		// back to the previous bounds, so content (text, images) rasterizes at
-		// native size instead of being scaled and blurred.
+		// the box is pinned at its final size and width/height lerp back, so content rasterizes at native size
 		const el = element('[data-layout="a"]');
 		expect(el.style.width).toBe('100px');
 		expect(el.style.height).toBe('50px');
@@ -132,8 +128,7 @@ describe('LayoutStep', () => {
 		);
 		step.start();
 
-		// The opt-in morph pins the final size and scales the box back to the
-		// previous bounds, gliding to identity — no width/height re-layout.
+		// the opt-in morph pins the final size and scales back to the previous bounds, no width/height re-layout
 		const el = element('[data-layout="a"]');
 		expect(el.style.width).toBe('200px');
 		expect(el.style.transform).toBe('translate(0px, 0px) scale(0.5, 0.625)');
@@ -156,19 +151,14 @@ describe('LayoutStep', () => {
 		const step = new LayoutStep(
 			{},
 			() => {
-				// Removing the sibling is a persistent DOM change: after end()
-				// clears the pinning, the element's natural layout is exactly
-				// where the FLIP left it.
+				// removing the sibling is persistent, so after end() the natural layout is where the FLIP left it
 				element('[data-layout="b"]').remove();
 			},
 			0.5
 		);
 		step.start();
 
-		// The element glides up to its final spot; at progress 1 the transform
-		// is identity and the pinned geometry equals the natural layout, so
-		// clearing the styles in end() must not move or resize it by even a
-		// sub-pixel.
+		// at progress 1 pinned geometry equals the natural layout, so end() must not move or resize it by a sub-pixel
 		const el = element('[data-layout="a"]');
 		expect(el.style.transform).not.toBe('');
 		step.setProgress(1);
@@ -200,9 +190,7 @@ describe('LayoutStep', () => {
 		);
 		step.start();
 
-		// Pinned at the final (centered) bounds, with the transform scaling
-		// and translating back to the previous (also centered) bounds, so the
-		// first frame lands where the element was rather than being pushed.
+		// pinned at the final centered bounds with the transform scaling back, so the first frame lands where it was
 		const el = element('[data-layout="a"]');
 		const rect = el.getBoundingClientRect();
 		expect(rect.x).toBe(150);
@@ -235,8 +223,7 @@ describe('LayoutStep', () => {
 		const box = element('[data-layout="box"]');
 		const child = element('[data-layout="child"]');
 		expect(box.style.transform).toBe('translate(0px, 0px) scale(0.5, 0.5)');
-		// The box scales to half; the child cancels it with scale(2) so its
-		// rendered size stays 40px and it stays anchored at the box's top-left.
+		// the box scales to half and the child cancels it with scale(2) so it stays 40px at the box's top-left
 		expect(child.style.transform).toBe('translate(0px, 0px) scale(2, 2)');
 		expect(child.getBoundingClientRect().width).toBeCloseTo(40, 1);
 		expect(child.getBoundingClientRect().x).toBeCloseTo(box.getBoundingClientRect().x, 0);
@@ -271,8 +258,7 @@ describe('LayoutStep', () => {
 
 		const box = element('[data-layout="box"]');
 		const child = element('[data-layout="child"]');
-		// The box morphs its width/height (no scale), so the child never gets
-		// scaled or stretched and needs no counter-transform to stay crisp.
+		// the box morphs its width/height (no scale), so the child never gets scaled and needs no counter-transform
 		expect(box.style.width).toBe('100px');
 		expect(box.style.transform).toBe('');
 		expect(child.style.transform).toBe('');
@@ -310,10 +296,13 @@ describe('LayoutStep', () => {
 		);
 		step.start();
 
-		// The title's box resizes with the box, but its font-size is unchanged,
-		// so it is treated as position-only: it never gets its own scale, only
-		// the counter-scale against the box's anisotropic morph (net scale 1),
-		// keeping its glyphs crisp the whole way through.
+		/*
+			The title's box resizes with the box, but its font-size is
+			unchanged, so it is treated as position-only. It never gets its
+			own scale, only the counter-scale against the box's anisotropic
+			morph (net scale 1), keeping its glyphs crisp the whole way
+			through.
+		*/
 		const title = element('[data-layout="title"]');
 		expect(ghosts('[data-layout="title"]').length).toBe(0);
 		expect(title.style.visibility).toBe('');
@@ -345,9 +334,7 @@ describe('LayoutStep', () => {
 				box.style.left = '10px';
 				box.style.width = '200px';
 				box.style.height = '200px';
-				// The title reflows so it ends up at the same absolute spot it
-				// was in before: only the box itself moved (100 → 10), so the
-				// title must compensate for the box's movement on its own.
+				// the title reflows to the same absolute spot, only the box moved (100 → 10), so it must compensate on its own
 				const titleEl = element('[data-layout="title"]');
 				titleEl.style.position = 'absolute';
 				titleEl.style.top = '90px';
@@ -360,9 +347,7 @@ describe('LayoutStep', () => {
 
 		const box = element('[data-layout="box"]');
 		expect(box.style.transform).toBe('translate(90px, 90px) scale(0.5, 0.5)');
-		// The local offset (the box moved 90px) feeds the counter-scale so the
-		// text lands exactly on its previous absolute spot instead of gliding
-		// under the box's movement.
+		// the local offset (the box moved 90px) feeds the counter-scale so the text lands on its previous spot
 		expect(title.style.transform).toBe('translate(-90px, -90px) scale(2, 2)');
 		expect(title.getBoundingClientRect().left).toBeCloseTo(before.left, 1);
 		expect(title.getBoundingClientRect().top).toBeCloseTo(before.top, 1);
@@ -395,9 +380,7 @@ describe('LayoutStep', () => {
 		const box = element('[data-layout="box"]');
 		const child = element('[data-layout="child"]');
 		expect(box.style.transform).toBe('translate(0px, 0px) scale(0.5, 1)');
-		// The child's own morph (80→40) is scale 2, divided by the box's 0.5
-		// so the box's scale isn't inherited on top: it renders at its old
-		// width (80), not 80 × 0.5.
+		// the child's own morph (80→40) is scale 2, divided by the box's 0.5, so it renders at its old width (80)
 		expect(child.style.transform).toBe('translate(0px, 0px) scale(4, 1)');
 		expect(child.getBoundingClientRect().width).toBeCloseTo(80, 1);
 
@@ -431,8 +414,7 @@ describe('LayoutStep', () => {
 		const box = element('[data-layout="box"]');
 		const child = element('[data-layout="child"]');
 		expect(box.style.transform).toBe('');
-		// Both boxes morph width; the child's own width goes 80 → 40 without
-		// any scale, so it renders at its previous width (80) at the start.
+		// both boxes morph width, the child's own width goes 80 → 40 without any scale, so it starts at 80
 		expect(child.style.transform).toBe('');
 		expect(child.style.width).toBe('80px');
 		expect(child.getBoundingClientRect().width).toBeCloseTo(80, 1);
@@ -461,16 +443,14 @@ describe('LayoutStep', () => {
 		step.start();
 
 		const el = element('[data-layout="a"]');
-		// Height doesn't change (y-scale 1), so only the horizontal radius is
-		// counter-scaled: 16px set in a box scaled 0.5 renders 16px.
+		// height doesn't change (y-scale 1), so only the horizontal radius is counter-scaled, 16px renders 16px
 		expect(el.style.borderRadius).toBe('32px / 16px');
 
 		step.setProgress(1);
 		expect(el.style.borderRadius).toBe('16px');
 
 		step.end();
-		// The author's inline radius survives the step (only animated props
-		// are restored to their own values; this one was never cleared).
+		// the author's inline radius survives the step, only animated props are restored to their own values
 		expect(el.style.borderRadius).toBe('16px');
 	});
 
@@ -488,16 +468,14 @@ describe('LayoutStep', () => {
 
 		const el = element('[data-layout="a"]');
 		expect(el.style.width).toBe('100px');
-		// No scale, so the radius isn't stretched (kept at its inline 16px)
-		// and needs no counter-scale.
+		// no scale, so the radius isn't stretched (kept at its inline 16px) and needs no counter-scale
 		expect(el.style.borderRadius).toBe('16px');
 
 		step.setProgress(1);
 		expect(el.style.borderRadius).toBe('16px');
 
 		step.end();
-		// A constant inline radius isn't animated, so it must survive the step
-		// rather than being wiped to ''.
+		// a constant inline radius isn't animated, so it must survive the step rather than being wiped to ''
 		expect(el.style.borderRadius).toBe('16px');
 	});
 
@@ -534,8 +512,7 @@ describe('LayoutStep', () => {
 		);
 		step.start();
 
-		// Anything above min(width, height) / 2 = 25px renders fully round
-		// anyway, so the tween is capped there to keep the morph visible.
+		// anything above half the smaller side (25px here) renders fully round anyway, so the tween caps there
 		const el = element('[data-layout="a"]');
 		expect(el.style.borderRadius).toBe('0px');
 
@@ -554,7 +531,7 @@ describe('LayoutStep', () => {
 		const step = new LayoutStep(
 			{},
 			() => {
-				// Chrome's computed value for `rounded-full` (calc(infinity * 1px)).
+				// chrome's computed value for `rounded-full` (calc(infinity * 1px))
 				element('[data-layout="a"]').style.borderRadius = '3.35544e+07px';
 			},
 			0.5
@@ -608,9 +585,11 @@ describe('LayoutStep', () => {
 		step.start();
 
 		const el = element('[data-layout="a"]');
-		// amber-400 (oklch) converts to rgb(255, 185, 0); teal-400 to
-		// rgb(0, 213, 190). Chromium reports teal as rgb(1, 212, 190) — the
-		// couple-unit gap is gamma rounding, invisible in practice.
+		/*
+			amber-400 (oklch) converts to rgb(255, 185, 0), teal-400 to
+			rgb(0, 213, 190). Chromium reports teal as rgb(1, 212, 190), the
+			couple-unit gap is gamma rounding, invisible in practice.
+		*/
 		expect(parseRgba(el.style.backgroundColor)).toEqual([255, 185, 0, 1]);
 
 		step.setProgress(0.5);
@@ -699,11 +678,14 @@ describe('LayoutStep', () => {
 	});
 
 	it('does not tween border-color when either state has no visible border', () => {
-		// A borderless box computes `border-color` as currentColor (white in
-		// this presentation) even though nothing renders, so a key that moves
-		// onto a 2px-bordered element would otherwise paint a white frame that
-		// scales with the morph. The bordered element's color comes from a
-		// class (as in real scenes), so an engine write would show up inline.
+		/*
+			A borderless box computes `border-color` as currentColor (white in
+			this presentation) even though nothing renders, so a key that
+			moves onto a 2px-bordered element would otherwise paint a white
+			frame that scales with the morph. The bordered element's color
+			comes from a class (as in real scenes), so an engine write would
+			show up inline.
+		*/
 		setBody('<div data-layout="a" style="width:200px;height:80px"></div>');
 		const step = new LayoutStep(
 			{},
@@ -722,7 +704,7 @@ describe('LayoutStep', () => {
 
 		step.setProgress(0.5);
 		expect(el.style.borderColor).toBe('');
-		// The class stays authoritative: no inline color left behind.
+		// the class stays authoritative, no inline color left behind
 		expect(getComputedStyle(el).borderTopColor).toBe('rgba(0, 0, 0, 0)');
 
 		step.end();
@@ -744,9 +726,7 @@ describe('LayoutStep', () => {
 		step.setProgress(1);
 		step.end();
 
-		// The color never changed, so the step never tweened it and must leave
-		// the author's inline value (e.g. a Svelte `style:background-color`
-		// directive) untouched instead of wiping it.
+		// the color never changed, so the step must leave the author's inline value untouched instead of wiping it
 		expect(element('[data-layout="a"]').style.backgroundColor).toBe('rgb(255, 100, 100)');
 	});
 
@@ -766,8 +746,7 @@ describe('LayoutStep', () => {
 		step.setProgress(1);
 		step.end();
 
-		// The color was tweened, but its source is the class: after the step
-		// the inline style must be gone so the (new) class stays authoritative.
+		// the color was tweened but its source is the class, so the inline style must be gone after the step
 		const el = element('[data-layout="a"]');
 		expect(el.style.backgroundColor).toBe('');
 		expect(getComputedStyle(el).backgroundColor).toBe('rgb(0, 0, 255)');
@@ -791,8 +770,7 @@ describe('LayoutStep', () => {
 		second.start();
 		expect(warn).toHaveBeenCalledTimes(1);
 
-		// Ending the overlapping steps frees the engine: the next step is
-		// clean again.
+		// ending the overlapping steps frees the engine, the next step is clean again
 		second.end();
 		first.end();
 		expect(warn).toHaveBeenCalledTimes(1);
@@ -853,7 +831,7 @@ describe('LayoutStep', () => {
 		expect(el.style.fontSize).toBe('32px');
 
 		step.end();
-		// The author's inline font-size survives the step.
+		// the author's inline font-size survives the step
 		expect(el.style.fontSize).toBe('32px');
 	});
 
@@ -965,8 +943,8 @@ describe('LayoutStep', () => {
 
 		const para = element('[data-layout="para"]');
 		/*
-			The paragraph tweens its own font starting from the previous size;
-			its only transform is the counter-scale against the box, so the
+			The paragraph tweens its own font starting from the previous size.
+			Its only transform is the counter-scale against the box, so the
 			glyphs re-wrap natively instead of riding a stretched final wrap.
 		*/
 		expect(para.style.fontSize).toBe('16px');
@@ -1123,8 +1101,7 @@ describe('LayoutStep', () => {
 		const ghost = ghosts('[data-layout="a"]')[0];
 		expect(ghost.style.opacity).toBe('1');
 
-		// The exit completes by `exitEnd` (default 1): the ghost fades out
-		// across the whole step.
+		// the exit completes by `exitEnd` (default 1), so the ghost fades out across the whole step
 		step.setProgress(0.05);
 		expect(ghost.style.opacity).toBe('0.95');
 
@@ -1139,8 +1116,7 @@ describe('LayoutStep', () => {
 	});
 
 	it('pins the source text metrics on the ghost so exiting text keeps its size', () => {
-		// The font resolves against the parent (0.5em of 24px = 12px); as a
-		// body child the clone would compute 0.5em of 16px = 8px instead.
+		// the font resolves against the parent, as a body child the clone would resolve 0.5em against 16px instead
 		setBody(
 			'<div style="font-size:24px"><div data-layout="a" style="font-size:0.5em">Text</div></div>'
 		);
@@ -1162,9 +1138,7 @@ describe('LayoutStep', () => {
 	});
 
 	it('pins the source color on the ghost so currentColor survives the move to body', () => {
-		// The SVG's `currentColor` stroke resolves against the parent's white
-		// text color; as a body child the clone would inherit the body's black
-		// color instead and the exiting arrow would be invisible on dark.
+		// `currentColor` resolves against the parent's white text, as a body child it would go black and vanish
 		setBody(
 			'<div style="color:rgb(255, 255, 255)"><svg data-layout="a" stroke="currentColor"></svg></div>'
 		);
@@ -1195,8 +1169,7 @@ describe('LayoutStep', () => {
 		);
 		step.start();
 
-		// The card ghost's clone already carries the nested text, so a
-		// second ghost for the span would render it twice on exit.
+		// the card ghost's clone already carries the nested text, so a second ghost would render it twice
 		expect(ghosts('[data-layout="a"]').length).toBe(1);
 		expect(ghosts('[data-layout="a-text"]').length).toBe(0);
 		expect(ghosts('[data-layout="a"]')[0].textContent).toBe('Text');
@@ -1210,9 +1183,7 @@ describe('LayoutStep', () => {
 		const step = new LayoutStep(
 			{},
 			() => {
-				// The same node is reused: its `data-layout` key and content are
-				// rewritten in place, so the exit ghost must render what was
-				// actually on screen before the change, not the new content.
+				// the same node is reused, so the exit ghost must render what was on screen before the change
 				const el = element('[data-layout="a"]');
 				el.dataset.layout = 'b';
 				el.textContent = 'NEW';
@@ -1278,8 +1249,7 @@ describe('LayoutStep', () => {
 		const ghost = ghosts('[data-layout="a"]')[0];
 		expect(ghost.style.transform).toBe('scale(1)');
 
-		// The exit completes by `exitEnd` (default 1), so it is fully
-		// scaled away only at the step's end.
+		// the exit completes by `exitEnd` (default 1), so it is fully scaled away only at the step's end
 		step.setProgress(0.1);
 		expect(ghost.style.transform).toBe('scale(0.9)');
 
@@ -1305,7 +1275,7 @@ describe('LayoutStep', () => {
 		const ghost = ghosts('[data-layout="a"]')[0];
 		expect(ghost.style.clipPath).toBe('circle(100% at 50% 50%)');
 
-		// Fully clipped away by the step's end (`exitEnd` default 1).
+		// fully clipped away by the step's end (`exitEnd` default 1)
 		step.setProgress(0.1);
 		expect(ghost.style.clipPath).toBe('circle(90% at 50% 50%)');
 
@@ -1339,8 +1309,7 @@ describe('LayoutStep', () => {
 		const step = new LayoutStep(
 			{},
 			() => {
-				// The card survives but glides to the top-left corner while
-				// shrinking in half; the item is removed.
+				// the card survives but glides to the top-left corner while shrinking in half, the item is removed
 				setBody(`
 					<div data-layout="card" style="position:absolute;left:0px;top:0px;width:100px;height:100px"></div>
 				`);
@@ -1350,8 +1319,7 @@ describe('LayoutStep', () => {
 		);
 		step.start();
 
-		// Pinned at its pre-change viewport spot, the ghost is transformed back
-		// onto the card's old position at the start of the ride.
+		// pinned at its pre-change viewport spot, the ghost is transformed back onto the card's old position
 		const ghost = ghosts('[data-layout="item"]')[0];
 		expect(ghost.style.position).toBe('fixed');
 		expect(ghost.style.left).toBe('220px');
@@ -1359,13 +1327,11 @@ describe('LayoutStep', () => {
 		expect(ghost.style.transformOrigin).toBe('left top');
 		expect(ghost.style.transform).toBe('translate(0px, 0px) scale(1, 1)');
 
-		// Half-way, the ghost sits where the item would be inside the half-scaled
-		// card (origin 0 + half the 100px slide + scaled local offset), and its
-		// native size has shrunk with the card's scale.
+		// half-way the ghost sits where the item would be inside the half-scaled card, its size shrunk with the card
 		step.setProgress(0.5);
 		expect(ghost.style.transform).toBe('translate(-80px, -82.5px) scale(0.75, 0.75)');
 
-		// At the end the ghost settles inside the final card (local 120x130 / 2).
+		// at the end the ghost settles inside the final card (local 120x130 / 2)
 		step.setProgress(1);
 		expect(ghost.style.transform).toBe('translate(-160px, -165px) scale(0.5, 0.5)');
 
@@ -1382,7 +1348,7 @@ describe('LayoutStep', () => {
 		const step = new LayoutStep(
 			{},
 			() => {
-				// The card keeps its size but slides to the top-left corner.
+				// the card keeps its size but slides to the top-left corner
 				setBody(`
 					<div data-layout="card" style="position:absolute;left:0px;top:0px;width:200px;height:200px"></div>
 				`);
@@ -1393,7 +1359,7 @@ describe('LayoutStep', () => {
 		step.start();
 
 		const ghost = ghosts('[data-layout="item"]')[0];
-		// A size-stable ancestor still contributes its translation to the ride.
+		// a size-stable ancestor still contributes its translation to the ride
 		step.setProgress(0.5);
 		expect(ghost.style.transform).toBe('translate(-50px, -50px) scale(1, 1)');
 
@@ -1411,10 +1377,12 @@ describe('LayoutStep', () => {
 		const step = new LayoutStep(
 			{},
 			() => {
-				// Svelte reuses the old "card" detail node for the next hero
-				// and the child node along with it: both have their
-				// `data-layout` rewritten in place, while a fresh node claims
-				// the old "card" key.
+				/*
+					Svelte reuses the old "card" detail node for the next hero
+					and the child node along with it. Both have their
+					`data-layout` rewritten in place, while a fresh node claims
+					the old "card" key.
+				*/
 				const detail = element('[data-layout="card"]');
 				element('[data-layout="item"]').dataset.layout = 'item2';
 				detail.dataset.layout = 'other';
@@ -1428,8 +1396,7 @@ describe('LayoutStep', () => {
 		);
 		step.start();
 
-		// The ghost rides the old "card" entity (large detail collapsing into
-		// the small list row), not the node's current "other" key.
+		// the ghost rides the old "card" entity (detail collapsing into list row), not the current "other" key
 		const ghost = ghosts('[data-layout="item"]')[0];
 		step.setProgress(0.5);
 		expect(ghost.style.transform).toBe('translate(-141px, -24.5px) scale(0.7, 0.65)');
@@ -1447,9 +1414,7 @@ describe('LayoutStep', () => {
 		const step = new LayoutStep(
 			{},
 			() => {
-				// The card turns 90° around its top-left corner while the item
-				// is removed; the ghost must swing with the card's own
-				// transform instead of freezing at its pre-change spot.
+				// the card turns 90° around its top-left corner while the item is removed, the ghost must swing with it
 				setBody(`
 					<div data-layout="card" style="position:absolute;left:0px;top:0px;width:200px;height:200px;transform:rotate(90deg);transform-origin:0px 0px"></div>
 				`);
@@ -1460,8 +1425,7 @@ describe('LayoutStep', () => {
 		step.start();
 
 		const ghost = ghosts('[data-layout="item"]')[0];
-		// The pivot-matched ride starts exactly where the rotating card placed
-		// the item and rotates the ghost's offset as the card turns.
+		// the ride starts where the rotating card placed the item and rotates the offset as the card turns
 		expect(ghost.style.transform).toBe(
 			'translate(-120px, -130px) translate(0px, 0px) rotate(0deg) scale(1, 1) translate(0px, 0px) scale(1, 1) translate(120px, 130px)'
 		);
@@ -1487,7 +1451,7 @@ describe('LayoutStep', () => {
 		const step = new LayoutStep(
 			{},
 			() => {
-				// The card keeps its own translate; only the item is removed.
+				// the card keeps its own translate, only the item is removed
 				setBody(`
 					<div data-layout="card" style="position:absolute;left:0px;top:0px;width:200px;height:200px;transform:translate(20px, 30px);transform-origin:0px 0px"></div>
 				`);
@@ -1498,9 +1462,7 @@ describe('LayoutStep', () => {
 		step.start();
 
 		const ghost = ghosts('[data-layout="item"]')[0];
-		// Pinned at the item's measured spot (already including the ancestor's
-		// own translate), the ride adds that translate back so the ghost stays
-		// glued to the card instead of jumping to the untransformed spot.
+		// pinned at the item's measured spot, the ride adds the ancestor's translate back so the ghost stays glued
 		expect(ghost.style.transform).toBe(
 			'translate(-140px, -160px) translate(20px, 30px) rotate(0deg) scale(1, 1) translate(0px, 0px) scale(1, 1) translate(140px, 160px)'
 		);
@@ -1522,8 +1484,7 @@ describe('LayoutStep', () => {
 		const step = new LayoutStep(
 			{},
 			() => {
-				// The card slides up-left while growing through width/height
-				// re-layout (`scale: false`); the item is removed.
+				// the card slides up-left while growing through width/height re-layout, the item is removed
 				setBody(`
 					<div data-layout="card" style="position:absolute;left:50px;top:50px;width:200px;height:200px"></div>
 				`);
@@ -1534,8 +1495,7 @@ describe('LayoutStep', () => {
 		step.start();
 
 		const ghost = ghosts('[data-layout="item"]')[0];
-		// The ghost keeps its native size (scale 1) and rides the ancestor's
-		// origin, staying at its local spot inside the re-laid-out card.
+		// the ghost keeps its native size (scale 1) and rides the ancestor's origin, staying at its local spot
 		expect(ghost.style.transform).toBe('translate(0px, 0px) scale(1, 1)');
 		step.setProgress(0.5);
 		expect(ghost.style.transform).toBe('translate(-25px, -25px) scale(1, 1)');
@@ -1562,8 +1522,7 @@ describe('LayoutStep', () => {
 		expect(el.style.transform).toBe('translateY(100%)');
 		expect(el.style.opacity).toBe('0');
 
-		// The fade is delayed: still transparent through the first part of
-		// the slide (eased progress 0.08 < the 0.4 fade start).
+		// the fade is delayed, still transparent through the first part of the slide (eased progress 0.08)
 		step.setProgress(0.2);
 		expect(parseFloat(el.style.opacity)).toBe(0);
 
@@ -1593,8 +1552,7 @@ describe('LayoutStep', () => {
 		const el = element('[data-layout="a"]');
 		expect(el.style.opacity).toBe('0');
 		step.setProgress(0.5);
-		// The fade runs 0 → 0.5 (the class value), not 0 → 1, so clearing the
-		// inline style at the end lands on the same 0.5 instead of popping.
+		// the fade runs 0 → 0.5 (the class value), so clearing the inline style lands on 0.5 instead of popping
 		expect(parseFloat(el.style.opacity)).toBeCloseTo(0.25);
 		step.setProgress(1);
 		expect(parseFloat(el.style.opacity)).toBeCloseTo(0.5);
@@ -1616,7 +1574,7 @@ describe('LayoutStep', () => {
 		);
 		step.start();
 
-		// The ghost begins at the source's visual opacity (0.5), not full.
+		// the ghost begins at the source's visual opacity (0.5), not full
 		const ghost = ghosts('[data-layout="a"]')[0];
 		expect(parseFloat(ghost.style.opacity)).toBeCloseTo(0.5);
 		step.setProgress(0.5);
@@ -1642,8 +1600,7 @@ describe('LayoutStep', () => {
 		expect(ghost.style.transform).toBe('translateY(0%)');
 		expect(ghost.style.opacity).toBe('1');
 
-		// The slide and fade finish by `exitEnd` (default 1), so the ghost
-		// is fully gone only at the step's end.
+		// the slide and fade finish by `exitEnd` (default 1), so the ghost is fully gone only at the step's end
 		step.setProgress(0.05);
 		expect(ghost.style.transform).toBe('translateY(5%)');
 		expect(parseFloat(ghost.style.opacity)).toBe(1);
@@ -1708,7 +1665,7 @@ describe('LayoutStep', () => {
 
 		step.setProgress(0.25);
 		expect(parseFloat(a.style.opacity)).toBeCloseTo(0.25);
-		// b's window starts at its stagger offset: not yet animating.
+		// b's window starts at its stagger offset, not yet animating
 		expect(b.style.opacity).toBe('0');
 
 		step.setProgress(0.5);
@@ -1739,8 +1696,7 @@ describe('LayoutStep', () => {
 
 		const card1 = element('[data-layout="card1"]');
 		const card2 = element('[data-layout="card2"]');
-		// card2 must be index 1 (delay 0.6), not index 2 (delay 1.2) which
-		// would render it instantly; the nested spans consume no slots.
+		// card2 must be index 1 (delay 0.6), not index 2 which would render it instantly, spans consume no slots
 		expect(card1.style.opacity).toBe('0');
 		expect(card2.style.opacity).toBe('0');
 
@@ -1780,7 +1736,7 @@ describe('LayoutStep', () => {
 		expect(b.style.opacity).toBe('1');
 
 		step.setProgress(0.25);
-		// a (index 0) fades from 1; b (index 1) hasn't started leaving yet.
+		// a (index 0) fades from 1, b (index 1) hasn't started leaving yet
 		expect(parseFloat(a.style.opacity)).toBeCloseTo(0.75);
 		expect(b.style.opacity).toBe('1');
 
@@ -1996,10 +1952,13 @@ describe('LayoutStep', () => {
 		);
 		step.start();
 
-		// The child is flex-end: 450 in the 400-wide box at 100 → local 350;
-		// after the box moves to 200 and shrinks, it sits at 350 → local 150.
-		// It is pinned at its final local spot and counter-transformed against
-		// the box's own scale-and-translate so it still lands where it was.
+		/*
+			The child is flex-end, 450 in the 400-wide box at 100 → local 350.
+			After the box moves to 200 and shrinks, it sits at 350 → local 150.
+			It is pinned at its final local spot and counter-transformed
+			against the box's own scale-and-translate so it still lands where
+			it was.
+		*/
 		const child = element('[data-layout="child"]');
 		expect(child.style.position).toBe('absolute');
 		expect(child.style.left).toBe('150px');
@@ -2030,9 +1989,7 @@ describe('LayoutStep', () => {
 		);
 		step.start();
 
-		// The child's natural spot is border-box 0 + border 5/3 + padding 8;
-		// `left`/`top` resolve from the padding-box edge, so the border counts
-		// out and the pinned element lands on its natural spot once it settles.
+		// natural spot is border 5/3 + padding 8, and padding-box-resolved `left`/`top` land it exactly there
 		const child = element('[data-layout="child"]');
 		expect(child.style.position).toBe('absolute');
 		expect(parseFloat(child.style.left)).toBeCloseTo(8, 4);
@@ -2048,13 +2005,16 @@ describe('LayoutStep', () => {
 	});
 
 	it('pins an entering element against a transformed containing block (no snap)', () => {
-		// The scene container establishes a containing block via its transform
-		// (the scene transition) and is offset from the viewport, so the pin
-		// must resolve against its padding box — `offsetParent` misses it and
-		// SVG reports undefined entirely. A viewport origin would shift the
-		// pinned element by the container's offset, snapping back at the end.
-		// Sizes come from classes (as in real scenes) so un-pinning on `end`
-		// keeps the layout stable enough to compare.
+		/*
+			The scene container establishes a containing block via its
+			transform (the scene transition) and is offset from the
+			viewport, so the pin must resolve against its padding box.
+			`offsetParent` misses it and SVG reports undefined entirely. A
+			viewport origin would shift the pinned element by the
+			container's offset, snapping back at the end. Sizes come from
+			classes (as in real scenes) so un-pinning on `end` keeps the
+			layout stable enough to compare.
+		*/
 		setBody(`
 			<style>
 				.code { width: 200px; height: 100px }
@@ -2087,23 +2047,20 @@ describe('LayoutStep', () => {
 		const padBoxTop = cb.getBoundingClientRect().top + (parseFloat(cs.borderTopWidth) || 0);
 
 		step.setProgress(1);
-		// The SVG is the flex item after the 200px code plus the 24px gap, and
-		// its pin resolves against the containing block's padding box.
+		// the svg is the flex item after the 200px code plus the 24px gap, pinned against the padding box
 		const pinned = { x: svg.getBoundingClientRect().x, y: svg.getBoundingClientRect().y };
 		expect(pinned.x).toBeCloseTo(code.getBoundingClientRect().x + 224, 4);
 		expect(parseFloat(svg.style.left)).toBeCloseTo(pinned.x - padBoxLeft, 4);
 		expect(parseFloat(svg.style.top)).toBeCloseTo(pinned.y - padBoxTop, 4);
 
-		// Un-pinning returns it to the exact same flex spot — no snap.
+		// un-pinning returns it to the exact same flex spot, no snap
 		step.end();
 		expect(svg.getBoundingClientRect().x).toBeCloseTo(pinned.x, 4);
 		expect(svg.getBoundingClientRect().y).toBeCloseTo(pinned.y, 4);
 	});
 
 	it('does not mistake an inline-size query container for a containing block', () => {
-		// `container-type: inline-size` (Tailwind's `@container`) establishes no
-		// containing block, so the pin must keep using the viewport origin —
-		// treating it as a containing block would shift the element.
+		// `container-type: inline-size` establishes no containing block, so the pin keeps using the viewport origin
 		setBody(`
 			<style>
 				.code { width: 200px; height: 100px }
@@ -2135,7 +2092,7 @@ describe('LayoutStep', () => {
 		step.setProgress(1);
 		const pinned = { x: svg.getBoundingClientRect().x, y: svg.getBoundingClientRect().y };
 		expect(pinned.x).toBeCloseTo(code.getBoundingClientRect().x + 224, 4);
-		// A viewport origin: the pin equals the in-flow viewport position.
+		// a viewport origin, the pin equals the in-flow viewport position
 		expect(parseFloat(svg.style.left)).toBeCloseTo(pinned.x, 4);
 
 		step.end();
@@ -2158,12 +2115,11 @@ describe('LayoutStep', () => {
 		step.start();
 
 		const el = element('[data-layout="a"]');
-		// `2em` resolves to 32px in computed styles, so the px counter-scale
-		// path applies and the corners stay put while the box shrinks to half.
+		// `2em` resolves to 32px in computed styles, so the px counter-scale applies and corners stay put
 		expect(el.style.borderRadius).toBe('64px / 32px');
 
 		step.end();
-		// The author's `2em` inline radius is restored, not wiped.
+		// the author's `2em` inline radius is restored, not wiped
 		expect(el.style.borderRadius).toBe('2em');
 	});
 
@@ -2179,8 +2135,7 @@ describe('LayoutStep', () => {
 		);
 		step.start();
 
-		// A zero-length mapping domain would otherwise divide by zero into NaN
-		// on the first frame; the transition is simply already complete.
+		// a zero-length mapping domain would divide by zero into NaN, the transition is simply already complete
 		const el = element('[data-layout="a"]');
 		expect(el.style.opacity).toBe('1');
 
@@ -2250,8 +2205,7 @@ describe('LayoutStep', () => {
 		);
 		step.start();
 
-		// The counter transform's math assumes a top-left origin, which
-		// silently overrides the scale-enter's center anchor.
+		// the counter transform's math assumes a top-left origin, which silently overrides the center anchor
 		const added = element('[data-layout="new"]');
 		expect(added.style.transformOrigin).toBe('left top');
 		expect(added.style.transform).toContain('scale(0)');
@@ -2295,10 +2249,12 @@ describe('LayoutStep', () => {
 		const step = new LayoutStep(
 			{},
 			() => {
-				// The box glides from (0,0) to (200,0) while doubling in size;
-				// the entering child must sit at its final local spot (inside
-				// the final box at x=220), not be flung to the projected spot
-				// by the box's motion.
+				/*
+					The box glides from (0,0) to (200,0) while doubling in
+					size. The entering child must sit at its final local spot
+					(inside the final box at x=220), not be flung to the
+					projected spot by the box's motion.
+				*/
 				const box = element('[data-layout="box"]');
 				box.style.left = '200px';
 				box.style.width = '200px';
@@ -2315,8 +2271,7 @@ describe('LayoutStep', () => {
 		step.start();
 
 		const added = element('[data-layout="new"]');
-		// The child stays pinned to its final absolute spot the whole way
-		// through (it has no previous position to glide from).
+		// the child stays pinned to its final absolute spot the whole way (no previous position to glide from)
 		expect(added.getBoundingClientRect().x).toBeCloseTo(220, 1);
 
 		step.setProgress(0.5);
@@ -2326,9 +2281,7 @@ describe('LayoutStep', () => {
 		expect(added.getBoundingClientRect().x).toBeCloseTo(220, 1);
 
 		step.end();
-		// `end()` restores the box's inline `left: 0`, so the child settles at
-		// its natural spot (0 + padding 20); the during-step pinning is what
-		// must hold it at the destination without shifting.
+		// `end()` restores the box's inline `left`, so the child settles at its natural spot (0 + padding 20)
 		expect(added.getBoundingClientRect().x).toBeCloseTo(20, 1);
 	});
 
@@ -2346,8 +2299,7 @@ describe('LayoutStep', () => {
 		step.start();
 
 		const el = element('[data-layout="a"]');
-		// The transition's slide composes BEFORE the element's own rotation, so
-		// it slides in while staying tilted.
+		// the transition's slide composes before the element's own rotation, so it slides in while staying tilted
 		expect(el.style.transform).toContain('translateY(100%)');
 		expect(el.style.transform).toContain('matrix(');
 
@@ -2359,7 +2311,7 @@ describe('LayoutStep', () => {
 		expect(el.style.transform).toContain('matrix(');
 
 		step.end();
-		// The author's inline transform is restored, not wiped.
+		// the author's inline transform is restored, not wiped
 		expect(el.style.transform).toBe('rotate(30deg)');
 	});
 
@@ -2380,7 +2332,7 @@ describe('LayoutStep', () => {
 		expect(el.style.transform).toContain('matrix(');
 
 		step.end();
-		// The inline transform is cleared so the class's transform re-applies.
+		// the inline transform is cleared so the class's transform re-applies
 		expect(el.style.transform).toBe('');
 	});
 
@@ -2401,9 +2353,7 @@ describe('LayoutStep', () => {
 		step.start();
 
 		const el = element('[data-layout="a"]');
-		// The rotation is tweened (constant here) on top of the flip transform,
-		// keeping the element's natural center pivot instead of forcing
-		// top-left and wrapping the transform.
+		// the rotation is tweened on top of the flip transform, keeping the natural center pivot instead of top-left
 		expect(el.style.transformOrigin).toBe('');
 		expect(el.style.transform).toBe('translate(-140px, -105px) scale(0.5, 0.625) rotate(30deg)');
 
@@ -2431,9 +2381,7 @@ describe('LayoutStep', () => {
 		step.start();
 
 		const el = element('[data-layout="a"]');
-		// The standalone rotate keeps its natural center pivot and is folded
-		// into the tweened transform (the `rotate` property is suppressed to
-		// identity so it can't double-apply).
+		// the standalone rotate keeps its center pivot, folded into the tweened transform so it can't double-apply
 		expect(el.style.transformOrigin).toBe('');
 		expect(el.style.transform).toBe('translate(-140px, -105px) scale(0.5, 0.625) rotate(30deg)');
 		expect(el.style.rotate).toBe('0deg');
@@ -2442,8 +2390,7 @@ describe('LayoutStep', () => {
 		expect(el.style.transform).toBe('translate(0px, 0px) scale(1, 1) rotate(30deg)');
 
 		step.end();
-		// The author's `rotate` property is restored, the tweened transform
-		// cleared.
+		// the author's `rotate` property is restored and the tweened transform cleared
 		expect(el.style.transform).toBe('');
 		expect(el.style.rotate).toBe('30deg');
 	});
@@ -2524,9 +2471,7 @@ describe('LayoutStep', () => {
 		step.start();
 
 		const el = element('[data-layout="a"]');
-		// Identical layout boxes mean no flip compensation: only the rotation
-		// tween runs, around the element's natural center. The final state has
-		// no standalone `rotate`, so there is nothing to suppress.
+		// identical boxes mean no flip compensation, only the rotation tween runs around the natural center
 		expect(el.style.transformOrigin).toBe('');
 		expect(el.style.rotate).toBe('');
 		expect(el.style.transform).toBe('rotate(45deg)');
@@ -2559,8 +2504,7 @@ describe('LayoutStep', () => {
 		step.start();
 
 		const el = element('[data-layout="a"]');
-		// The rotation tween composes outermost, on top of the flip
-		// compensation, keeping the natural center pivot.
+		// the rotation tween composes outermost, on top of the flip compensation, keeping the center pivot
 		expect(el.style.transformOrigin).toBe('');
 		expect(el.style.transform).toBe('translate(-140px, -105px) scale(0.5, 0.625) rotate(45deg)');
 
@@ -2598,8 +2542,7 @@ describe('LayoutStep', () => {
 		step.setProgress(0.5);
 		expect(el.style.transform).toBe('rotate(30deg)');
 
-		// The final rotation is tweened back into the element while the
-		// suppressed `rotate` property is still neutralized.
+		// the final rotation is tweened back in while the suppressed `rotate` property stays neutralized
 		step.setProgress(1);
 		expect(el.style.transform).toBe('rotate(15deg)');
 		expect(el.style.rotate).toBe('0deg');
@@ -2626,8 +2569,7 @@ describe('LayoutStep', () => {
 		step.start();
 
 		const el = element('[data-layout="a"]');
-		// An inline `rotate: 0deg` neutralizes the class rule while the tween
-		// supplies the rotation, so the class's 15deg can't double with it.
+		// an inline `rotate: 0deg` neutralizes the class rule while the tween supplies the rotation
 		expect(el.style.rotate).toBe('0deg');
 		expect(el.style.transform).toBe('rotate(45deg)');
 
@@ -2638,7 +2580,7 @@ describe('LayoutStep', () => {
 		expect(el.style.transform).toBe('rotate(15deg)');
 
 		step.end();
-		// The inline override is cleared so the class's `rotate` re-applies.
+		// the inline override is cleared so the class's `rotate` re-applies
 		expect(el.style.rotate).toBe('');
 		expect(el.style.transform).toBe('');
 	});
@@ -2655,8 +2597,7 @@ describe('LayoutStep', () => {
 		step.start();
 
 		const el = element('[data-layout="a"]');
-		// The enter transform slides the box while the standalone rotate keeps
-		// it tilted — the individual property stays untouched during enter.
+		// the enter transform slides the box while the standalone rotate keeps it tilted, untouched during enter
 		expect(el.style.transform).toContain('translateY(100%)');
 		expect(el.style.rotate).toBe('45deg');
 
@@ -2686,8 +2627,7 @@ describe('LayoutStep', () => {
 		step.start();
 
 		const el = element('[data-layout="a"]');
-		// Pinned at the untranslated layout box, not the translated rect, so the
-		// tweened transform lands on the same visual spot.
+		// pinned at the untranslated layout box, so the tweened transform lands on the same visual spot
 		expect(el.style.left).toBe('10px');
 		expect(el.style.top).toBe('10px');
 		expect(el.style.transform).toBe('translate(20px, 30px)');
@@ -2713,8 +2653,7 @@ describe('LayoutStep', () => {
 		step.start();
 
 		const el = element('[data-layout="a"]');
-		// The effective matrix is rotate(30deg) then scale(2, 1); folding them
-		// in the CSS order roundtrips through the tween unchanged.
+		// the effective matrix is rotate(30deg) then scale(2, 1), folding in the CSS order roundtrips unchanged
 		expect(el.style.rotate).toBe('0deg');
 		expect(el.style.scale).toBe('1');
 		expect(el.style.transform).toBe('rotate(30deg) scale(2, 1)');
@@ -2741,8 +2680,7 @@ describe('LayoutStep', () => {
 		step.start();
 
 		const el = element('[data-layout="a"]');
-		// A reflection rides on the y scale so the roundtrip is still a
-		// horizontal flip rather than a vertical one.
+		// a reflection rides on the y scale so the roundtrip stays a horizontal flip rather than a vertical one
 		expect(el.style.transform).toBe('rotate(180deg) scale(1, -1)');
 
 		step.end();
@@ -2766,7 +2704,7 @@ describe('LayoutStep', () => {
 		step.start();
 
 		const el = element('[data-layout="a"]');
-		// `scale: 2` means 2 2 — a missing y axis defaults to x.
+		// `scale: 2` means 2 2, a missing y axis defaults to x
 		expect(el.style.transform).toBe('scale(2, 2)');
 
 		step.end();
@@ -2788,14 +2726,12 @@ describe('LayoutStep', () => {
 		step.start();
 
 		const ghost = ghosts('[data-layout="a"]')[0];
-		// The ghost pins the untranslated layout box and re-applies the rotation
-		// on top, so it renders at the source's visual footprint instead of an
-		// inflated rotated rect.
+		// the ghost pins the untranslated box and re-applies the rotation, rendering the source's visual footprint
 		expect(ghost.style.left).toBe('10px');
 		expect(ghost.style.top).toBe('10px');
 		expect(ghost.style.width).toBe('100px');
 		expect(ghost.style.height).toBe('40px');
-		// The cloned inline rotation is preserved on the ghost.
+		// the cloned inline rotation is preserved on the ghost
 		expect(ghost.style.transform).toContain('rotate');
 
 		step.end();

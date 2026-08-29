@@ -109,8 +109,11 @@
 		.wait(1);
 
 	const stage = $derived(scene.step);
-	const fill = (i: number) =>
-		scene.step < i ? 0 : scene.step === i ? easeInOut(scene.progress) : 1;
+	const fill = (i: number) => {
+		if (scene.step < i) return 0;
+		if (scene.step === i) return easeInOut(scene.progress);
+		return 1;
+	};
 	const captionIndex = $derived.by(() => {
 		const outgoing = stage > 0 && scene.progress < 0.5;
 		return outgoing ? stage - 1 : Math.min(stage, CAPTIONS.length - 1);

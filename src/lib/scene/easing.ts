@@ -119,13 +119,10 @@ export function easeOutExpo(p: number): number {
 }
 
 export function easeInOutExpo(p: number): number {
-	return p === 0
-		? 0
-		: p === 1
-			? 1
-			: p < 0.5
-				? Math.pow(2, 20 * p - 10) / 2
-				: (2 - Math.pow(2, -20 * p + 10)) / 2;
+	if (p === 0) return 0;
+	if (p === 1) return 1;
+	if (p < 0.5) return Math.pow(2, 20 * p - 10) / 2;
+	return (2 - Math.pow(2, -20 * p + 10)) / 2;
 }
 
 export function easeInCirc(p: number): number {
@@ -161,23 +158,24 @@ export function easeInOutBack(p: number): number {
 
 /** Eases in with decaying oscillations; dips below `0`. */
 export function easeInElastic(p: number): number {
-	return p === 0 ? 0 : p === 1 ? 1 : -Math.pow(2, 10 * p - 10) * Math.sin((p * 10 - 10.75) * c4);
+	if (p === 0) return 0;
+	if (p === 1) return 1;
+	return -Math.pow(2, 10 * p - 10) * Math.sin((p * 10 - 10.75) * c4);
 }
 
 /** Eases out with decaying oscillations; overshoots above `1`. */
 export function easeOutElastic(p: number): number {
-	return p === 0 ? 0 : p === 1 ? 1 : Math.pow(2, -10 * p) * Math.sin((p * 10 - 0.75) * c4) + 1;
+	if (p === 0) return 0;
+	if (p === 1) return 1;
+	return Math.pow(2, -10 * p) * Math.sin((p * 10 - 0.75) * c4) + 1;
 }
 
 /** Symmetric elastic; oscillates on both ends of `0..1`. */
 export function easeInOutElastic(p: number): number {
-	return p === 0
-		? 0
-		: p === 1
-			? 1
-			: p < 0.5
-				? -(Math.pow(2, 20 * p - 10) * Math.sin((20 * p - 11.125) * c5)) / 2
-				: (Math.pow(2, -20 * p + 10) * Math.sin((20 * p - 11.125) * c5)) / 2 + 1;
+	if (p === 0) return 0;
+	if (p === 1) return 1;
+	if (p < 0.5) return -(Math.pow(2, 20 * p - 10) * Math.sin((20 * p - 11.125) * c5)) / 2;
+	return (Math.pow(2, -20 * p + 10) * Math.sin((20 * p - 11.125) * c5)) / 2 + 1;
 }
 
 const n1 = 7.5625;

@@ -615,7 +615,9 @@ function printStatus() {
 	const now = performance.now();
 	for (let i = 0; i < progress.length; i++) {
 		const p = progress[i];
-		const elapsed = p.done ? p.finalMs : p.startMs ? now - p.startMs : 0;
+		let elapsed = 0;
+		if (p.done) elapsed = p.finalMs;
+		else if (p.startMs) elapsed = now - p.startMs;
 		const line = `  [${i + 1}/${progress.length}] ${p.id.padEnd(12)} ${p.frames} frames  ${(elapsed / 1000).toFixed(2)}s`;
 		process.stdout.write('\r\x1b[K' + line + '\n');
 	}

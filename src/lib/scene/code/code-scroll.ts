@@ -146,23 +146,21 @@ const FADE_STEPS = [0, 1 / 5, 2 / 5, 3 / 5, 4 / 5, 1];
 
 function alphaStop(t: number): string {
 	const a = smoothstep(t);
-	const alpha = a >= 1 ? '1' : a <= 0 ? '0' : a.toFixed(3);
-	return `oklch(0 0 0 / ${alpha})`;
+	if (a >= 1) return 'oklch(0 0 0 / 1)';
+	if (a <= 0) return 'oklch(0 0 0 / 0)';
+	return `oklch(0 0 0 / ${a.toFixed(3)})`;
 }
 
 function topStop(t: number, size: number): string {
-	const pos = t === 0 ? '0' : t === 1 ? `${size}em` : `calc(${size}em * ${t.toFixed(3)})`;
-	return `${alphaStop(t)} ${pos}`;
+	if (t === 0) return `${alphaStop(t)} 0`;
+	if (t === 1) return `${alphaStop(t)} ${size}em`;
+	return `${alphaStop(t)} calc(${size}em * ${t.toFixed(3)})`;
 }
 
 function bottomStop(t: number, size: number): string {
-	const pos =
-		t === 1
-			? '100%'
-			: t === 0
-				? `calc(100% - ${size}em)`
-				: `calc(100% - ${size}em * ${(1 - t).toFixed(3)})`;
-	return `${alphaStop(1 - t)} ${pos}`;
+	if (t === 1) return `${alphaStop(1 - t)} 100%`;
+	if (t === 0) return `${alphaStop(1 - t)} calc(100% - ${size}em)`;
+	return `${alphaStop(1 - t)} calc(100% - ${size}em * ${(1 - t).toFixed(3)})`;
 }
 
 /**

@@ -26,7 +26,7 @@ function assertDuration(duration: number) {
 }
 
 /**
- * A single animation unit. A scene's chain of steps plays sequentially;
+ * A single animation unit. A scene's chain of steps plays sequentially.
  * `duration` is in seconds. `progress` values passed to `setProgress` are
  * normalized `0..1`.
  */
@@ -34,7 +34,7 @@ export interface Step {
 	readonly duration: number;
 	/**
 	 * Extra seconds the finished frame stays up after the animation, so
-	 * viewers have time to read. Only used when rendering video; live
+	 * viewers have time to read. Only used when rendering video. Live
 	 * playback ignores it. Set by the builder's `wait`.
 	 */
 	wait?: number;
@@ -87,16 +87,16 @@ export class TweenStep implements Step {
 	}
 
 	end() {
-		// Committing an un-started step would clobber the scene's initial value
-		// with the target; only end steps that actually played.
+		// only end steps that actually played, committing an un-started one would clobber the initial value
 		if (!this.#started) return;
 		this.#state[this.#key] = this.#to;
 	}
 
 	revert() {
-		// An un-started step has no `from` snapshot (it still holds the field
-		// default), so reverting it would reset a non-zero initial value. This
-		// mirrors the `#snapshot` guard on `CodeStep`/`SelectionStep`.
+		/*
+			Reverting an un-started step would reset a non-zero initial
+			value (mirrors the `#snapshot` guard on `CodeStep`/`SelectionStep`).
+		*/
 		if (!this.#started) return;
 		this.#started = false;
 		this.#state[this.#key] = this.#from;
@@ -194,13 +194,13 @@ export interface LayoutTransitionValue {
 
 /**
  * Enter/exit transitions for {@link LayoutStep}. Unset options default to
- * `'fade'`; `'none'` skips the exit animation entirely (removed elements
+ * `'fade'`. `'none'` skips the exit animation entirely (removed elements
  * disappear instantly).
  */
 export interface LayoutOptions {
 	/** How newly added elements animate in. Defaults to `'fade'`. */
 	enter?: LayoutTransition;
-	/** How removed elements animate out. Defaults to `'fade'`; `'none'` skips it. */
+	/** How removed elements animate out. Defaults to `'fade'`. `'none'` skips it. */
 	exit?: LayoutTransition;
 	/** Easing applied to every tween in the step. Defaults to `easeInOut`. */
 	ease?: Easing;
@@ -208,8 +208,8 @@ export interface LayoutOptions {
 	 * Resize by stretching the final box with a `transform` instead of
 	 * laying out `width`/`height` every frame. Stretching stays on the
 	 * compositor, so heavy scenes resize smoothly even on weak hardware,
-	 * but everything inside warps mid-flight. It defaults to `false`: real
-	 * layout keeps nested text and images crisp, and text whose own
+	 * but everything inside warps mid-flight. It defaults to `false`, since
+	 * real layout keeps nested text and images crisp, and text whose own
 	 * font-size changes always tweens the font per frame in either mode.
 	 */
 	scale?: boolean;
@@ -227,7 +227,7 @@ export interface LayoutOptions {
 	 * The fraction of the step between successive entering/exiting elements'
 	 * start times. Element `i` begins its transition at `stagger * i`, so a
 	 * batch added or removed together animates one after another. The step
-	 * duration stays fixed (later elements compress); elements whose delay
+	 * duration stays fixed (later elements compress). Elements whose delay
 	 * reaches the transition's end render the fully-transitioned state.
 	 * Defaults to `0` (no stagger).
 	 */
@@ -250,7 +250,7 @@ type ParentScale = {
 
 /**
  * A retained element: pinned at its final bounds and glided via transforms.
- * `localFinal` is always present — every flip tween is pinned — so the
+ * `localFinal` is always present (every flip tween is pinned), so the
  * ancestor-scale counter needs no `!` to read it.
  */
 interface FlipTween {
@@ -262,15 +262,15 @@ interface FlipTween {
 	/**
 	 * The position offset (previous minus final local position). Pinned at its
 	 * final bounds, the element is transformed back to its previous spot and
-	 * glides forward; a transform keeps the motion at float precision instead
+	 * glides forward. A transform keeps the motion at float precision instead
 	 * of stepping through device pixels like left/top.
 	 */
 	offset?: { x: number; y: number };
 	/**
 	 * (`scale: false`): the box's previous and final bounds, lerped as
 	 * `width`/`height` so nested text and images rasterize at native size.
-	 * The heights are `null` when the element re-wraps via a font tween: its
-	 * height stays auto so the box hugs the text's actual wrap each frame.
+	 * The heights are `null` when the element re-wraps via a font tween,
+	 * leaving its height auto so the box hugs the text's actual wrap each frame.
 	 */
 	size?: {
 		fromW: number;
@@ -285,7 +285,7 @@ interface FlipTween {
 	 */
 	font?: { fromSize: number; toSize: number; line?: { from: number; to: number } };
 	/**
-	 * Present when the element morphs between sizes; `x`/`y` track the current
+	 * Present when the element morphs between sizes. `x`/`y` track the current
 	 * frame's scale so the border-radius can be counter-scaled against it.
 	 */
 	scale?: { x0: number; y0: number; x: number; y: number };
@@ -334,7 +334,7 @@ type ExitAncestor = {
 	/** The ancestor's previous-to-final layout offset in viewport pixels. */
 	dx0: number;
 	dy0: number;
-	/** The ancestor's previous-to-final scale; 1 when it doesn't morph size. */
+	/** The ancestor's previous-to-final scale, 1 when it doesn't morph size. */
 	x0: number;
 	y0: number;
 	/** The ancestor's final layout origin. */
@@ -391,15 +391,18 @@ interface LayoutPropTween {
 interface ParsedProp {
 	/** per-component numeric values (e.g. RGBA channels or radius corners) */
 	values: number[];
-	/** unit shared by every component; '' for unitless values (opacity, colors) */
+	/** unit shared by every component, '' for unitless values (opacity, colors) */
 	unit: string;
 	/** serializes interpolated values back into a CSS string */
 	format: (values: number[]) => string;
 }
 
 function parseLength(value: string): ParsedProp | null {
-	// Computed styles can serialize large lengths in scientific notation
-	// (`rounded-full` resolves `calc(infinity * 1px)` to `3.35544e+07px`).
+	/*
+		Computed styles can serialize large lengths in scientific
+		notation (`rounded-full` resolves `calc(infinity * 1px)` to
+		`3.35544e+07px`).
+	*/
 	const match = value.match(/^(-?[\d.]+(?:e[+-]?\d+)?)(px|%|em|rem|cqi|cqw|ch|vh|vw)$/i);
 	if (!match) return null;
 	const unit = match[2];
@@ -452,8 +455,7 @@ function parseColor(value: string): ParsedProp | null {
 		const [, r, g, b, a] = match;
 		return colorProp([Number(r), Number(g), Number(b)], a === undefined ? 1 : Number(a));
 	}
-	// Tailwind's palette is OKLCH and its opacity modifiers resolve to OKLab,
-	// so both are normalized to sRGB before interpolating.
+	// tailwind's palette is OKLCH and its opacity modifiers resolve to OKLab, so normalize both to sRGB
 	match = value.match(
 		/^oklch\(\s*(-?[\d.]+%?)\s+(-?[\d.]+%?)\s+(-?[\d.]+)\s*(?:\/\s*(-?[\d.]+%?)\s*)?\)$/i
 	);
@@ -491,7 +493,7 @@ function parseOpacity(value: string): ParsedProp | null {
 
 function parseRadius(value: string): ParsedProp | null {
 	const tokens = value.trim().split(/\s+/);
-	// Elliptical radii (e.g. `10px / 20px`) aren't interpolated.
+	// elliptical radii (e.g. `10px / 20px`) aren't interpolated
 	if (tokens.includes('/')) return null;
 	const corners = tokens.map(parseLength);
 	if (corners.some((corner) => corner === null)) return null;
@@ -671,10 +673,13 @@ function createLayoutPropTween(
 	if (!from || !to) return null;
 	if (from.unit !== to.unit || from.values.length !== to.values.length) return null;
 	if (from.values.every((value, i) => value === to.values[i])) return null;
-	// Radiuses above the box's fully-round size (like `rounded-full`, which
-	// resolves to an effectively-infinite value) render identically once CSS
-	// clamps them, so capping there keeps the tween from jumping to a huge
-	// number in the first frame and makes the morph visible instead.
+	/*
+		Radiuses above the box's fully-round size (like `rounded-full`,
+		which resolves to an effectively-infinite value) render
+		identically once CSS clamps them, so capping there keeps the
+		tween from jumping to a huge number in the first frame and makes
+		the morph visible instead.
+	*/
 	const cap = (values: number[]) =>
 		capPx !== undefined && from.unit === 'px'
 			? values.map((value) => Math.min(value, capPx))
@@ -711,8 +716,7 @@ function transitionValue(
 		}
 		case 'slide': {
 			const offset = direction === 'enter' ? 100 * (1 - p) : 100 * p;
-			// Slide mostly into place first, then fade as the element settles,
-			// so the text is still translucent while it enters.
+			// slide mostly into place first, then fade so the text is still translucent while it enters
 			const fade = clampRemap(p, 0.4, 1, 0, 1);
 			return {
 				opacity: direction === 'enter' ? fade : 1 - fade,
@@ -737,8 +741,8 @@ interface LayoutInlineStyles {
 	/**
 	 * The author's inline values of the auto-tweened visual props. A step only
 	 * ever overrides these while it runs, so clearing them at the end would wipe
-	 * author-set styles (e.g. a Svelte `style:background-color` directive);
-	 * restoring them leaves each element exactly as it was found.
+	 * author-set styles (e.g. a Svelte `style:background-color` directive).
+	 * Restoring them leaves each element exactly as it was found.
 	 */
 	layoutProps: Record<string, string>;
 }
@@ -827,13 +831,13 @@ interface TransformState {
 	ty: number;
 	sx: number;
 	sy: number;
-	/** degrees; `0` when absent */
+	/** degrees, `0` when absent */
 	rotate: number;
 }
 
 /**
  * Parses a computed `transform` into its 2D affine part. `none`/`''` resolve to
- * `null`; a 3D matrix falls back to its top-left 2x2 block and translation.
+ * `null`. A 3D matrix falls back to its top-left 2x2 block and translation.
  */
 function parseTransform(transform: string): Matrix2D | null {
 	if (transform === '' || transform === 'none') return null;
@@ -953,11 +957,10 @@ function composeTransform(
 ): Matrix2D | null {
 	const matrix = parseTransform(computed.transform);
 	if (!individual) return matrix;
-	// `mul(a, b)` applies `a` after `b`, so folding in this order builds the
-	// CSS `M = translate·rotate·scale·transform` product.
+	// `mul(a, b)` applies `a` after `b`, so this order builds the CSS `translate·rotate·scale·transform` product
 	let composed = matrix ?? { a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 };
 	if (computed.scale !== 'none') {
-		// `scale: 2` is a uniform scale, so a missing y axis defaults to x.
+		// `scale: 2` is a uniform scale, so a missing y axis defaults to x
 		const [sx = '1', sy] = computed.scale.split(/\s+/);
 		composed = mul(matrixOfScale(parseFloat(sx) || 1, parseFloat(sy ?? sx) || 1), composed);
 	}
@@ -1000,8 +1003,7 @@ const fmt = (value: number) => String(Math.round(value * 1000) / 1000);
 
 /** Serializes a transform state, omitting identity parts. */
 function rebuildTransform(state: TransformState): string {
-	// Round before the identity check: computed matrices round to 6 decimals,
-	// so a pure rotation reads back as sx=0.99999968, which is exactly 1.
+	// round before the identity check so float noise like sx 0.99999968 reads back as exactly 1
 	const tx = Math.round(state.tx * 1000) / 1000;
 	const ty = Math.round(state.ty * 1000) / 1000;
 	const sx = Math.round(state.sx * 1000) / 1000;
@@ -1014,7 +1016,7 @@ function rebuildTransform(state: TransformState): string {
 	return parts.join(' ');
 }
 
-/** Lerps two transform states; rotation takes the shortest way around. */
+/** Lerps two transform states. Rotation takes the shortest way around. */
 function lerpTransformState(from: TransformState, to: TransformState, p: number): TransformState {
 	const delta = ((to.rotate - from.rotate + 540) % 360) - 180;
 	return {
@@ -1037,8 +1039,8 @@ function paddingBoxOffset(el: Element): { left: number; top: number } {
 
 /**
  * Whether `style` establishes a containing block for absolutely-positioned
- * descendants, per the CSS spec: positioned, transformed, filtered, or
- * contained. `container-type: inline-size` (Tailwind's `@container`) does NOT
+ * descendants, per the CSS spec (positioned, transformed, filtered, or
+ * contained). `container-type: inline-size` (Tailwind's `@container`) does NOT
  * create a containing block, so it is intentionally absent.
  */
 function establishesContainingBlock(style: CSSStyleDeclaration): boolean {
@@ -1054,7 +1056,7 @@ function establishesContainingBlock(style: CSSStyleDeclaration): boolean {
 /**
  * The nearest ancestor establishing the containing block for an
  * absolutely-positioned element. `offsetParent` misses SVG (it is `undefined`)
- * and any block formed by a transform, filter, or containment — so it must be
+ * and any block formed by a transform, filter, or containment, so it must be
  * derived from computed styles instead.
  */
 function absoluteContainingBlock(el: Element): Element | null {
@@ -1159,9 +1161,7 @@ export class LayoutStep implements Step {
 				}
 				let flip = '';
 				if (tween.parentScale) {
-					// The element is pinned at its final local spot; cancel the
-					// ancestor's scale (net scale 1) while the position glides
-					// inside the ancestor's scaled space.
+					// cancel the ancestor's scale (net scale 1) while the position glides inside its scaled space
 					const sPx = lerp(tween.parentScale.x0, 1, eased);
 					const sPy = lerp(tween.parentScale.y0, 1, eased);
 					const fx = tween.localFinal.x;
@@ -1174,71 +1174,77 @@ export class LayoutStep implements Step {
 				} else if (tween.offset && (tween.offset.x !== 0 || tween.offset.y !== 0)) {
 					flip = `translate(${dx}px, ${dy}px)`;
 				}
-				// The element's own transform glides from its previous matrix to
-				// its final one, outermost so it rotates on top of the flip.
+				// the element's own transform glides to its final matrix, outermost so it rotates on top of the flip
 				const tweened = tween.transform
 					? rebuildTransform(lerpTransformState(tween.transform.from, tween.transform.to, eased))
 					: '';
-				// A transform tween writes every frame (an identity frame clears
-				// the property); a flip-only tween writes only while active so a
-				// stationary element is never touched.
+				/*
+					A transform tween writes every frame (an identity frame
+					clears the property). A flip-only tween writes only while
+					active so a stationary element is never touched.
+				*/
 				if (tween.transform || flip) {
-					tween.el.style.transform = flip ? (tweened ? `${flip} ${tweened}` : flip) : tweened;
+					if (flip) {
+						tween.el.style.transform = tweened ? `${flip} ${tweened}` : flip;
+					} else {
+						tween.el.style.transform = tweened;
+					}
 				}
 			} else {
 				const direction = tween.mode === 'enter' ? 'enter' : 'exit';
-				// Exit transitions finish by `exitEnd` so removed elements are
-				// gone before the layout settles; the enter runs for the whole
-				// step (`enterEnd` defaults to 1).
+				/*
+					Exit transitions finish by `exitEnd` so removed elements are
+					gone before the layout settles. The enter runs for the whole
+					step (`enterEnd` defaults to 1).
+				*/
 				const end = direction === 'enter' ? this.#enterEnd : this.#exitEnd;
-				// `stagger` offsets each element's transition start so a batch
-				// added/removed together animates one after another.
+				// `stagger` offsets each element's transition start so a batch animates one after another
 				const start = this.#stagger * tween.staggerIndex;
-				// A zero-length mapping domain (`enterEnd`/`exitEnd: 0`, or a
-				// stagger offset that reaches the transition's end) would divide
-				// by zero into NaN on the first frame; the transition is already
-				// complete for that element.
+				// a zero-length mapping domain would divide by zero into NaN, but the transition is already complete
 				const p = end === 0 || end <= start ? 1 : clampRemap(eased, start, end, 0, 1);
 				const value = transitionValue(tween.transition, p, direction, tween.el);
 				if (value.opacity !== undefined)
-					// Compose with the element's own opacity so a class-based
-					// value (e.g. Tailwind's `opacity-60`) is the ceiling: the
-					// transition fades 0 → baseOpacity and clearing the inline
-					// style at the end lands on the same class value instead of
-					// popping to it.
+					/*
+						Compose with the element's own opacity so a class-based
+						value (e.g. Tailwind's `opacity-60`) is the ceiling. The
+						transition fades 0 → baseOpacity and clearing the inline
+						style at the end lands on the same class value instead
+						of popping to it.
+					*/
 					tween.el.style.opacity = String(tween.baseOpacity * value.opacity);
 				if (tween.mode === 'exit' && tween.ancestor) {
-					// Ride the retained ancestor's FLIP motion (interpolated on
-					// the full step, while the fade runs on the transition's own
-					// timeline): scale the ghost's offset by the ancestor's
-					// current scale and add its current translation, so the
-					// ghost stays glued to the shrinking card it used to live
-					// in instead of freezing at its old viewport spot. The
-					// scale is normalized by the ancestor's initial scale so
-					// the ghost starts at its native size (what was on screen
-					// before the change) and only shrinks with the card.
+					/*
+						Ride the retained ancestor's FLIP motion (interpolated on
+						the full step, while the fade runs on the transition's own
+						timeline). Scale the ghost's offset by the ancestor's
+						current scale and add its current translation, so the
+						ghost stays glued to the shrinking card it used to live
+						in instead of freezing at its old viewport spot. The
+						scale is normalized by the ancestor's initial scale so
+						the ghost starts at its native size (what was on screen
+						before the change) and only shrinks with the card.
+					*/
 					const a = tween.ancestor;
 					const sx = lerp(a.x0, 1, eased) / a.x0;
 					const sy = lerp(a.y0, 1, eased) / a.y0;
 					const dx = lerp(a.dx0, 0, eased);
 					const dy = lerp(a.dy0, 0, eased);
-					// The ancestor's animated layout origin, relative to the
-					// ghost's pinned spot. `a.local` offsets the ghost from the
-					// ancestor's previous origin, so at progress 0 the ride is
-					// exactly the ghost's pre-change position.
+					// relative to the ghost's pinned spot, so at progress 0 the ride is exactly the ghost's pre-change position
 					const ox = a.left + dx - tween.fixed.left;
 					const oy = a.top + dy - tween.fixed.top;
 					let ride: string;
 					if (a.transform) {
-						// The ancestor's own transform rides too, tweened across
-						// the step like its flip: its rotation and scale deform
-						// the ghost around the ancestor's transform-origin (a
-						// rotated card spins its exiting content with it) and
-						// its translation shifts the whole ghost. The pivot is
-						// the ancestor's transform-origin, so decomposition —
-						// exact for translate and pure rotate/scale — only
-						// drifts when an ancestor both scales and rotates
-						// around an off-corner origin.
+						/*
+							The ancestor's own transform rides too, tweened across
+							the step like its flip. Its rotation and scale deform
+							the ghost around the ancestor's transform-origin (a
+							rotated card spins its exiting content with it) and
+							its translation shifts the whole ghost. The pivot is
+							the ancestor's transform-origin, so decomposition
+							(exact for translate and pure rotate/scale) only
+							drifts when an ancestor both scales and rotates
+							around an off-corner origin.
+						*/
 						const own = lerpTransformState(a.transform.from, a.transform.to, eased);
 						ride =
 							`translate(${fmt(ox)}px, ${fmt(oy)}px) ` +
@@ -1264,16 +1270,18 @@ export class LayoutStep implements Step {
 				if (value.rotate !== undefined) tween.el.style.rotate = value.rotate;
 				if (value.scale !== undefined) tween.el.style.scale = value.scale;
 				if (value.translate !== undefined) tween.el.style.translate = value.translate;
-				// Exit ghosts leave the layout tree, so only entered elements
-				// can sit under a scaling ancestor that needs counter-scaling.
+				// exit ghosts leave the layout tree, so only entered elements can sit under a scaling ancestor
 				if (tween.mode === 'enter' && tween.parentScale) {
-					// Counter-scale over the transition transform (applied last,
-					// in the unscaled space) so the element stays crisp. The
-					// ancestor's own FLIP offset is cancelled too, so new
-					// content sits at its destination instead of riding the
-					// ancestor's motion to a projected spot (a reused container
-					// like a hero card never actually moves, so riding would
-					// fling entering children to an arbitrary position).
+					/*
+						Counter-scale over the transition transform (applied
+						last, in the unscaled space) so the element stays
+						crisp. The ancestor's own FLIP offset is cancelled
+						too, so new content sits at its destination instead
+						of riding the ancestor's motion to a projected spot
+						(a reused container like a hero card never actually
+						moves, so riding would fling entering children to an
+						arbitrary position).
+					*/
 					const sPx = lerp(tween.parentScale.x0, 1, eased);
 					const sPy = lerp(tween.parentScale.y0, 1, eased);
 					const parentDx = lerp(tween.parentScale.dx0, 0, eased);
@@ -1308,18 +1316,14 @@ export class LayoutStep implements Step {
 			}
 		}
 
-		// `data-layout` is an HTML-first contract; the cast keeps the types
-		// simple while SVG roots (e.g. `<svg data-layout>` scenes) ride along
-		// as best-effort because CSS positioning applies to them too.
+		// `data-layout` is an HTML-first contract, the cast keeps types simple while SVG roots ride along as best-effort
 		const elements = [...document.querySelectorAll('[data-layout]')] as HTMLElement[];
 		const firstBounds = new Map<string, LayoutBounds>();
 		for (const el of elements) {
 			const rect = el.getBoundingClientRect();
 			if (rect.width > 0 && rect.height > 0) {
 				const bounds = captureBounds(el, rect);
-				// The change may reuse the node (rewriting its `data-layout`
-				// and content); the exit ghost must render the state being
-				// left, so clone before `change()` runs.
+				// the change may reuse the node, so clone before `change()` runs for the exit ghost to render
 				bounds.clone = el.cloneNode(true) as HTMLElement;
 				firstBounds.set(el.dataset.layout!, bounds);
 			}
@@ -1339,36 +1343,32 @@ export class LayoutStep implements Step {
 
 		this.#tweens = [];
 
-		// Positions within the entering/exiting sets, used to stagger each
-		// element's transition start in DOM order.
+		// positions within the entering/exiting sets, used to stagger transition starts in DOM order
 		let enterCount = 0;
 		let exitCount = 0;
 
-		// The containing block for an absolutely-positioned element: the
-		// nearest `data-layout` ancestor (so nested elements follow their
-		// animated parent), else the ancestor establishing a CSS containing
-		// block (positioned, transformed, filtered, or a container — anything
-		// `offsetParent` would miss, such as SVG or the scene's transition
-		// transform), else the viewport. Both states are returned because the
-		// ancestor itself glides from its old bounds to its final ones, and the
-		// child's local coordinates must be measured against each.
+		/*
+			The containing block for an absolutely-positioned element is the
+			nearest `data-layout` ancestor (so nested elements follow their
+			animated parent), else the ancestor establishing a CSS containing
+			block (positioned, transformed, filtered, or a container, anything
+			`offsetParent` would miss, such as SVG or the scene's transition
+			transform), else the viewport. Both states are returned because the
+			ancestor itself glides from its old bounds to its final ones, and the
+			child's local coordinates must be measured against each.
+		*/
 		const originOf = (
 			el: HTMLElement
 		): { prev: { left: number; top: number }; final: { left: number; top: number } } => {
-			// Skip the element itself: `closest` includes self, and the
-			// coordinate space of an element is its ancestor's.
+			// skip the element itself, `closest` includes self and the coordinate space of an element is its ancestor's
 			const ancestor = el.parentElement?.closest('[data-layout]');
 			if (ancestor) {
-				// `left`/`top` on the pinned element resolve against the
-				// containing block's padding-box edge, so the border-box origin
-				// is shifted out by the ancestor's border widths.
+				// `left`/`top` resolve against the padding-box edge, so shift the border-box origin out by the border widths
 				const border = paddingBoxOffset(ancestor as HTMLElement);
 				const prev = firstBounds.get((ancestor as HTMLElement).dataset.layout!);
 				const final = lastBounds.get((ancestor as HTMLElement).dataset.layout!);
 				return {
-					// The ancestor's untransformed layout box: a transformed
-					// ancestor anchors its children around its own (rotated)
-					// measured bounds, which would misplace pinned children.
+					// the ancestor's untransformed layout box, a transformed ancestor would otherwise misplace pinned children
 					prev: prev
 						? { left: prev.layout.left + border.left, top: prev.layout.top + border.top }
 						: { left: 0, top: 0 },
@@ -1410,10 +1410,12 @@ export class LayoutStep implements Step {
 			*/
 			if (hasDirectText(el) && prev.text.fontSize !== text.fontSize) continue;
 			if (!(this.#scale && morphsSize(prev, { el, layout, text }))) continue;
-			// The ancestor's own FLIP offset (previous minus final local spot),
-			// measured like the retained tween's `offset` below. Entering
-			// children cancel it so new content stays at its destination
-			// instead of riding the ancestor's motion.
+			/*
+				The ancestor's own FLIP offset (previous minus final local
+				spot), measured like the retained tween's `offset` below.
+				Entering children cancel it so new content stays at its
+				destination instead of riding the ancestor's motion.
+			*/
 			const originAt = originOf(el);
 			const finalLeft = layout.left - originAt.final.left;
 			const finalTop = layout.top - originAt.final.top;
@@ -1428,7 +1430,7 @@ export class LayoutStep implements Step {
 		}
 
 		const parentScaleOf = (el: HTMLElement) => {
-			// Skip the element itself, mirroring `originOf`.
+			// skip the element itself, mirroring `originOf`
 			const ancestor = el.parentElement?.closest('[data-layout]') as HTMLElement | null;
 			return ancestor ? scaling.get(ancestor.dataset.layout!) : undefined;
 		};
@@ -1439,17 +1441,19 @@ export class LayoutStep implements Step {
 		] of lastBounds) {
 			const prev = firstBounds.get(key);
 			if (prev) {
-				// Take the element out of flow so the container's size tween
-				// can't re-lay-out it mid-animation (e.g. a flex row
-				// re-distributing). It is pinned at its final bounds and moved
-				// via a transform so position and size glide at float precision
-				// instead of re-laying-out fractional geometry each frame.
+				/*
+					Take the element out of flow so the container's size tween
+					can't re-lay-out it mid-animation (e.g. a flex row
+					re-distributing). It is pinned at its final bounds and
+					moved via a transform so position and size glide at float
+					precision instead of re-laying-out fractional geometry
+					each frame.
+				*/
 				const originAt = originOf(el);
 				el.style.position = 'absolute';
-				// `top`/`left` position the margin box, so margins would shift
-				// the border box; drop them and place the border box directly.
+				// `top`/`left` position the margin box, so drop margins and place the border box directly
 				el.style.margin = '0';
-				// Override min/max so they can't clamp the animated width/height.
+				// override min/max so they can't clamp the animated width/height
 				el.style.minWidth = 'auto';
 				el.style.minHeight = 'auto';
 				el.style.maxWidth = 'none';
@@ -1474,11 +1478,13 @@ export class LayoutStep implements Step {
 								line: lineTween(prev.text.lineHeight, text.lineHeight)
 							}
 						: undefined;
-				// Pin at the final bounds so a shrink-wrapped box (e.g. an
-				// absolutely-positioned text run that becomes a full-width block)
-				// doesn't snap to its final size when the step ends. A
-				// transformed element pins its untransformed layout box: the
-				// rotation tween renders the measured transform on top.
+				/*
+					Pin at the final bounds so a shrink-wrapped box (e.g. an
+					absolutely-positioned text run that becomes a full-width
+					block) doesn't snap to its final size when the step ends.
+					A transformed element pins its untransformed layout box,
+					the rotation tween renders the measured transform on top.
+				*/
 				el.style.left = px(finalLeft);
 				el.style.top = px(finalTop);
 				el.style.width = px(layout.width);
@@ -1489,11 +1495,13 @@ export class LayoutStep implements Step {
 				*/
 				if (!(font && sizeChanged)) el.style.height = px(layout.height);
 				const props: LayoutPropTween[] = [];
-				// Measured as a local delta, not absolute: an ancestor that moves
-				// exactly as much as the element's own reflow (leaving its
-				// absolute spot unchanged) still needs the parent-scale
-				// compensation computed from the local shift, or the child
-				// glides under the counter-scale.
+				/*
+					Measured as a local delta, not absolute. An ancestor that
+					moves exactly as much as the element's own reflow (leaving
+					its absolute spot unchanged) still needs the parent-scale
+					compensation computed from the local shift, or the child
+					glides under the counter-scale.
+				*/
 				const offset = {
 					x: prev.layout.left - originAt.prev.left - finalLeft,
 					y: prev.layout.top - originAt.prev.top - finalTop
@@ -1505,29 +1513,32 @@ export class LayoutStep implements Step {
 					default pins the final size and scales back on the
 					compositor.
 				*/
-				const size =
-					sizeChanged && (font || !scale)
-						? {
-								fromW: prev.layout.width,
-								fromH: font ? null : prev.layout.height,
-								toW: layout.width,
-								toH: font ? null : layout.height
-							}
-						: undefined;
-				// The element's own transform is tweened across the flip — from
-				// the previous state's matrix to the final one's — and applies
-				// around the element's natural transform-origin (an un-anchored
-				// pivot, so the position offset compensates for it when the box
-				// scales). Standalone `rotate`/`scale`/`translate` are folded
-				// into that tween and suppressed while the step runs.
+				let size: FlipTween['size'];
+				if (sizeChanged && (font || !scale)) {
+					size = {
+						fromW: prev.layout.width,
+						fromH: font ? null : prev.layout.height,
+						toW: layout.width,
+						toH: font ? null : layout.height
+					};
+				}
+				/*
+					The element's own transform is tweened across the flip (from
+					the previous state's matrix to the final one's) and applies
+					around the element's natural transform-origin (an un-anchored
+					pivot, so the position offset compensates for it when the box
+					scales). Standalone `rotate`/`scale`/`translate` are folded
+					into that tween and suppressed while the step runs.
+				*/
 				const transformed = Boolean(prev.matrix || matrix);
-				// The current element's standalone props are folded into the
-				// tweened matrix, so override them to identity while the step
-				// runs (an inline `''` wouldn't beat a stylesheet rule like
-				// Tailwind's `rotate-45`); the snapshot restores them on clear.
+				/*
+					The current element's standalone props are folded into the
+					tweened matrix, so override them to identity while the step
+					runs (an inline `''` wouldn't beat a stylesheet rule like
+					Tailwind's `rotate-45`). The snapshot restores them on clear.
+				*/
 				const suppressIndividual = individual;
-				// Snapshot before suppressing so the author's standalone props
-				// survive to be restored on clear.
+				// snapshot before suppressing so the author's standalone props survive to be restored on clear
 				const inline = snapshotInline(el);
 				const forceTopLeft = (scale || parentScale) && !transformed;
 				if (forceTopLeft) el.style.transformOrigin = 'top left';
@@ -1544,11 +1555,14 @@ export class LayoutStep implements Step {
 					? { from: decomposeTransform(prev.matrix), to: decomposeTransform(matrix) }
 					: undefined;
 				for (const prop of Object.keys(LAYOUT_PROPS)) {
-					// A borderless box computes `border-color` as currentColor
-					// even though nothing renders, so a key that moves between
-					// a bordered and a borderless node would tween the color
-					// onto the element's own border width and paint a visible
-					// (here white) frame around the morph.
+					/*
+							A borderless box computes `border-color` as
+							currentColor even though nothing renders, so a key
+							that moves between a bordered and a borderless node
+							would tween the color onto the element's own border
+							width and paint a visible (here white) frame around
+							the morph.
+						*/
 					if (prop === 'border-color' && (prev.borderWidth === '0px' || borderWidth === '0px'))
 						continue;
 					let tween = createLayoutPropTween(
@@ -1560,9 +1574,7 @@ export class LayoutStep implements Step {
 					if (prop === 'border-radius' && scale) {
 						const radius = parseRadius(styles[prop]);
 						if (radius && radius.unit === 'px') {
-							// A scaling box stretches its border-radius with it,
-							// so emit an elliptical radius divided by the current
-							// scale to keep the corners at the tweened value.
+							// a scaling box stretches its border-radius with it, so divide by the current scale
 							const format = (values: number[]) => {
 								const horizontal = values.map((v) => `${v / scale!.x}px`);
 								const vertical = values.map((v) => `${v / scale!.y}px`);
@@ -1590,17 +1602,17 @@ export class LayoutStep implements Step {
 					inline
 				});
 			} else {
-				// A nested element entering inside an entering data-layout
-				// ancestor rides its animation (transform/opacity propagate down
-				// the subtree) and must not consume a stagger slot, or cards
-				// under a larger batch index past the enter window and appear
-				// instantly.
+				/*
+					A nested element entering inside an entering data-layout
+					ancestor rides its animation (transform/opacity propagate
+					down the subtree) and must not consume a stagger slot, or
+					cards under a larger batch index past the enter window and
+					appear instantly.
+				*/
 				const ancestor = el.parentElement?.closest('[data-layout]');
 				const ancestorKey = ancestor?.getAttribute('data-layout') ?? '';
 				if (ancestor && lastBounds.has(ancestorKey) && !firstBounds.has(ancestorKey)) continue;
-				// Pin newly added elements at their final spot, out of flow, so
-				// siblings re-flowing during the step can't shift them; animate
-				// in with the enter transition on top of that.
+				// pin newly added elements at their final spot, out of flow, so siblings re-flowing can't shift them
 				const originAt = originOf(el);
 				const left = layout.left - originAt.final.left;
 				const top = layout.top - originAt.final.top;
@@ -1613,9 +1625,7 @@ export class LayoutStep implements Step {
 				const inline = snapshotInline(el);
 				const rawBase = computedTransformOf(el);
 				const parentScale = parentScaleOf(el);
-				// The counter-scale below assumes a top-left pivot, so an
-				// element under a scaling ancestor always pivots there, even if
-				// the enter transition wants its own origin.
+				// the counter-scale below assumes a top-left pivot, so always pivot there under a scaling ancestor
 				const base = this.#applyStart(
 					el,
 					this.#enter,
@@ -1643,13 +1653,16 @@ export class LayoutStep implements Step {
 		for (const [key, { el, clone, text, display, layout, opacity }] of firstBounds) {
 			if (lastBounds.has(key)) continue;
 			if (this.#exit === 'none') continue;
-			// An exiting element already lives inside its data-layout
-			// ancestor's ghost clone, so a second ghost would render the
-			// content twice (e.g. a nested text span duplicated on exit).
-			// The ancestor is matched by node identity against the snapshot: a
-			// reused node may have had its `data-layout` rewritten in place
-			// (e.g. a hero card becoming the next hero's card), so its current
-			// attribute no longer names the entity the child belonged to.
+			/*
+				An exiting element already lives inside its data-layout
+				ancestor's ghost clone, so a second ghost would render the
+				content twice (e.g. a nested text span duplicated on exit).
+				The ancestor is matched by node identity against the
+				snapshot, because a reused node may have had its
+				`data-layout` rewritten in place (e.g. a hero card becoming
+				the next hero's card) and its current attribute no longer
+				names the entity the child belonged to.
+			*/
 			const parentEl = el.parentElement?.closest('[data-layout]') as HTMLElement | null;
 			let ancestorKey: string | undefined;
 			if (parentEl) {
@@ -1662,13 +1675,10 @@ export class LayoutStep implements Step {
 			}
 			if (ancestorKey === undefined) ancestorKey = parentEl?.getAttribute('data-layout') ?? '';
 			if (parentEl && firstBounds.has(ancestorKey) && !lastBounds.has(ancestorKey)) continue;
-			// Pin at the untransformed layout box, not the measured rect: the
-			// composed base re-applies the transform, so pinning the rotated
-			// rect too would render the ghost inflated.
+			// pin at the untransformed layout box, the composed base re-applies the transform
 			const ghost = this.#createGhost(clone ?? el, layout, text, display);
 			const ghostInline = snapshotInline(ghost);
-			// The ghost keeps the source's standalone props (they are not in the
-			// composed base), so it exits while staying tilted.
+			// the ghost keeps the source's standalone props (not in the composed base), so it exits while staying tilted
 			const base = this.#applyStart(
 				ghost,
 				this.#exit,
@@ -1677,22 +1687,26 @@ export class LayoutStep implements Step {
 				layout.width,
 				layout.height
 			);
-			// A removed element whose `data-layout` ancestor survives the
-			// change rides the ancestor's FLIP motion: the ghost is pinned to
-			// the viewport, so without compensation it would freeze at its
-			// pre-change spot while the card glides and shrinks away from it.
+			/*
+				A removed element whose `data-layout` ancestor survives the
+				change rides the ancestor's FLIP motion. The ghost is pinned
+				to the viewport, so without compensation it would freeze at
+				its pre-change spot while the card glides and shrinks away
+				from it.
+			*/
 			let ancestorMotion: ExitAncestor | undefined;
 			if (parentEl && lastBounds.has(ancestorKey)) {
 				const prev = firstBounds.get(ancestorKey)!;
 				const last = lastBounds.get(ancestorKey)!;
-				// The `scaling` map is populated only for ancestors that morph
-				// via transform scale (`scale: false` re-lays-out instead), so
-				// its presence decides whether the ghost's ride must scale.
+				// `scaling` only holds transform-morphing ancestors, so its presence decides whether the ride must scale
 				const morphs = scaling.get(ancestorKey);
-				// The ancestor's own transform, decomposed exactly like its flip
-				// tween's, so the ghost rotates/scales with it across the step.
-				// Read from the keyed snapshots so a node replaced by the change
-				// (a Svelte re-key) still contributes its transform.
+				/*
+					The ancestor's own transform, decomposed exactly like its
+					flip tween's, so the ghost rotates/scales with it across
+					the step. Read from the keyed snapshots so a node
+					replaced by the change (a Svelte re-key) still
+					contributes its transform.
+				*/
 				const transformed = Boolean(prev.matrix || last.matrix);
 				ancestorMotion = {
 					dx0: prev.layout.left - last.layout.left,
@@ -1710,8 +1724,7 @@ export class LayoutStep implements Step {
 						: undefined,
 					origin: last.origin
 				};
-				// The ride transform scales the ghost from its own corner so
-				// it replicates the ancestor's motion around its own spot.
+				// scale the ghost from its own corner so it replicates the ancestor's motion around its own spot
 				ghost.style.transformOrigin = 'top left';
 			}
 			this.#tweens.push({
@@ -1728,8 +1741,7 @@ export class LayoutStep implements Step {
 			});
 		}
 
-		// Snap every tween to its start state so the first painted frame shows
-		// the previous bounds (the transform pinning is only applied here).
+		// snap every tween to its start state so the first painted frame shows the previous bounds
 		this.setProgress(0);
 	}
 
@@ -1780,10 +1792,13 @@ export class LayoutStep implements Step {
 		display: string
 	): HTMLElement {
 		const ghost = el.cloneNode(true) as HTMLElement;
-		// The ghost leaves the element's flow context (it is appended to
-		// <body>), so class-relative text sizing — em/rem against a scaled
-		// ancestor, container-query fonts — would resolve differently and the
-		// exiting text would jump size. Pin the source's resolved text metrics.
+		/*
+			The ghost leaves the element's flow context (it is appended to
+			<body>), so class-relative text sizing (em/rem against a scaled
+			ancestor, container-query fonts) would resolve differently and
+			the exiting text would jump size. Pin the source's resolved
+			text metrics.
+		*/
 		ghost.style.fontFamily = text.fontFamily;
 		ghost.style.fontSize = text.fontSize;
 		ghost.style.fontWeight = text.fontWeight;
@@ -1799,9 +1814,7 @@ export class LayoutStep implements Step {
 		ghost.style.width = `${box.width}px`;
 		ghost.style.height = `${box.height}px`;
 		ghost.style.margin = '0';
-		// Preserve the source's display so grid/flex centering of nested
-		// content survives the clone (the source is always captured visible,
-		// so `display` is never `none`).
+		// preserve the source's display so grid/flex centering of nested content survives the clone
 		ghost.style.display = display;
 		ghost.style.pointerEvents = 'none';
 		document.body.appendChild(ghost);
@@ -1812,9 +1825,7 @@ export class LayoutStep implements Step {
 		if (tween.mode === 'exit') {
 			tween.el.remove();
 		} else {
-			// Restore the author's inline styles instead of wiping them: a
-			// layout step overrides these during the animation and must leave
-			// the element exactly as it found it.
+			// restore the author's inline styles instead of wiping them, the element must be left exactly as it was found
 			const { inline } = tween;
 			tween.el.style.transform = inline.transform;
 			tween.el.style.clipPath = inline.clipPath;
@@ -1834,13 +1845,15 @@ export class LayoutStep implements Step {
 			tween.el.style.minHeight = '';
 			tween.el.style.maxWidth = '';
 			tween.el.style.maxHeight = '';
-			// Auto-tweened props are only ever temporary overrides. A retained
-			// element ends back on its own inline value (restored to `''` for
-			// class-driven props so the class stays authoritative), while an
-			// untouched prop — e.g. a constant `style:background-color`
-			// directive — must survive the step. Entering elements keep the
-			// old wipe: their only animated visual prop is the
-			// transition-managed opacity.
+			/*
+				Auto-tweened props are only ever temporary overrides. A
+				retained element ends back on its own inline value (restored
+				to `''` for class-driven props so the class stays
+				authoritative), while an untouched prop (e.g. a constant
+				`style:background-color` directive) must survive the step.
+				Entering elements keep the old wipe, their only animated
+				visual prop is the transition-managed opacity.
+			*/
 			const tweened = new Set(tween.props.map((p) => p.prop));
 			for (const prop of Object.keys(LAYOUT_PROPS)) {
 				if (tween.mode === 'flip') {
@@ -1893,8 +1906,7 @@ export class ParallelStep implements Step {
 		for (let i = 0; i < this.#steps.length; i++) {
 			if (this.#done[i]) continue;
 			const step = this.#steps[i];
-			// Each sub-step keeps its own pace: it reaches progress 1 when the
-			// parallel timeline has played exactly its duration, then waits.
+			// each sub-step reaches progress 1 when the parallel timeline has played exactly its duration, then waits
 			const stepProgress =
 				step.duration > 0 ? clamp((progress * total) / step.duration, 0, 1) : progress;
 			step.setProgress(stepProgress);
@@ -2039,8 +2051,7 @@ export class CodeStep implements Step {
 				if (this.#active) this.#applyDiff();
 			});
 		} else {
-			// Highlighter is up but an extra language may still be loading;
-			// recompute on the next language-load notification.
+			// an extra language may still be loading, so recompute on the next language-load notification
 			onHighlighterRefresh(() => {
 				if (this.#active) this.#applyDiff();
 			});

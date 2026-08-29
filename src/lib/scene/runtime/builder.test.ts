@@ -10,8 +10,7 @@ vi.mock('./context.svelte.js', () => ({
 	getSceneId: vi.fn()
 }));
 
-// `createScene` registers its steps with `onMount`; outside a component the
-// real lifecycle throws, so the tests drive the manager directly.
+// `createScene` needs `onMount`, which throws outside a component, so tests drive the manager directly
 vi.mock('svelte', async (importOriginal) => {
 	const actual = await importOriginal<typeof import('svelte')>();
 	return { ...actual, onMount: vi.fn() };

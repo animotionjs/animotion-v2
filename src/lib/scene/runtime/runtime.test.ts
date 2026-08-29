@@ -139,9 +139,7 @@ describe('SceneManager determinism for time slicing', () => {
 			return frames.map((f) => `${f.progress}|${f.time}|${f.frame}`);
 		};
 
-		// Each slice runs in a fresh page, so the whole drive must be a pure
-		// function of the step + advance calls (no accumulated state leaking
-		// across drives, no real time / randomness).
+		// each slice runs in a fresh page, so the whole drive must be a pure function of the step + advance calls
 		expect(drive()).toEqual(drive());
 		expect(drive().length).toBeGreaterThan(0);
 	});
@@ -190,8 +188,7 @@ describe('SceneManager deferred start vs rewind/seek', () => {
 		const state: Record<string, unknown> = { x: 5 };
 		manager.load({ steps: [new TweenStep(state, 'x', 10, 1)] });
 
-		// The step was never started, so reverting it must not clobber the
-		// initial value with the un-snapshotted `from` default.
+		// reverting a never-started step must not clobber the initial value with the un-snapshotted `from` default
 		manager.prev();
 		expect(state.x).toBe(5);
 
@@ -520,7 +517,7 @@ describe('SceneManager finished step-change', () => {
 		}
 
 		expect(manager.finished).toBe(true);
-		// Emits: load (step 0), animation start (step 0, playing), finish (step 1).
+		// emits load (step 0), animation start (step 0, playing), finish (step 1)
 		expect(changes).toEqual([
 			{ step: 0, total: 1 },
 			{ step: 0, total: 1 },

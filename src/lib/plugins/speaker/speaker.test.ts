@@ -376,8 +376,7 @@ describe('speakerPlugin', () => {
 
 			expect(manager.seek).toHaveBeenCalledWith(0, true, false);
 
-			// The mirror keeps its own position in sync after seeking; a
-			// re-broadcast of the same triple must not drive a second seek.
+			// a re-broadcast of the same triple after seeking must not drive a second seek
 			Object.assign(ctx.state, { step: 1, stepCompleted: true, finished: false });
 			channel.dispatch({
 				type: 'state',
@@ -464,8 +463,7 @@ describe('speakerPlugin', () => {
 			});
 			expect(manager.play).toHaveBeenCalledOnce();
 
-			// The mirror is now playing the same step; a re-broadcast of the
-			// same state must not seek again or restart the animation.
+			// a re-broadcast while playing the same step must not seek again or restart the animation
 			Object.assign(ctx.state, { step: 1, stepCompleted: false, playing: true, finished: false });
 			channel.dispatch({
 				type: 'state',
@@ -490,7 +488,7 @@ describe('speakerPlugin', () => {
 		it('plays in place without re-seeking when the presenter starts animating the current step', () => {
 			const { ctx, manager, channel } = setupEmbed();
 
-			// The mirror already sits on the step the presenter is about to play.
+			// the mirror already sits on the step the presenter is about to play
 			Object.assign(ctx.state, { step: 1, stepCompleted: false, playing: false, finished: false });
 
 			channel.dispatch({
@@ -563,8 +561,7 @@ describe('speakerPlugin', () => {
 					scenes: [{ id: 'intro' }, { id: 'about' }]
 				}
 			});
-			// The fake context never commits the navigation, so re-broadcasting
-			// the same target must not trigger a second navigateTo.
+			// the fake context never commits navigation, so the same target must not trigger a second navigateTo
 			channel.dispatch({
 				type: 'state',
 				state: {
