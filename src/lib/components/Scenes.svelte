@@ -186,7 +186,8 @@
 
 	function navigateTo(targetId: string) {
 		const saved = manager.getSavedState(targetId);
-		const step = saved ? (saved.stepCompleted ? saved.stepIndex + 1 : saved.stepIndex) : null;
+		let step: number | null = null;
+		if (saved) step = saved.stepCompleted ? saved.stepIndex + 1 : saved.stepIndex;
 		const search = page.url.search;
 		const hash = step === null || step === 0 ? '' : `#${step}`;
 		return goto(`/${targetId}${search}${hash}`);

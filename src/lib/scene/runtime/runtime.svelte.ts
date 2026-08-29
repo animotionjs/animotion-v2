@@ -485,7 +485,8 @@ export class SceneManager {
 			this.#stepProgress = 0;
 			this.#stepCompleted = false;
 
-			const target = saved ? (saved.stepCompleted ? saved.stepIndex + 1 : saved.stepIndex) : 0;
+			let target = 0;
+			if (saved) target = saved.stepCompleted ? saved.stepIndex + 1 : saved.stepIndex;
 			while (this.#stepIndex < target) {
 				const step = this.#steps[this.#stepIndex];
 				if (!step) break;
