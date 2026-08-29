@@ -15,7 +15,10 @@
 
 <button
 	type="button"
-	class={['rounded p-2', { 'bg-accent/30': accent, 'hover:bg-surface': !accent }]}
+	class={[
+		'cursor-pointer rounded p-2 transition-colors',
+		{ 'bg-accent/30': accent, 'hover:bg-surface': !accent }
+	]}
 	aria-label={label}
 	title={label}
 	{onclick}

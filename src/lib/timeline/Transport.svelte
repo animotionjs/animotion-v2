@@ -72,10 +72,10 @@
 	<button
 		type="button"
 		class={[
-			'inline-flex items-center gap-1 rounded px-2 py-1 text-xs',
+			'inline-flex cursor-pointer items-center gap-1 rounded px-2 py-1 text-xs transition-colors',
 			{
 				'bg-accent/30 text-foreground hover:bg-accent/40': controller.loop,
-				'bg-surface text-foreground': !controller.loop
+				'bg-surface text-foreground hover:bg-accent/40': !controller.loop
 			}
 		]}
 		aria-pressed={controller.loop}

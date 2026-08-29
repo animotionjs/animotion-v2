@@ -56,6 +56,8 @@ function parseRequest(input: unknown) {
 	return { scene, aspect, resolution, fps, quality, output, origin };
 }
 
+export type RenderStatus = ReturnType<typeof renderStatus>;
+
 export const startRender = command('unchecked', async (input) => {
 	await startRenderer(parseRequest(input));
 });

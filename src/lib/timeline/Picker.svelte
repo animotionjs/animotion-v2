@@ -13,7 +13,7 @@
 	let { label, options, value = $bindable() }: Props = $props();
 </script>
 
-<label class="flex items-center gap-1 text-xs text-foreground/60">
+<label class="contents text-xs text-foreground/60">
 	{label}:
 	<select class="rounded bg-surface px-1 py-1 text-xs text-foreground" bind:value>
 		{#each options as option (option.value)}
