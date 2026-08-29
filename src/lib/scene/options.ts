@@ -10,7 +10,7 @@ export const ASPECT_RATIOS = {
 export type AspectRatio = keyof typeof ASPECT_RATIOS;
 
 /** Render size tiers, applied to the shape's smaller side. */
-const RESOLUTIONS = {
+export const RESOLUTIONS = {
 	'720p': 720,
 	'1080p': 1080,
 	'2k': 1440,
@@ -19,20 +19,38 @@ const RESOLUTIONS = {
 
 export type ResolutionName = keyof typeof RESOLUTIONS;
 
+/**
+ * Resolves a size tier against an aspect ratio preset by scaling the
+ * preset's smaller side up to the tier, keeping the shape.
+ */
+export function resolveRenderSize(aspect: AspectRatio, resolution: ResolutionName) {
+	const { width: pw, height: ph } = ASPECT_RATIOS[aspect];
+	const tier = RESOLUTIONS[resolution];
+	if (pw <= ph) return { width: tier, height: Math.round((tier * ph) / pw) };
+	return { width: Math.round((tier * pw) / ph), height: tier };
+}
+
 /** Frame image format captured from the page. */
 export type FrameFormat = 'png' | 'jpeg';
+
+/** JPEG capture quality for draft renders, shared by the CLI and the timeline runner. */
+export const PREVIEW_JPEG_QUALITY = 60;
 
 /** Fully resolved render settings; every field has a concrete value. */
 export interface RenderOptions {
 	fps: number;
 	width: number;
 	height: number;
+	/** The size tier in use, or null when explicit dimensions take over. */
+	resolution: ResolutionName | null;
 	/** Worker count, or `'auto'` to let the renderer pick from the CPU core count. */
 	jobs: number | 'auto';
 	out: string;
 	framesOnly: boolean;
 	keepFrames: boolean;
 	progressBar: boolean;
+	/** Whether Chromium may use hardware acceleration. Unhealthy GPUs fall back to software. */
+	gpu: boolean;
 	format: FrameFormat;
 	jpegQuality: number;
 }
@@ -52,6 +70,8 @@ export interface RenderOptionsInput {
 	framesOnly?: boolean;
 	keepFrames?: boolean;
 	progressBar?: boolean;
+	/** Whether Chromium may use hardware acceleration. Unhealthy GPUs fall back to software. */
+	gpu?: boolean;
 	format?: FrameFormat;
 	jpegQuality?: number;
 }
@@ -89,7 +109,7 @@ export interface Options {
 	transition: TransitionConfig | null;
 }
 
-type RenderDefaults = Omit<RenderOptions, 'width' | 'height'>;
+type RenderDefaults = Omit<RenderOptions, 'width' | 'height' | 'resolution'>;
 
 const DEFAULT_RENDER: RenderDefaults = {
 	fps: 60,
@@ -98,6 +118,7 @@ const DEFAULT_RENDER: RenderDefaults = {
 	framesOnly: false,
 	keepFrames: false,
 	progressBar: false,
+	gpu: true,
 	format: 'png',
 	jpegQuality: 95
 };
@@ -134,11 +155,7 @@ function resolveResolution(preset: { width: number; height: number }): {
 	if (width) return { width, height: Math.round((width * ph) / pw) };
 	if (height) return { width: Math.round((height * pw) / ph), height };
 
-	const tier = resolution ? RESOLUTIONS[resolution] : null;
-	if (tier) {
-		if (pw <= ph) return { width: tier, height: Math.round((tier * ph) / pw) };
-		return { width: Math.round((tier * pw) / ph), height: tier };
-	}
+	if (resolution) return resolveRenderSize(aspectRatio, resolution);
 
 	return { width: preset.width, height: preset.height };
 }
@@ -150,16 +167,20 @@ function resolveResolution(preset: { width: number; height: number }): {
 export function getOptions(): Options {
 	const preset = ASPECT_RATIOS[aspectRatio];
 	const { width, height } = resolveResolution(preset);
+	// the tier only decides the size when no explicit dimensions are set
+	const usesTier = !render.width && !render.height;
 
 	const resolved: RenderOptions = {
 		fps: render.fps ?? DEFAULT_RENDER.fps,
 		width,
 		height,
+		resolution: usesTier ? (render.resolution ?? null) : null,
 		jobs: render.jobs ?? DEFAULT_RENDER.jobs,
 		out: render.out ?? DEFAULT_RENDER.out,
 		framesOnly: render.framesOnly ?? DEFAULT_RENDER.framesOnly,
 		keepFrames: render.keepFrames ?? DEFAULT_RENDER.keepFrames,
 		progressBar: render.progressBar ?? DEFAULT_RENDER.progressBar,
+		gpu: render.gpu ?? DEFAULT_RENDER.gpu,
 		format: render.format ?? DEFAULT_RENDER.format,
 		jpegQuality: render.jpegQuality ?? DEFAULT_RENDER.jpegQuality
 	};

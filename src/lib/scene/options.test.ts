@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import { getOptions, setOptions } from './options';
+import { getOptions, resolveRenderSize, setOptions } from './options';
 
 beforeEach(() => {
 	setOptions({ aspectRatio: 'video', render: {}, transition: null });
@@ -18,6 +18,7 @@ describe('options', () => {
 			framesOnly: false,
 			keepFrames: false,
 			progressBar: false,
+			gpu: true,
 			format: 'png',
 			jpegQuality: 95
 		});
@@ -71,6 +72,23 @@ describe('options', () => {
 		expect(getOptions().render).toMatchObject({ width: 1080, height: 1920 });
 	});
 
+	it('scales the smaller side of a preset via resolveRenderSize', () => {
+		expect(resolveRenderSize('video', '720p')).toEqual({ width: 1280, height: 720 });
+		expect(resolveRenderSize('square', '4k')).toEqual({ width: 2160, height: 2160 });
+		expect(resolveRenderSize('vertical', '1080p')).toEqual({ width: 1080, height: 1920 });
+	});
+
+	it('exposes the tier in use, or null when dimensions take over', () => {
+		setOptions({ aspectRatio: 'video', render: { resolution: '4k' } });
+		expect(getOptions().render.resolution).toBe('4k');
+
+		setOptions({ aspectRatio: 'video', render: {} });
+		expect(getOptions().render.resolution).toBeNull();
+
+		setOptions({ aspectRatio: 'video', render: { resolution: '4k', width: 1280, height: 720 } });
+		expect(getOptions().render.resolution).toBeNull();
+	});
+
 	it('merges render overrides with defaults', () => {
 		setOptions({ render: { fps: 30, jobs: 8 } });
 		const options = getOptions();
@@ -84,6 +102,12 @@ describe('options', () => {
 		const options = getOptions();
 		expect(options.render.format).toBe('jpeg');
 		expect(options.render.jpegQuality).toBe(90);
+	});
+
+	it('renders with gpu acceleration by default and allows opting out', () => {
+		expect(getOptions().render.gpu).toBe(true);
+		setOptions({ render: { gpu: false } });
+		expect(getOptions().render.gpu).toBe(false);
 	});
 
 	it('defaults to no transition', () => {

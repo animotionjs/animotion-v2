@@ -9,7 +9,8 @@ import { chromium, type Browser, type Page } from 'playwright';
 import { resolveScenes } from './scenes.ts';
 import { sliceRanges, type SliceRange } from '../lib/scene/runtime/slices.ts';
 import type { RenderBridge } from '../lib/scene/runtime/render-bridge.js';
-import type { FrameFormat } from '../lib/scene/options.js';
+import { PREVIEW_JPEG_QUALITY, type FrameFormat } from '../lib/scene/options.ts';
+import type { RenderReport } from '../lib/scene/runtime/report.js';
 
 declare global {
 	interface Window {
@@ -30,9 +31,11 @@ type ParsedArgs = {
 	jpegQuality?: number;
 	preview?: boolean;
 	gpu?: boolean;
+	noGpu?: boolean;
 	bench?: boolean;
 	slices?: number;
 	separate?: boolean;
+	server?: string;
 	scenes: string[];
 };
 
@@ -57,6 +60,30 @@ type ResolvedArgs = {
 	separate: boolean;
 	scenes: string[];
 };
+
+const reporting = typeof process.send === 'function';
+let reportedTotal = 0;
+/** Written frame counts for each work item a worker has picked up. */
+const reportItems: { written: number }[] = [];
+
+/** Forwards a progress update to the spawner, if one is listening. */
+function report(message: RenderReport) {
+	if (!reporting) return;
+	try {
+		process.send!(message);
+	} catch {
+		// the channel can close before the render ends, nothing to report to
+	}
+}
+
+/** Sends a progress tick counting every frame captured so far across all workers. */
+function reportProgress() {
+	report({
+		type: 'progress',
+		done: reportItems.reduce((sum, item) => sum + item.written, 0),
+		total: reportedTotal
+	});
+}
 
 /** A unit of work popped by a worker, either a whole scene or one frame range of one scene. */
 type WorkItem = {
@@ -92,6 +119,12 @@ type PageClient = {
 };
 
 const parsedArgs = parseArgs(process.argv.slice(2));
+/*
+ * Where the scene pages are served from. A terminal render starts its own
+ * dev server on port 4173, while a render started from the timeline UI
+ * reuses the dev server the app is already running on.
+ */
+const baseUrl = parsedArgs.server ?? 'http://127.0.0.1:4173';
 let server: ChildProcess | null = null;
 let browser: Browser | null = null;
 let isCrashed = false;
@@ -132,10 +165,12 @@ Options:
                      instead of lossless PNG for faster rendering
   --png              force lossless PNG capture (default; use with --jpeg to
                      switch back in a preview render)
-  --preview          fast draft render: half resolution, 30 fps, JPEG capture
-  --gpu              prefer hardware acceleration (auto-falls back to software)
+  --preview          fast draft render: 30 fps with lower quality JPEG capture
+  --gpu              hardware acceleration (default, falls back to software
+                     automatically when it appears unavailable)
+  --no-gpu           force software rendering
   --slices [count]   capture each scene's frames across count parallel workers,
-                     each handling a contiguous frame range (default 4).
+                     each handling a contiguous frame range (default auto).
                      Scenes shorter than ~2s render whole. The scene must
                      drive its state purely from time/frame (no Math.random,
                      Date.now, or accumulated side-effects), since every slice
@@ -150,9 +185,11 @@ Options:
                      so the end-to-end part has something to compare
   --separate         write one video per scene (rendered/<id>.mp4) instead of one
                      combined video
-  --frames-only      save frames without encoding video
-  --keep-frames      keep rendered frames after encoding (forces file capture)
-  --progress-bar     show a progress bar
+   --frames-only      save frames without encoding video
+   --keep-frames      keep rendered frames after encoding (forces file capture)
+   --progress-bar     show a progress bar
+   --server <url>     load scene pages from an already running dev server
+                      instead of starting one (used by the timeline UI)
 
 By default frames are streamed straight into ffmpeg while they are captured.
 Pass --frames-only or --keep-frames to write frames to rendered/frames/ instead.
@@ -169,36 +206,45 @@ Examples:
 	}
 
 	const renderStart = performance.now();
-	console.log('Starting dev server...');
-	server = spawn(
-		resolve('node_modules/.bin/vite'),
-		['dev', '--port', '4173', '--host', '127.0.0.1', '--strictPort'],
-		{
-			stdio: ['ignore', 'ignore', 'inherit']
-		}
-	);
-	server.on('error', (err) => {
-		console.error('Failed to start vite:', err.message);
-		process.exit(1);
-	});
-	server.on('exit', (code) => {
-		if (code !== null && code !== 0) {
-			console.error(`Vite exited unexpectedly (code ${code}). Is port 4173 already in use?`);
+	if (parsedArgs.server) {
+		console.log(`Using dev server at ${baseUrl}`);
+		await waitForServer(baseUrl);
+	} else {
+		console.log('Starting dev server...');
+		server = spawn(
+			resolve('node_modules/.bin/vite'),
+			['dev', '--port', '4173', '--host', '127.0.0.1', '--strictPort'],
+			{
+				stdio: ['ignore', 'ignore', 'inherit']
+			}
+		);
+		server.on('error', (err) => {
+			console.error('Failed to start vite:', err.message);
 			process.exit(1);
-		}
-	});
+		});
+		server.on('exit', (code) => {
+			if (code !== null && code !== 0) {
+				console.error(`Vite exited unexpectedly (code ${code}). Is port 4173 already in use?`);
+				process.exit(1);
+			}
+		});
 
-	try {
-		await waitForServer('http://127.0.0.1:4173');
-	} catch (e) {
-		server.kill();
-		throw e;
+		try {
+			await waitForServer(baseUrl);
+		} catch (e) {
+			server.kill();
+			throw e;
+		}
+
+		console.log(`Dev server ready on ${baseUrl}`);
 	}
 
-	console.log('Dev server ready on http://127.0.0.1:4173');
-
 	console.log('Launching browser...');
-	let gpuActive = parsedArgs.gpu === true;
+	/*
+	 * Hardware acceleration is the default, and the probe health check below
+	 * falls back to software when the GPU misbehaves.
+	 */
+	let gpuActive = !parsedArgs.noGpu;
 	browser = await launchBrowser(gpuActive);
 
 	async function acquireProbe() {
@@ -208,7 +254,7 @@ Examples:
 		tempPage.on('crash', () => {
 			isCrashed = true;
 		});
-		await tempPage.goto(`http://127.0.0.1:4173/?render`, { waitUntil: 'domcontentloaded' });
+		await tempPage.goto(`${baseUrl}/?render`, { waitUntil: 'domcontentloaded' });
 		await tempPage.waitForFunction(() => window.__sequenceRenderer !== undefined, undefined, {
 			timeout: 15000
 		});
@@ -222,7 +268,13 @@ Examples:
 	}
 
 	let probe = await acquireProbe();
-	if (gpuActive && !probe.gpuHealthy) {
+	/*
+	 * Config can opt out of GPU rendering as well, at the cost of one extra
+	 * browser launch, because the renderer only learns the setting from the
+	 * probe page after starting up.
+	 */
+	const configGpu = probe.renderOptions.gpu !== false;
+	if (gpuActive && (!probe.gpuHealthy || !configGpu)) {
 		console.warn('GPU acceleration appears unavailable, falling back to software rendering.');
 		await browser.close();
 		gpuActive = false;
@@ -236,26 +288,25 @@ Examples:
 		out: parsedArgs.out ?? renderOptions.out,
 		outSet: parsedArgs.out !== undefined,
 		fps: parsedArgs.fps ?? (parsedArgs.preview ? 30 : renderOptions.fps),
-		width:
-			parsedArgs.width ??
-			(parsedArgs.preview ? previewDim(renderOptions.width) : renderOptions.width),
-		height:
-			parsedArgs.height ??
-			(parsedArgs.preview ? previewDim(renderOptions.height) : renderOptions.height),
+		width: parsedArgs.width ?? renderOptions.width,
+		height: parsedArgs.height ?? renderOptions.height,
 		jobs,
 		encoderThreads: encoderThreadBudget(jobs),
 		framesOnly: parsedArgs.framesOnly ?? renderOptions.framesOnly,
 		keepFrames: parsedArgs.keepFrames ?? renderOptions.keepFrames,
 		progressBar: parsedArgs.progressBar ?? renderOptions.progressBar,
 		format: parsedArgs.format ?? (parsedArgs.preview ? 'jpeg' : renderOptions.format),
-		jpegQuality: parsedArgs.jpegQuality ?? renderOptions.jpegQuality,
+		jpegQuality:
+			parsedArgs.jpegQuality ??
+			(parsedArgs.preview ? PREVIEW_JPEG_QUALITY : renderOptions.jpegQuality),
 		gpu: gpuActive,
 		bench: parsedArgs.bench ?? false,
 		slices: parsedArgs.slices ?? 1,
 		separate: parsedArgs.separate ?? false,
 		scenes: parsedArgs.scenes
 	};
-	const renderQs = args.progressBar ? 'render&progress' : 'render';
+	// the picked size rides along so the stage fills the viewport exactly
+	const renderQs = `render&w=${args.width}&h=${args.height}${args.progressBar ? '&progress' : ''}`;
 
 	const perScene = args.scenes.length > 0;
 	const targets = perScene ? resolveScenes(args.scenes, scenes) : scenes;
@@ -306,35 +357,18 @@ Examples:
 	 */
 	const SLICE_MIN_SECONDS = 2;
 
-	if (useSlices) {
-		/*
-		 * To split a scene we need its exact frame count, so play each scene
-		 * once behind the scenes. Advancing without taking screenshots costs
-		 * well under a millisecond per frame.
-		 */
-		const dryPage = await browser!.newPage({ deviceScaleFactor: 1 });
-		dryPage.on('crash', () => {
-			isCrashed = true;
-		});
-		dryPage.on('pageerror', (err) => pageErrors.push(err.message));
-		const dryClient = await attachClient(dryPage, args);
-		console.log('Measuring scene frame counts...');
-		const totals: number[] = [];
-		for (let i = 0; i < targets.length; i++) {
-			const id = targets[i];
-			const isLast = i === targets.length - 1;
-			/*
-			 * settle stays false here because the frame count comes from the
-			 * step math alone, so there is no need to wait for readiness or
-			 * asset loads.
-			 */
-			await loadScenePage(dryPage, id, renderQs, false);
-			const { total } = await driveScene(dryClient, id, isLast, args, i, null, null);
-			totals.push(total);
-			console.log(`  ${id}: ${total} frames`);
-		}
-		await dryPage.close().catch(() => {});
+	/*
+	 * Splitting a scene or reporting percent progress needs the exact frame
+	 * count, so play each scene once behind the scenes. Advancing without
+	 * taking screenshots costs well under a millisecond per frame.
+	 */
+	const totals = useSlices || reporting ? await measureSceneFrames(args, targets, renderQs) : null;
+	if (reporting) {
+		reportedTotal = totals ? totals.reduce((sum, total) => sum + total, 0) : 0;
+		reportProgress();
+	}
 
+	if (useSlices && totals) {
 		/*
 		 * These are the worker slots up for grabs. Scenes too short to split
 		 * each pin one worker, and everything left over is shared out among
@@ -473,9 +507,11 @@ Examples:
 		} else if (targets.length > 1) {
 			console.warn('Skipping end-to-end comparison. Pick one scene so timings stay comparable.');
 		} else {
-			// Each timed render starts its own server, so ours has to let go of
-			// the shared port first. Its exit handler would treat the shutdown
-			// as a crash, so quiet it before pulling the plug.
+			/*
+			 * Each timed render starts its own server, so ours has to let go of
+			 * the shared port first. Its exit handler would treat the shutdown
+			 * as a crash, so quiet it before pulling the plug
+			 */
 			server?.removeAllListeners('exit');
 			server?.kill();
 			server = null;
@@ -488,6 +524,8 @@ Examples:
 	console.log(
 		`Captured ${targets.length} scenes, ${totalFrames} frames in ${captureElapsed.toFixed(2)}s`
 	);
+
+	if (reporting && !args.framesOnly) report({ type: 'encoding' });
 
 	if (!args.framesOnly) {
 		const encodeStart = performance.now();
@@ -542,6 +580,36 @@ Examples:
 	}
 }
 
+/**
+ * Plays every target scene without capturing frames to learn its exact
+ * frame count. Used for slice planning and for percent progress reporting.
+ */
+async function measureSceneFrames(args: ResolvedArgs, targets: string[], renderQs: string) {
+	const dryPage = await browser!.newPage({ deviceScaleFactor: 1 });
+	dryPage.on('crash', () => {
+		isCrashed = true;
+	});
+	dryPage.on('pageerror', (err) => pageErrors.push(err.message));
+	const dryClient = await attachClient(dryPage, args);
+	console.log('Measuring scene frame counts...');
+	const totals: number[] = [];
+	for (let i = 0; i < targets.length; i++) {
+		const id = targets[i];
+		const isLast = i === targets.length - 1;
+		/*
+		 * Settle stays false here because the frame count comes from the
+		 * step math alone, so there is no need to wait for readiness or
+		 * asset loads.
+		 */
+		await loadScenePage(dryPage, id, renderQs, false);
+		const { total } = await driveScene(dryClient, id, isLast, args, i, null, null, null);
+		totals.push(total);
+		console.log(`  ${id}: ${total} frames`);
+	}
+	await dryPage.close().catch(() => {});
+	return totals;
+}
+
 function printStatus() {
 	process.stdout.write(`\x1b[${progress.length}A`);
 	const now = performance.now();
@@ -551,6 +619,7 @@ function printStatus() {
 		const line = `  [${i + 1}/${progress.length}] ${p.id.padEnd(12)} ${p.frames} frames  ${(elapsed / 1000).toFixed(2)}s`;
 		process.stdout.write('\r\x1b[K' + line + '\n');
 	}
+	if (reporting) reportProgress();
 }
 
 /**
@@ -594,6 +663,10 @@ async function runWorker(
 				continue;
 			}
 
+			// registered so the whole render progress can count this item's frames
+			const reportItem = { written: 0 };
+			reportItems.push(reportItem);
+
 			await loadScenePage(page, item.id, renderQs);
 
 			const streaming = !args.framesOnly && !args.keepFrames;
@@ -614,7 +687,8 @@ async function runWorker(
 					args,
 					item.sceneIndex,
 					item.range,
-					sink
+					sink,
+					reportItem
 				);
 				const ms = performance.now() - progress[item.sceneIndex].startMs;
 				await sink.close();
@@ -645,7 +719,7 @@ async function runWorker(
  * after 15s rather than hanging forever.
  */
 async function loadScenePage(page: Page, id: string, renderQs: string, settle = true) {
-	await page.goto(`http://127.0.0.1:4173/${id}?${renderQs}`, {
+	await page.goto(`${baseUrl}/${id}?${renderQs}`, {
 		waitUntil: 'domcontentloaded',
 		timeout: 10000
 	});
@@ -708,7 +782,8 @@ async function driveScene(
 	args: ResolvedArgs,
 	sceneIndex: number,
 	range: SliceRange | null,
-	sink: FrameSink | null
+	sink: FrameSink | null,
+	reportItem: { written: number } | null
 ): Promise<{ written: number; total: number }> {
 	let frameIndex = 1;
 	let written = 0;
@@ -721,6 +796,7 @@ async function driveScene(
 		if (range && (f < range.start || f > range.end)) return;
 		await sink.write(await safeCapture(client));
 		written++;
+		if (reportItem) reportItem.written = written;
 	};
 	const withinRange = () => !range || frameIndex <= range.end;
 
@@ -787,7 +863,7 @@ const BENCH_FRAMES = 60;
  */
 async function benchScene(page: Page, id: string, args: ResolvedArgs, renderQs: string) {
 	for (const format of ['png', 'jpeg'] as const) {
-		await page.goto(`http://127.0.0.1:4173/${id}?${renderQs}`, {
+		await page.goto(`${baseUrl}/${id}?${renderQs}`, {
 			waitUntil: 'domcontentloaded',
 			timeout: 10000
 		});
@@ -1309,12 +1385,6 @@ async function waitUntilPortFree(port: number, timeoutMs = 5000) {
 	}
 }
 
-/** Halves `n` to an even number, with a floor of 2, for preview renders. */
-function previewDim(n: number): number {
-	const half = Math.floor(n / 2);
-	return Math.max(2, half - (half % 2));
-}
-
 /** Parses CLI flags and collects non-flag arguments as scene ids. */
 function parseArgs(argv: string[]): ParsedArgs {
 	const args: ParsedArgs = {
@@ -1377,6 +1447,9 @@ function parseArgs(argv: string[]): ParsedArgs {
 			case '--gpu':
 				args.gpu = true;
 				break;
+			case '--no-gpu':
+				args.noGpu = true;
+				break;
 			case '--slices':
 				if (argv[i + 1] !== undefined && /^\d+$/.test(argv[i + 1])) {
 					const val = parseInt(argv[++i], 10);
@@ -1397,6 +1470,9 @@ function parseArgs(argv: string[]): ParsedArgs {
 				break;
 			case '--separate':
 				args.separate = true;
+				break;
+			case '--server':
+				args.server = argv[++i];
 				break;
 			case '--png':
 				args.format = 'png';
@@ -1427,7 +1503,7 @@ async function waitForServer(url: string, timeout = 30000) {
 			const res = await fetch(url);
 			if (res.ok) return;
 		} catch {
-			// server not up yet; retry
+			// server not up yet, retry
 		}
 		await new Promise((r) => setTimeout(r, 500));
 	}

@@ -1,5 +1,5 @@
 import { clamp } from '../scene/easing';
-import type { SceneManager } from '../scene/runtime/runtime.svelte';
+import { timelineSegments, type SceneManager } from '../scene/runtime/runtime.svelte';
 
 /**
  * Plays a single scene exactly like the video renderer would. Time advances
@@ -53,21 +53,23 @@ export class TimelineController {
 
 	/** Segment boundary times (scene start, enter end, every step span end). */
 	boundaries() {
-		const timeline = this.timeline;
 		const points: number[] = [0];
-		let cursor = timeline.enterDuration;
-		if (cursor > 0) points.push(cursor);
-		timeline.steps.forEach((step, index) => {
-			cursor += (index === 0 ? timeline.introHold : 0) + step.duration + step.wait;
-			points.push(cursor);
-		});
+		for (const segment of timelineSegments(this.timeline)) {
+			points.push(segment.start + segment.hold + segment.duration + segment.wait);
+		}
 		return points;
 	}
 
 	/** Pauses (if playing) and jumps to the snapped position. */
 	seekTo(seconds: number) {
 		this.pause();
-		this.time = this.snap(seconds);
+		const snapped = this.snap(seconds);
+		/*
+		 * Scrubbing fires seeks for the same frame over and over, and replaying
+		 * the scene up to it is costly, so an unchanged position is a no-op.
+		 */
+		if (snapped === this.time) return;
+		this.time = snapped;
 		this.#manager.seekToTime(this.time);
 	}
 
@@ -165,6 +167,8 @@ export class TimelineController {
 			this.#startPlayback();
 			return;
 		}
+		// the manager can finish a hair before the playhead reaches the end
+		this.time = this.duration;
 		this.pause();
 	}
 }

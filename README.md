@@ -338,7 +338,13 @@ Drag anywhere on the track to scrub the playhead, or use the transport controls:
 | `Home` / `End` | Restart / jump to the end |
 | `l` | Toggle loop (ignored with `cmd`/`ctrl`/`alt`) |
 
-The speed selector plays at 0.25×, 0.5×, 1×, or 2×. The aspect picker (video / vertical / square) changes only the preview frame, seeded from the deck config and never written back to it — it does not alter the rendered video. Every frame is driven by the same engine and FPS used to render, so what you scrub is what the renderer produces.
+  Every frame is driven by the same engine and FPS used to render, so what you scrub is what the renderer produces.
+
+### Rendering from the timeline
+
+`Preview` renders a 30 fps draft with lower-quality JPEG written to a separate `*.preview.mp4` file; `Full` captures lossless PNG frames and `Balanced` full-resolution JPEG. Every tier renders at the same size, so the layout always matches the final render.
+
+The render attaches to the dev server you are already running, so the page never reloads, and one render runs at a time. Video renders land in `rendered/<id>.mp4` (previews in `rendered/<id>.preview.mp4`), full presentations in `rendered/video.mp4` or whatever `configure({ render: { out } })` names, and image sequences in `rendered/frames/<id>/` as `frame_000001.png` files.
 
 ## Configuration
 
@@ -369,7 +375,7 @@ configure({
   - `'video'` — 16:9, 1920×1080 (YouTube, X, presentations; default)
   - `'vertical'` — 9:16, 1080×1920 (Reels, TikTok, Shorts)
   - `'square'` — 1:1, 1080×1080 (Instagram feed)
-- `render` sets the default options used by `animotion render`. `resolution` picks a size tier — `'720p'`, `'1080p'`, `'2k'`, `'4k'` — scaling the shape so its smaller side matches (e.g. `'2k'` gives 2560×1440 landscape, `'4k'` gives 3840×2160 landscape, 2160×3840 vertical, 2160×2160 square). Explicit `width`/`height` override the tier; the remaining options fall back to their defaults.
+- `render` sets the default options used by `animotion render`. `resolution` picks a size tier — `'720p'`, `'1080p'`, `'2k'`, `'4k'` — scaling the shape so its smaller side matches (e.g. `'2k'` gives 2560×1440 landscape, `'4k'` gives 3840×2160 landscape, 2160×3840 vertical, 2160×2160 square). Explicit `width`/`height` override the tier; the remaining options fall back to their defaults. `gpu` toggles hardware acceleration for the headless browser (default `true`, with an automatic software fallback when the GPU looks unavailable).
 - `transition` sets the default scene transition: `{ type: 'slide' | 'fade' | 'zoom', duration?, ease?, distance?, scale? }` or `null` to disable. See [Default transition](#default-transition).
 
 Both highlighter options are typed against shiki's bundles, so editor autocomplete suggests the valid names.
@@ -449,9 +455,9 @@ Renders parallelize on their own. The renderer picks a worker count from your CP
 
 Because every slice runs in its own tab, a split scene must drive its state purely from time or frame. Anything like `Math.random()`, `Date.now()`, or a counter that accumulates would disagree between slices. Scenes that cannot promise that should use `--no-slices`.
 
-For quick drafts use `--preview`. It halves the resolution, drops to 30 fps, and captures JPEG frames. `--jpeg [quality]` does the same swap at full resolution. `--gpu` lets Chromium use hardware acceleration when available, falling back to software otherwise. `--bench` prints what each frame costs to advance and capture, which is handy for comparing settings without rendering anything.
+For quick drafts use `--preview`. It drops to 30 fps and captures lower-quality JPEG frames while keeping the full size, so the layout matches the final render. `--jpeg [quality]` does the quality swap on its own. Chromium uses hardware acceleration by default, verified with a health check that falls back to software automatically; `--no-gpu` forces software rendering, as does `gpu: false` in config. `--bench` prints what each frame costs to advance and capture, which is handy for comparing settings without rendering anything.
 
-By default nothing is written to disk. Pass `--frames-only` to save raw frames without encoding, or `--keep-frames` to keep them on disk after encoding.
+  By default nothing is written to disk. Pass `--frames-only` to save raw frames to `rendered/frames/` without encoding, or `--keep-frames` to keep them on disk after encoding.
 
 ### Rendering individual scenes
 
@@ -493,13 +499,14 @@ pnpm pack # produces animotion-core-0.0.1.tgz
 pnpm add /path/to/animotion-core-0.0.1.tgz
 ```
 
-`Scenes` ships as raw `.svelte` source using top-level `await`, so enable experimental async in your `vite.config.ts`:
+`Scenes` ships as raw `.svelte` source using top-level `await`, and the timeline's render controls are remote functions, so enable both in your `vite.config.ts`:
 
 ```ts
 sveltekit({
 	compilerOptions: {
 		experimental: { async: true }
-	}
+	},
+	experimental: { remoteFunctions: true }
 });
 ```
 
@@ -509,18 +516,19 @@ Your project has these files; the template provides the boilerplate, you write t
 
 ```txt
 src/
-├── scenes/                    # your scenes
-│   ├── 01-intro.svelte        #   NN-name.svelte, or
-│   └── 02-about/scene.svelte  #   NN-name/scene.svelte
+├── scenes/                               # your scenes
+│   ├── 01-intro.svelte                   #   NN-name.svelte, or
+│   └── 02-about/scene.svelte             #   NN-name/scene.svelte
 ├── lib/config/
-│   ├── scenes.ts              #   createSequence(import.meta.glob(...))
-│   ├── plugins.ts             #   plugin list (e.g. fullscreenPlugin())
-│   └── configure.ts           #   highlighter, aspect ratio, transition, render
+│   ├── scenes.ts                         #   createSequence(import.meta.glob(...))
+│   ├── plugins.ts                        #   plugin list (e.g. fullscreenPlugin())
+│   └── configure.ts                      #   highlighter, aspect ratio, transition, render
 ├── routes/
-│   ├── +layout.svelte         #   imports the theme
-│   └── [[scene]]/+page.svelte #   <Scenes {sequence} {plugins} />
+│   ├── +layout.svelte                    #   imports the theme
+│   ├── [[scene]]/+page.svelte            #   <Scenes {sequence} {plugins} />
+│   └── timeline/[[scene]]/+page.svelte   #   <TimelineView {sequence} {sceneId} />
 └── styles/
-    └── theme.css              #   Tailwind theme tokens (bg-background, ...)
+    └── theme.css                         #   Tailwind theme tokens (bg-background, ...)
 ```
 
 ### Shell

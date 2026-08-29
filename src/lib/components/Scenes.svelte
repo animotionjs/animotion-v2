@@ -53,6 +53,17 @@
 	);
 
 	/*
+	 * Renders use the picked size rather than the deck config, so the video
+	 * comes out full bleed instead of pillarboxed inside a square stage.
+	 */
+	const renderAspect = $derived.by(() => {
+		if (!page.url.searchParams.has('render')) return undefined;
+		const w = Number(page.url.searchParams.get('w'));
+		const h = Number(page.url.searchParams.get('h'));
+		return w > 0 && h > 0 ? w / h : undefined;
+	});
+
+	/*
 	 * Reactive snapshot of the presentation, exposed to plugins via
 	 * `ctx.state`. The scene fields capture the initial values once;
 	 * navigation and step changes update the snapshot below.
@@ -108,7 +119,7 @@
 		navigating = false;
 	});
 
-	// Seed the target scene's position from its URL hash before it mounts.
+	// seed the target scene's position from its URL hash before it mounts
 	beforeNavigate(({ to }) => {
 		if (!to) return;
 		applyUrlStep(to.params?.scene ?? sequence[0].id, to.url);
@@ -152,7 +163,7 @@
 		const resolve = resolveReady;
 		if (!resolve) return;
 		void settleMedia().then(() => {
-			// Wait two frames so the browser has actually painted the result.
+			// wait two frames so the browser has actually painted the result
 			requestAnimationFrame(() => requestAnimationFrame(resolve));
 		});
 	}
@@ -262,7 +273,7 @@
 	class="flex h-dvh w-dvw items-center justify-center overflow-hidden bg-background"
 	style:text-rendering="geometricprecision"
 >
-	<Scene>
+	<Scene ratio={renderAspect}>
 		<Content />
 	</Scene>
 </div>

@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { timelineSegments } from '../scene/runtime/runtime.svelte.js';
 	import type { TimelineController } from './timeline.svelte.js';
 
 	interface Segment {
@@ -25,31 +26,15 @@
 
 	const segments = $derived.by<Segment[]>(() => {
 		if (duration <= 0) return [];
-		const list: Segment[] = [];
-		if (timeline.enterDuration > 0) {
-			list.push({
-				kind: 'enter',
-				label: 'enter',
-				start: 0,
-				hold: 0,
-				duration: timeline.enterDuration,
-				wait: 0
-			});
-		}
-		let cursor = timeline.enterDuration;
-		timeline.steps.forEach((step, index) => {
-			const hold = index === 0 ? timeline.introHold : 0;
-			list.push({
-				kind: 'step',
-				label: String(index + 1),
-				start: cursor,
-				hold,
-				duration: step.duration,
-				wait: step.wait
-			});
-			cursor += hold + step.duration + step.wait;
-		});
-		return list;
+		const hasEnter = timeline.enterDuration > 0;
+		return timelineSegments(timeline).map((segment, position) => ({
+			kind: segment.enter ? ('enter' as const) : ('step' as const),
+			label: segment.enter ? 'enter' : String(position - (hasEnter ? 1 : 0) + 1),
+			start: segment.start,
+			hold: segment.hold,
+			duration: segment.duration,
+			wait: segment.wait
+		}));
 	});
 
 	// a ladder of round intervals keeps the ruler readable for any scene length
@@ -129,18 +114,19 @@
 		bind:clientWidth={trackWidth}
 		class={['relative h-12 cursor-ew-resize touch-none select-none', duration <= 0 && 'opacity-50']}
 		role="slider"
-		tabindex={0}
+		tabindex={duration > 0 ? 0 : -1}
 		aria-label="Scene playhead"
 		aria-valuemin={0}
 		aria-valuemax={duration}
 		aria-valuenow={controller.time}
+		aria-valuetext={`${controller.time.toFixed(2)}s of ${duration.toFixed(2)}s`}
 		onpointerdown={onPointerDown}
 		onpointermove={onPointerMove}
 		onpointerup={onPointerUp}
 		onpointercancel={onPointerUp}
 	>
 		<div class="absolute inset-x-0 top-3 flex h-6 items-stretch overflow-hidden rounded bg-surface">
-			{#each segments as segment (segment.start)}
+			{#each segments as segment, index (index)}
 				{const enter = segment.kind === 'enter'}
 				{const span = segment.hold + segment.duration + segment.wait}
 				<div

@@ -31,6 +31,46 @@ export interface SceneTimeline {
 	totalDuration: number;
 }
 
+/** One laid out span on the video timeline, either the enter transition or a step. */
+export interface TimelineSegment {
+	/** Seconds from the timeline start where the segment begins. */
+	start: number;
+	/** Seconds the first frame is held before the step's animation starts, always 0 for the enter transition. */
+	hold: number;
+	/** Seconds the animation runs for. */
+	duration: number;
+	/** Extra seconds the finished frame stays up. */
+	wait: number;
+	/** Whether this is the enter transition rather than a step. */
+	enter: boolean;
+}
+
+/**
+ * Lays out the enter transition and every step span in play order. Shared by
+ * the scrubber, the segment jumps and {@link SceneManager.seekToTime}, so all
+ * three agree on where one segment ends and the next begins.
+ */
+export function timelineSegments(timeline: SceneTimeline): TimelineSegment[] {
+	const segments: TimelineSegment[] = [];
+	let cursor = 0;
+	if (timeline.enterDuration > 0) {
+		segments.push({ start: 0, hold: 0, duration: timeline.enterDuration, wait: 0, enter: true });
+		cursor = timeline.enterDuration;
+	}
+	timeline.steps.forEach((step, index) => {
+		const hold = index === 0 ? timeline.introHold : 0;
+		segments.push({
+			start: cursor,
+			hold,
+			duration: step.duration,
+			wait: step.wait,
+			enter: false
+		});
+		cursor += hold + step.duration + step.wait;
+	});
+	return segments;
+}
+
 type SavedState = {
 	stepIndex: number;
 	stepCompleted: boolean;
@@ -351,7 +391,8 @@ export class SceneManager {
 		}
 
 		const time = Math.max(0, seconds);
-		const { enterDuration, introHold } = this.timeline;
+		const timeline = this.timeline;
+		const { enterDuration } = timeline;
 
 		/*
 		 * Undo every started step so the replays below begin from pristine
@@ -384,7 +425,7 @@ export class SceneManager {
 			return;
 		}
 
-		const total = this.timeline.totalDuration;
+		const total = timeline.totalDuration;
 		if (time >= total) {
 			this.#positionTo(steps.length, false, true);
 			this.#resetTransitionState();
@@ -392,20 +433,18 @@ export class SceneManager {
 		}
 
 		/*
-		 * Walk the segments to find the step under the playhead. A boundary
-		 * time lands on the later segment's start, which renders identically
-		 * to the previous one's completed frame.
+		 * Walk the laid out segments to find the step under the playhead. A
+		 * boundary time lands on the later segment's start, which renders
+		 * identically to the previous one's completed frame.
 		 */
-		let cursor = enterDuration;
-		let target = steps.length - 1;
-		for (let index = 0; index < steps.length; index++) {
-			const step = steps[index]!;
-			const span = (index === 0 ? introHold : 0) + step.duration + (step.wait ?? 0);
-			if (time < cursor + span) {
+		const spans = timelineSegments(timeline).filter((segment) => !segment.enter);
+		let target = spans.length - 1;
+		for (let index = 0; index < spans.length; index++) {
+			const segment = spans[index]!;
+			if (time < segment.start + segment.hold + segment.duration + segment.wait) {
 				target = index;
 				break;
 			}
-			cursor += span;
 		}
 
 		for (let i = 0; i < target; i++) {
@@ -415,13 +454,13 @@ export class SceneManager {
 			step.end();
 		}
 
+		const segment = spans[target]!;
 		const step = steps[target]!;
 		step.start();
 		this.#needsStart = false;
 
-		const hold = target === 0 ? introHold : 0;
-		const local = time - cursor;
-		const fraction = step.duration > 0 ? clamp((local - hold) / step.duration, 0, 1) : 1;
+		const local = time - segment.start;
+		const fraction = step.duration > 0 ? clamp((local - segment.hold) / step.duration, 0, 1) : 1;
 		step.setProgress(fraction);
 
 		this.#stepIndex = target;
