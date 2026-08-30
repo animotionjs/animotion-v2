@@ -5,13 +5,10 @@ A Svelte engine for animated presentations. Every scene is a component that anim
 ## Getting started
 
 ```sh
-git clone https://github.com/animotionjs/animotion-v2.git
-cd animotion-v2
-pnpm install
-pnpm dev
+npm create @animotion@next
 ```
 
-`pnpm dev` serves the example presentation; edit the scenes in `src/scenes/` to build your own.
+The CLI scaffolds a project with the presentation template. Edit the scenes in `src/scenes/` to build your own.
 
 ## Usage
 
@@ -330,15 +327,15 @@ The track shows the scene as four kinds of segment laid out left to right:
 
 Drag anywhere on the track to scrub the playhead, or use the transport controls:
 
-| Key | Action |
-| --- | --- |
-| `space` | Play / pause |
-| `←` / `→` | Jump to the previous / next segment |
-| `,` / `.` | Nudge one frame back / forward |
-| `Home` / `End` | Restart / jump to the end |
-| `l` | Toggle loop (ignored with `cmd`/`ctrl`/`alt`) |
+| Key            | Action                                        |
+| -------------- | --------------------------------------------- |
+| `space`        | Play / pause                                  |
+| `←` / `→`      | Jump to the previous / next segment           |
+| `,` / `.`      | Nudge one frame back / forward                |
+| `Home` / `End` | Restart / jump to the end                     |
+| `l`            | Toggle loop (ignored with `cmd`/`ctrl`/`alt`) |
 
-  Every frame is driven by the same engine and FPS used to render, so what you scrub is what the renderer produces.
+Every frame is driven by the same engine and FPS used to render, so what you scrub is what the renderer produces.
 
 ### Rendering from the timeline
 
@@ -457,7 +454,7 @@ Because every slice runs in its own tab, a split scene must drive its state pure
 
 For quick drafts use `--preview`. It drops to 30 fps and captures lower-quality JPEG frames while keeping the full size, so the layout matches the final render. `--jpeg [quality]` does the quality swap on its own. Chromium uses hardware acceleration by default, verified with a health check that falls back to software automatically; `--no-gpu` forces software rendering, as does `gpu: false` in config. `--bench` prints what each frame costs to advance and capture, which is handy for comparing settings without rendering anything.
 
-  By default nothing is written to disk. Pass `--frames-only` to save raw frames to `rendered/frames/` without encoding, or `--keep-frames` to keep them on disk after encoding.
+By default nothing is written to disk. Pass `--frames-only` to save raw frames to `rendered/frames/` without encoding, or `--keep-frames` to keep them on disk after encoding.
 
 ### Rendering individual scenes
 
@@ -485,78 +482,3 @@ pnpm check      # type-check
 pnpm test:unit  # unit tests
 pnpm package    # build the library into dist/
 ```
-
-## Using in your own project
-
-Install `@animotion/core` into your SvelteKit project from a local build:
-
-```sh
-cd animotion-v2
-pnpm pack # produces animotion-core-0.0.1.tgz
-```
-
-```sh
-pnpm add /path/to/animotion-core-0.0.1.tgz
-```
-
-`Scenes` ships as raw `.svelte` source using top-level `await`, and the timeline's render controls are remote functions, so enable both in your `vite.config.ts`:
-
-```ts
-sveltekit({
-	compilerOptions: {
-		experimental: { async: true }
-	},
-	experimental: { remoteFunctions: true }
-});
-```
-
-### Files
-
-Your project has these files; the template provides the boilerplate, you write the scenes:
-
-```txt
-src/
-├── scenes/                               # your scenes
-│   ├── 01-intro.svelte                   #   NN-name.svelte, or
-│   └── 02-about/scene.svelte             #   NN-name/scene.svelte
-├── lib/config/
-│   ├── scenes.ts                         #   createSequence(import.meta.glob(...))
-│   ├── plugins.ts                        #   plugin list (e.g. fullscreenPlugin())
-│   └── configure.ts                      #   highlighter, aspect ratio, transition, render
-├── routes/
-│   ├── +layout.svelte                    #   imports the theme
-│   ├── [[scene]]/+page.svelte            #   <Scenes {sequence} {plugins} />
-│   └── timeline/[[scene]]/+page.svelte   #   <TimelineView {sequence} {sceneId} />
-└── styles/
-    └── theme.css                         #   Tailwind theme tokens (bg-background, ...)
-```
-
-### Shell
-
-The presentation shell is a single component, rendered from an optional-scene route:
-
-```svelte
-<script lang="ts">
-	import { Scenes } from '@animotion/core';
-	import { plugins } from '#lib/config/plugins';
-	import { sequence } from '#lib/config/scenes';
-</script>
-
-<Scenes {sequence} {plugins} />
-```
-
-`sequence` is built from a glob over your scenes:
-
-```ts
-import { createSequence } from '@animotion/core';
-
-export const sequence = createSequence(
-	import.meta.glob(['../../scenes/*.svelte', '../../scenes/*/scene.svelte'])
-);
-```
-
-`plugins` is a list of plugins, such as `[fullscreenPlugin()]`.
-
-`configure({ ... })` sets the highlighter, aspect ratio, default transition, and render defaults.
-
-The project boilerplate — routes, config, and the Tailwind theme tokens the shell styles against — ships with the template.
