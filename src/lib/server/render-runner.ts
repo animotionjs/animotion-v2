@@ -40,7 +40,15 @@ export interface StartRenderInput {
 
 export type QualityTier = 'full' | 'balanced' | 'preview';
 
-export type RenderPhase = 'idle' | 'downloading' | 'measuring' | 'rendering' | 'encoding' | 'done' | 'failed';
+export type RenderPhase =
+	| 'idle'
+	| 'starting'
+	| 'downloading'
+	| 'measuring'
+	| 'rendering'
+	| 'encoding'
+	| 'done'
+	| 'failed';
 
 export interface RenderSnapshot {
 	phase: RenderPhase;
@@ -70,6 +78,7 @@ function update(change: Partial<RenderSnapshot>) {
 /** Phases where the renderer process is still doing work and may be killed. */
 function inFlight(phase: RenderPhase): boolean {
 	return (
+		phase === 'starting' ||
 		phase === 'downloading' ||
 		phase === 'measuring' ||
 		phase === 'rendering' ||
@@ -132,7 +141,7 @@ export async function startRender(input: StartRenderInput) {
 	}
 
 	startedAt = Date.now();
-	update({ phase: 'rendering', percent: 0, output, error: null, duration: null });
+	update({ phase: 'starting', percent: 0, output, error: null, duration: null });
 
 	/*
 	 * Preview trades frame rate and capture quality for speed, never size,

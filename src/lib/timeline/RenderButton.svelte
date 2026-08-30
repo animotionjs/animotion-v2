@@ -15,7 +15,8 @@
 
 	const phase = $derived(status.current?.phase ?? 'idle');
 	const busy = $derived(
-		phase === 'downloading' ||
+		phase === 'starting' ||
+			phase === 'downloading' ||
 			phase === 'measuring' ||
 			phase === 'rendering' ||
 			phase === 'encoding'
