@@ -11,7 +11,16 @@ import { getOptions, PREVIEW_JPEG_QUALITY, resolveRenderSize } from '../scene/op
 import { parseRenderReport } from '../scene/runtime/report.js';
 import type { AspectRatio, ResolutionName } from '../scene/options.js';
 
-const RENDER_SCRIPT = fileURLToPath(new URL('../../cli/render.ts', import.meta.url));
+/*
+ * The CLI ships inside the library so the same import works in the repo and
+ * the installed package, which resolves it to the compiled JavaScript build
+ */
+let RENDER_SCRIPT: string;
+try {
+	RENDER_SCRIPT = fileURLToPath(import.meta.resolve('#lib/cli/render.ts'));
+} catch {
+	throw new Error('Could not locate the CLI');
+}
 const OUT_DIR = 'rendered';
 const OPENERS: Partial<Record<NodeJS.Platform, string>> = { darwin: 'open', win32: 'explorer' };
 

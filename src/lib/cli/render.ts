@@ -7,10 +7,10 @@ import { dirname, join, resolve } from 'node:path';
 import ffmpeg from 'ffmpeg-static';
 import { chromium, type Browser, type Page } from 'playwright';
 import { resolveScenes } from './scenes.ts';
-import { sliceRanges, type SliceRange } from '../lib/scene/runtime/slices.ts';
-import type { RenderBridge } from '../lib/scene/runtime/render-bridge.js';
-import { PREVIEW_JPEG_QUALITY, type FrameFormat } from '../lib/scene/options.ts';
-import type { RenderReport } from '../lib/scene/runtime/report.js';
+import { sliceRanges, type SliceRange } from '../scene/runtime/slices.ts';
+import type { RenderBridge } from '../scene/runtime/render-bridge.js';
+import { PREVIEW_JPEG_QUALITY, type FrameFormat } from '../scene/options.ts';
+import type { RenderReport } from '../scene/runtime/report.js';
 
 declare global {
 	interface Window {
@@ -941,7 +941,8 @@ async function timedRender(
 ): Promise<{ seconds: number; frames: number }> {
 	const out = join(tmpdir(), `animotion-bench-${process.pid}-${Date.now()}.mp4`);
 	const childArgv = [
-		resolve('src/cli/render.ts'),
+		// the running script itself, so the bench works from the repo and the installed package
+		resolve(process.argv[1]),
 		target,
 		'--jobs',
 		String(args.jobs),

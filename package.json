@@ -29,14 +29,13 @@
 	"types": "./dist/index.d.ts",
 	"svelte": "./dist/index.js",
 	"bin": {
-		"animotion": "./src/cli/render.ts"
+		"animotion": "./src/lib/cli/render.ts"
 	},
 	"sideEffects": [
 		"**/*.css"
 	],
 	"files": [
 		"dist",
-		"src/cli",
 		"src/lib",
 		"!dist/**/*.test.*",
 		"!dist/**/*.spec.*"
@@ -48,7 +47,8 @@
 		"access": "public",
 		"imports": {
 			"#lib": "./dist/index.js",
-			"#lib/*": "./dist/*"
+			"#lib/*": "./dist/*",
+			"#lib/cli/render.ts": "./dist/cli/render.js"
 		}
 	},
 	"scripts": {
@@ -58,7 +58,7 @@
 		"prepare": "svelte-kit sync || echo ''",
 		"check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
 		"check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
-		"render": "node src/cli/render.ts",
+		"render": "node src/lib/cli/render.ts",
 		"package": "svelte-package",
 		"prepack": "pnpm package",
 		"lint": "prettier --check . && eslint .",
