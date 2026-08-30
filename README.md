@@ -446,6 +446,8 @@ For example, `/?speaker&session=demo` connects the speaker view to the `demo` se
 animotion render
 ```
 
+The first render downloads Chromium automatically (one-time, about 150 MB), whether you render from the timeline or the terminal.
+
 The command starts a dev server, opens a headless browser, records every scene frame by frame, and feeds the frames straight into ffmpeg while recording, so nothing touches disk in between. See `animotion render --help` for every option. Settings you don't pass fall back to `configure({ render })`, then to built-in defaults (`60` fps, lossless PNG frames, and a worker count picked from your CPU cores). CLI flags always win over config.
 
 Renders parallelize on their own. The renderer picks a worker count from your CPU cores, and whenever there are fewer scenes than workers it splits long scenes across them, then stitches the parts back together. Scenes shorter than about two seconds stay whole. Two flags tune this behavior: `--slices [count]` forces an exact number of slices per scene, and `--no-slices` keeps every scene in one piece.
