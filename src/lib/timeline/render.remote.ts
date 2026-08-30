@@ -62,11 +62,11 @@ export const startRender = command('unchecked', async (input) => {
 	await startRenderer(parseRequest(input));
 });
 
-export const cancelRender = command<void, void>('unchecked', () => {
+export const cancelRender = command(async () => {
 	cancelRunningRender();
 });
 
-export const openRenderFolder = command<void, void>('unchecked', async () => {
+export const openRenderFolder = command(async () => {
 	await openRenderedFolder();
 });
 
