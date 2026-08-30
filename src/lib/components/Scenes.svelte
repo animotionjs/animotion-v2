@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { onDestroy, onMount, untrack } from 'svelte';
-	import { afterNavigate, beforeNavigate, goto, replaceState } from '$app/navigation';
+	import { afterNavigate, beforeNavigate, goto } from '$app/navigation';
 	import { page } from '$app/state';
 	import { SceneManager } from '../scene/runtime/runtime.svelte.js';
 	import { setSceneId, setSceneManager } from '../scene/runtime/context.svelte.js';
@@ -112,7 +112,9 @@
 
 	onDestroy(syncStep);
 
-	afterNavigate(() => {
+	afterNavigate((navigation) => {
+		// shallow navigations only mirror the step in the url hash
+		if (navigation.shallow) return;
 		state.sceneId = id;
 		state.sceneIndex = index;
 		pluginManager.emitSceneChange({ id, index });
@@ -120,9 +122,9 @@
 	});
 
 	// seed the target scene's position from its URL hash before it mounts
-	beforeNavigate(({ to }) => {
-		if (!to) return;
-		applyUrlStep(to.params?.scene ?? sequence[0].id, to.url);
+	beforeNavigate((navigation) => {
+		if (navigation.shallow || !navigation.to) return;
+		applyUrlStep(navigation.to.params?.scene ?? sequence[0].id, navigation.to.url);
 	});
 
 	/*
@@ -225,11 +227,11 @@
 		const location = window.location;
 		if (step === 0) {
 			if (!location.hash) return;
-			replaceState(location.pathname + location.search, {});
+			goto(`${location.pathname}${location.search}`, { shallow: true, state: {} });
 			return;
 		}
 		if (location.hash === `#${step}`) return;
-		replaceState(`#${step}`, {});
+		goto(`${location.pathname}${location.search}#${step}`, { shallow: true, state: {} });
 	}
 
 	function next() {

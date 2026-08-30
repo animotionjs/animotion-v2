@@ -1,6 +1,8 @@
 {
 	"name": "@animotion/core",
 	"version": "0.0.1",
+	"type": "module",
+	"license": "MIT",
 	"description": "A Svelte engine for building animated presentations.",
 	"keywords": [
 		"svelte",
@@ -12,10 +14,10 @@
 		"type": "git",
 		"url": "https://github.com/animotionjs/animotion-v2.git"
 	},
-	"publishConfig": {
-		"access": "public"
+	"imports": {
+		"#lib": "./src/lib/index.js",
+		"#lib/*": "./src/lib/*"
 	},
-	"type": "module",
 	"exports": {
 		".": {
 			"types": "./dist/index.d.ts",
@@ -35,16 +37,19 @@
 	"files": [
 		"dist",
 		"src/cli",
+		"src/lib",
 		"!dist/**/*.test.*",
-		"!dist/**/*.spec.*",
-		"!dist/**/config/**"
+		"!dist/**/*.spec.*"
 	],
 	"engines": {
 		"node": ">=23.6.0"
 	},
-	"imports": {
-		"#lib": "./src/lib/index.js",
-		"#lib/*": "./src/lib/*"
+	"publishConfig": {
+		"access": "public",
+		"imports": {
+			"#lib": "./dist/index.js",
+			"#lib/*": "./dist/*"
+		}
 	},
 	"scripts": {
 		"dev": "vite dev",
@@ -63,13 +68,13 @@
 		"test:e2e": "playwright install && playwright test"
 	},
 	"peerDependencies": {
-		"@sveltejs/kit": "^2.0.0",
+		"@sveltejs/kit": "^2.0.0 || ^3.0.0-0",
 		"svelte": "^5.0.0"
 	},
-	"pnpm": {
-		"onlyBuiltDependencies": [
-			"ffmpeg-static"
-		]
+	"dependencies": {
+		"ffmpeg-static": "^5.3.0",
+		"playwright": "^1.61.1",
+		"shiki": "^4.4.1"
 	},
 	"devDependencies": {
 		"@eslint/js": "^10.0.1",
@@ -79,7 +84,7 @@
 		"@sveltejs/adapter-auto": "next",
 		"@sveltejs/kit": "next",
 		"@sveltejs/package": "^2.5.8",
-		"@sveltejs/vite-plugin-svelte": "^7.2.0",
+		"@sveltejs/vite-plugin-svelte": "^7.3.0",
 		"@tailwindcss/vite": "^4.3.3",
 		"@types/node": "^26.1.1",
 		"@vitest/browser-playwright": "^4.1.10",
@@ -99,9 +104,9 @@
 		"vitest": "^4.1.10",
 		"vitest-browser-svelte": "^3.0.0"
 	},
-	"dependencies": {
-		"ffmpeg-static": "^5.3.0",
-		"playwright": "^1.61.1",
-		"shiki": "^4.4.1"
+	"pnpm": {
+		"onlyBuiltDependencies": [
+			"ffmpeg-static"
+		]
 	}
 }
