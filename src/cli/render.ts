@@ -729,8 +729,7 @@ async function loadScenePage(page: Page, id: string, renderQs: string, settle = 
 		() => {
 			const r = window.__sequenceRenderer;
 			if (!r) return false;
-			const m = r.manager;
-			return m.totalSteps > 0 || m.phase !== 'finished' || m.transitionActive;
+			return r.manager.loaded;
 		},
 		undefined,
 		{ timeout: 15000 }

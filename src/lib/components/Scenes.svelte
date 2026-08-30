@@ -68,7 +68,7 @@
 	 * `ctx.state`. The scene fields capture the initial values once;
 	 * navigation and step changes update the snapshot below.
 	 */
-	const state = $state<PresentationState>(
+	const presentationState = $state<PresentationState>(
 		untrack(() => ({
 			sceneId: id,
 			sceneIndex: index,
@@ -86,11 +86,11 @@
 	 * `manager.load` step change is captured.
 	 */
 	const syncStep = manager.onStepChange((step, total) => {
-		state.step = step;
-		state.totalSteps = total;
-		state.stepCompleted = manager.stepCompleted;
-		state.playing = manager.playing;
-		state.finished = manager.finished;
+		presentationState.step = step;
+		presentationState.totalSteps = total;
+		presentationState.stepCompleted = manager.stepCompleted;
+		presentationState.playing = manager.playing;
+		presentationState.finished = manager.finished;
 		manager.saveState(id);
 		updateUrlStep(step);
 	});
@@ -104,8 +104,16 @@
 	 */
 	let navigating = false;
 
+	/*
+	 * Waits a frame before the bar can animate so a scene restoring its step
+	 * from the url hash sets the width instantly instead of sliding there.
+	 */
+	let animated = $state(false);
+
 	onMount(() => {
 		pluginManager.setup();
+		// child scenes mount first, so their load already corrected the bar
+		requestAnimationFrame(() => (animated = true));
 		signalReady();
 		return () => pluginManager.cleanup();
 	});
@@ -115,8 +123,8 @@
 	afterNavigate((navigation) => {
 		// shallow navigations only mirror the step in the url hash
 		if (navigation.shallow) return;
-		state.sceneId = id;
-		state.sceneIndex = index;
+		presentationState.sceneId = id;
+		presentationState.sceneIndex = index;
 		pluginManager.emitSceneChange({ id, index });
 		navigating = false;
 	});
@@ -140,7 +148,7 @@
 
 	function createPluginManager() {
 		const pluginManager = new PluginManager(
-			{ state, sequence, navigateTo, next, prev },
+			{ state: presentationState, sequence, navigateTo, next, prev },
 			manager.onStepChange.bind(manager)
 		);
 		for (const plugin of plugins) pluginManager.register(plugin);
@@ -282,6 +290,6 @@
 
 {#if showProgressBar}
 	<div class="fixed right-0 bottom-0 left-0 z-10 h-[4px] bg-surface">
-		<div class="h-full bg-accent transition-all" style:width="{progress}%"></div>
+		<div class="h-full bg-accent" class:transition-all={animated} style:width="{progress}%"></div>
 	</div>
 {/if}

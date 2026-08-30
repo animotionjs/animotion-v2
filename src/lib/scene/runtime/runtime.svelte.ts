@@ -113,7 +113,11 @@ export class TransitionBuilder {
  * created by `<Scenes>` and exposed via {@link getSceneManager}.
  */
 export class SceneManager {
-	#phase: 'paused' | 'tweening' | 'finished' = $state('finished');
+	/*
+	 * Rests at paused until the first scene loads, so a manager with nothing
+	 * loaded reports zero progress and is not mistaken for a finished one.
+	 */
+	#phase: 'paused' | 'tweening' | 'finished' = $state('paused');
 	#stepIndex = $state(0);
 	#totalSteps = $state(0);
 	/**
@@ -164,6 +168,11 @@ export class SceneManager {
 	/** Whether all steps have completed. */
 	get finished() {
 		return this.#phase === 'finished';
+	}
+
+	/** Whether any scene has loaded since the manager was created. */
+	get loaded() {
+		return this.#loadVersion > 0;
 	}
 
 	/** The 0-based index of the current step. */
