@@ -1,3 +1,4 @@
+<!--
 <script lang="ts">
 	import { createScene } from '#lib/scene';
 	import * as THREE from 'three';
@@ -48,3 +49,4 @@
 </script>
 
 <canvas class="h-full w-full" {@attach setup}></canvas>
+-->
