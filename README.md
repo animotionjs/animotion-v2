@@ -1,6 +1,6 @@
 # Animotion
 
-A Svelte engine for building animated presentations. A presentation is a sequence of scenes, each written as a Svelte component. Scenes drive their own animation with a scene builder, mixing value tweens, layout changes with FLIP animations, code that morphs between versions, per-frame ticks, and camera flights across an oversized canvas.
+A Svelte engine for animated presentations. Every scene is a component that animates itself with tweens, layout changes, morphing code, and camera flights.
 
 ## Getting started
 
