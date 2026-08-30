@@ -14,12 +14,23 @@
 	let showDone = $state(false);
 
 	const phase = $derived(status.current?.phase ?? 'idle');
-	const busy = $derived(phase === 'rendering' || phase === 'encoding');
+	const busy = $derived(
+		phase === 'downloading' ||
+			phase === 'measuring' ||
+			phase === 'rendering' ||
+			phase === 'encoding'
+	);
 	const percent = $derived.by(() => {
 		const snapshot = status.current;
 		return snapshot?.phase === 'rendering' ? snapshot.percent : null;
 	});
+	const label = $derived.by(() => {
+		if (phase === 'downloading') return 'setup';
+		if (phase === 'measuring') return 'measuring';
+		return null;
+	});
 	const tooltip = $derived.by(() => {
+		if (phase === 'downloading') return 'downloading chromium';
 		if (busy) return 'cancel render';
 		if (showDone) return 'render finished';
 		return undefined;
@@ -68,6 +79,8 @@
 		</svg>
 		{#if percent !== null}
 			<span class="inline-block w-8 text-right tabular-nums">{percent}%</span>
+		{:else if label}
+			<span>{label}</span>
 		{/if}
 	{:else if showDone}
 		<svg viewBox="0 0 18 16" class="h-4 w-4 shrink-0" aria-hidden="true">

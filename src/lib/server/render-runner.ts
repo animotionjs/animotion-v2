@@ -40,7 +40,7 @@ export interface StartRenderInput {
 
 export type QualityTier = 'full' | 'balanced' | 'preview';
 
-export type RenderPhase = 'idle' | 'rendering' | 'encoding' | 'done' | 'failed';
+export type RenderPhase = 'idle' | 'downloading' | 'measuring' | 'rendering' | 'encoding' | 'done' | 'failed';
 
 export interface RenderSnapshot {
 	phase: RenderPhase;
@@ -65,6 +65,16 @@ let outputFolder = '';
 
 function update(change: Partial<RenderSnapshot>) {
 	current = { ...current, ...change };
+}
+
+/** Phases where the renderer process is still doing work and may be killed. */
+function inFlight(phase: RenderPhase): boolean {
+	return (
+		phase === 'downloading' ||
+		phase === 'measuring' ||
+		phase === 'rendering' ||
+		phase === 'encoding'
+	);
 }
 
 /** Current render progress, read by the live status query. */
@@ -171,11 +181,13 @@ export async function startRender(input: StartRenderInput) {
 		const report = parseRenderReport(message);
 		if (!report) return;
 		if (report.type === 'encoding') update({ phase: 'encoding', percent: 100 });
-		else {
+		else if (report.type === 'progress') {
 			update({
 				phase: 'rendering',
 				percent: Math.min(100, Math.round((report.done / report.total) * 100))
 			});
+		} else {
+			update({ phase: report.type });
 		}
 	});
 
@@ -190,7 +202,7 @@ export async function startRender(input: StartRenderInput) {
 		 * Only a render still in flight may settle the phase, so a cancel or
 		 * an earlier failure cannot be overwritten by this late event.
 		 */
-		if (current.phase !== 'rendering' && current.phase !== 'encoding') return;
+		if (!inFlight(current.phase)) return;
 		if (code === 0) update({ phase: 'done', percent: 100, duration: Date.now() - startedAt });
 		else {
 			update({

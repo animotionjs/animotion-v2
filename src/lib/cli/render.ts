@@ -589,6 +589,7 @@ Examples:
  * frame count. Used for slice planning and for percent progress reporting.
  */
 async function measureSceneFrames(args: ResolvedArgs, targets: string[], renderQs: string) {
+	report({ type: 'measuring' });
 	const dryPage = await browser!.newPage({ deviceScaleFactor: 1 });
 	dryPage.on('crash', () => {
 		isCrashed = true;
@@ -1200,6 +1201,8 @@ async function cleanupFrames(ids: string[]) {
 async function installBrowser() {
 	if (existsSync(chromium.executablePath())) return;
 
+	// the timeline mirrors this phase while the download runs
+	report({ type: 'downloading' });
 	console.log('Downloading Chromium (one-time setup)...');
 	const nodeRequire = createRequire(import.meta.url);
 	const installer = join(dirname(nodeRequire.resolve('playwright')), 'cli.js');

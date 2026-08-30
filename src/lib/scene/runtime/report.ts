@@ -3,7 +3,11 @@
  * spawned by the dev server instead of a human terminal. The final outcome
  * is derived from the exit code, so only in flight phases are reported.
  */
-export type RenderReport = { type: 'progress'; done: number; total: number } | { type: 'encoding' };
+export type RenderReport =
+	| { type: 'progress'; done: number; total: number }
+	| { type: 'encoding' }
+	| { type: 'downloading' }
+	| { type: 'measuring' };
 
 /**
  * Validates an untrusted IPC message as a render report, or returns null
@@ -12,7 +16,7 @@ export type RenderReport = { type: 'progress'; done: number; total: number } | {
 export function parseRenderReport(message: unknown): RenderReport | null {
 	if (typeof message !== 'object' || message === null) return null;
 	const { type, done, total } = message as Record<string, unknown>;
-	if (type === 'encoding') return { type };
+	if (type === 'encoding' || type === 'downloading' || type === 'measuring') return { type };
 	if (type === 'progress' && typeof done === 'number' && typeof total === 'number' && total > 0) {
 		return { type, done, total };
 	}
