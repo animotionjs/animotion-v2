@@ -1,7 +1,9 @@
 #!/usr/bin/env node
 import { spawn, type ChildProcess, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { once } from 'node:events';
+import { existsSync } from 'node:fs';
 import { mkdir, rm, writeFile } from 'node:fs/promises';
+import { createRequire } from 'node:module';
 import { availableParallelism, tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import ffmpeg from 'ffmpeg-static';
@@ -238,6 +240,8 @@ Examples:
 
 		console.log(`Dev server ready on ${baseUrl}`);
 	}
+
+	await installBrowser();
 
 	console.log('Launching browser...');
 	/*
@@ -1187,6 +1191,27 @@ async function cleanupFrames(ids: string[]) {
 		await rm(resolve('rendered/frames', id), { recursive: true, force: true });
 	}
 	await rm(resolve('rendered', 'frames'), { recursive: true, force: true });
+}
+
+/**
+ * Playwright ships without browsers, so the first render would otherwise die
+ * with a download error. Grab Chromium up front when it is missing.
+ */
+async function installBrowser() {
+	if (existsSync(chromium.executablePath())) return;
+
+	console.log('Downloading Chromium (one-time setup)...');
+	const nodeRequire = createRequire(import.meta.url);
+	const installer = join(dirname(nodeRequire.resolve('playwright')), 'cli.js');
+	const install = spawn(process.execPath, [installer, 'install', 'chromium'], {
+		stdio: 'inherit'
+	});
+	const [code] = await once(install, 'exit');
+	if (code !== 0) {
+		throw new Error(
+			'Could not download Chromium, run "pnpm dlx playwright install chromium" manually'
+		);
+	}
 }
 
 /** Launches headless Chromium, preferring hardware acceleration when `gpu`. */
