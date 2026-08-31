@@ -12,7 +12,7 @@
 	],
 	"repository": {
 		"type": "git",
-		"url": "https://github.com/animotionjs/animotion-v2.git"
+		"url": "https://github.com/animotionjs/animotion.git"
 	},
 	"imports": {
 		"#lib": "./src/lib/index.js",
