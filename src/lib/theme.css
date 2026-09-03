@@ -63,3 +63,12 @@
 	--text-sm: calc(0.875rem * var(--ui-scale));
 	--text-base: calc(1rem * var(--ui-scale));
 }
+
+@layer components {
+	.ui-player {
+		--player-accent: var(--color-accent);
+		--player-hover: color-mix(in oklab, var(--color-foreground) 10%, transparent);
+		--player-track: color-mix(in oklab, var(--color-foreground) 15%, transparent);
+		--player-icon: var(--color-foreground);
+	}
+}

@@ -407,9 +407,7 @@ export class SceneManager {
 		 * Undo every started step so the replays below begin from pristine
 		 * state. Unstarted steps guard themselves inside `revert()`.
 		 */
-		for (let i = this.#stepIndex; i >= 0; i--) {
-			steps[i]?.revert();
-		}
+		this.#revertAll();
 
 		const restAtStart = () => {
 			this.#stepIndex = 0;
@@ -462,6 +460,11 @@ export class SceneManager {
 			step.setProgress(1);
 			step.end();
 		}
+		/*
+		 * Replayed steps restore Svelte state, and the target step measures the
+		 * DOM, so the restore must be painted before its snapshot is taken.
+		 */
+		flushSync();
 
 		const segment = spans[target]!;
 		const step = steps[target]!;
@@ -647,12 +650,23 @@ export class SceneManager {
 		 * and state they applied, before replaying the position below. This is
 		 * what lets the scene move backwards.
 		 */
-		for (let i = this.#stepIndex; i >= 0; i--) {
-			steps[i]?.revert();
-		}
+		this.#revertAll();
 
 		this.#positionTo(target, stepCompleted, finished);
 		this.#resetTransitionState();
+	}
+
+	/** Reverts every started step and flushes, so replays measure a pristine DOM. */
+	#revertAll() {
+		const steps = this.#steps;
+		for (let i = this.#stepIndex; i >= 0; i--) {
+			steps[i]?.revert();
+		}
+		/*
+		 * Reverts restore Svelte state, and a pending flush would leave the DOM
+		 * showing the previous layout when the next start measures it.
+		 */
+		flushSync();
 	}
 
 	/**
@@ -680,6 +694,11 @@ export class SceneManager {
 			step.setProgress(1);
 			step.end();
 		}
+		/*
+		 * Replayed steps restore Svelte state, and entering the target step
+		 * measures the DOM, so the restore must be painted first.
+		 */
+		flushSync();
 
 		if (steps.length === 0) {
 			this.#phase = 'finished';

@@ -7,10 +7,12 @@
 		onclick: () => void;
 		/** Highlights the button as the primary control. */
 		accent?: boolean;
+		/** Disables the button, e.g. stepping past the scene's ends. */
+		disabled?: boolean;
 		children: Snippet;
 	}
 
-	let { label, onclick, accent = false, children }: Props = $props();
+	let { label, onclick, accent = false, disabled = false, children }: Props = $props();
 </script>
 
 <button
@@ -21,6 +23,7 @@
 	]}
 	aria-label={label}
 	title={label}
+	{disabled}
 	{onclick}
 >
 	<svg viewBox="0 0 18 16" class="h-5 w-5 fill-current" aria-hidden="true">

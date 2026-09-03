@@ -1,5 +1,5 @@
 <script lang="ts">
-	import IconButton from './IconButton.svelte';
+	import IconButton from '../components/IconButton.svelte';
 	import type { TimelineController } from './timeline.svelte.js';
 
 	interface Props {
