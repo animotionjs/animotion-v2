@@ -102,6 +102,32 @@ describe('TimelineController stepping', () => {
 		expect(controller.snap(99)).toBeCloseTo(3, 6);
 	});
 
+	it('lands the last frame on the exact duration', () => {
+		const controller = griddedController();
+		expect(controller.snap(3)).toBe(3);
+		expect(controller.snap(2.999999)).toBe(3);
+	});
+
+	it('treats a seek within the current frame as a no-op', () => {
+		const manager = new SceneManager();
+		manager.load({ steps: [new TickStep(() => {}, 1)] });
+		const spy = vi.spyOn(manager, 'seekToTime');
+		const controller = new TimelineController(manager, 30);
+
+		controller.seekTo(0.5);
+		expect(spy).toHaveBeenCalledTimes(1);
+		controller.seekTo(0.5);
+		expect(spy).toHaveBeenCalledTimes(1);
+		// playback drifts off the grid by float dust, which must not trigger a rebuild
+		controller.time += 1e-12;
+		controller.seekTo(0.5);
+		expect(spy).toHaveBeenCalledTimes(1);
+
+		controller.seekTo(0.6);
+		expect(spy).toHaveBeenCalledTimes(2);
+		controller.destroy();
+	});
+
 	it('lays out boundaries across enter, hold, steps and waits', () => {
 		const controller = griddedController();
 		expect(controller.boundaries()).toEqual([0, 0.5, 2, 3]);

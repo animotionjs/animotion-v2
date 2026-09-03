@@ -19,7 +19,9 @@
 
 	let trackElement: HTMLDivElement | null = null;
 	let trackWidth = $state(0);
-	let scrubbing = $state(false);
+	let scrubbing = false;
+	let scrubClientX = 0;
+	let scrubFrame: number | null = null;
 
 	const duration = $derived(controller.duration);
 	const timeline = $derived(controller.timeline);
@@ -83,7 +85,10 @@
 
 	function attachTrack(element: HTMLDivElement) {
 		trackElement = element;
-		return () => (trackElement = null);
+		return () => {
+			trackElement = null;
+			if (scrubFrame !== null) cancelAnimationFrame(scrubFrame);
+		};
 	}
 
 	function timeAt(clientX: number) {
@@ -91,25 +96,56 @@
 		if (!element || duration <= 0) return controller.time;
 		const bounds = element.getBoundingClientRect();
 		const fraction = (clientX - bounds.left) / bounds.width;
-		return controller.snap(fraction * duration);
+		return fraction * duration;
 	}
 
 	function onPointerDown(event: PointerEvent) {
 		if (!trackElement || duration <= 0) return;
+		/*
+		 * Capture retargets stray moves to the track while the window handler
+		 * owns the drag, but a failed grab must never eat the seek
+		 */
+		try {
+			trackElement.setPointerCapture(event.pointerId);
+		} catch {
+			// seeking works fine without capture
+		}
+		scrubClientX = event.clientX;
 		scrubbing = true;
-		trackElement.setPointerCapture(event.pointerId);
 		controller.seekTo(timeAt(event.clientX));
 	}
 
 	function onPointerMove(event: PointerEvent) {
 		if (!scrubbing) return;
-		controller.seekTo(timeAt(event.clientX));
+		/*
+		 * Moves arrive faster than frames and every seek rebuilds the scene,
+		 * so keep only the latest position and seek once per frame instead
+		 */
+		scrubClientX = event.clientX;
+		if (scrubFrame !== null) return;
+		scrubFrame = requestAnimationFrame(() => {
+			scrubFrame = null;
+			if (!scrubbing || !trackElement) return;
+			controller.seekTo(timeAt(scrubClientX));
+		});
 	}
 
-	function onPointerUp() {
+	function endScrub(event: PointerEvent) {
+		// losing capture mid drag must not end anything, only a real release does
+		if (!scrubbing) return;
 		scrubbing = false;
+		// a queued seek would land behind the release, so drop it and seek here
+		if (scrubFrame !== null) {
+			cancelAnimationFrame(scrubFrame);
+			scrubFrame = null;
+		}
+		if (!trackElement) return;
+		// the drag ends exactly where the pointer was released
+		controller.seekTo(timeAt(event.clientX));
 	}
 </script>
+
+<svelte:window onpointermove={onPointerMove} onpointerup={endScrub} onpointercancel={endScrub} />
 
 <div class="px-3 pb-2 sm:px-4 sm:pb-3">
 	<div
@@ -124,9 +160,6 @@
 		aria-valuenow={controller.time}
 		aria-valuetext={`${controller.time.toFixed(2)}s of ${duration.toFixed(2)}s`}
 		onpointerdown={onPointerDown}
-		onpointermove={onPointerMove}
-		onpointerup={onPointerUp}
-		onpointercancel={onPointerUp}
 	>
 		<div class="absolute inset-x-0 top-3 flex h-6 items-stretch overflow-hidden rounded bg-surface">
 			{#each segments as segment, index (index)}

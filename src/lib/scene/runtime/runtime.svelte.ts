@@ -986,6 +986,9 @@ export class SceneManager {
 		const step = this.#currentStep();
 		if (!step) return;
 
+		// a pause leaves the frame pending and resuming would drive the step twice per tick
+		this.#stopLoop();
+
 		this.#phase = 'tweening';
 		this.#lastFrame = this.#scheduler.now();
 		this.#emitStepChange();

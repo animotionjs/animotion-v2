@@ -46,9 +46,12 @@ export class TimelineController {
 
 	/** Snaps `seconds` onto the frame grid, clamped to the scene. */
 	snap(seconds: number) {
-		const quantum = this.frameDuration;
-		const clamped = clamp(seconds, 0, this.duration);
-		return Math.min(Math.round(clamped / quantum) * quantum, this.duration);
+		const frame = Math.round(clamp(seconds, 0, this.duration) * this.#fps);
+		/*
+		 * One division lands back on the grid instead of accumulating
+		 * quantum drift, so the last frame is the exact duration
+		 */
+		return Math.min(frame / this.#fps, this.duration);
 	}
 
 	/** Segment boundary times (scene start, enter end, every step span end). */
@@ -67,8 +70,10 @@ export class TimelineController {
 		/*
 		 * Scrubbing fires seeks for the same frame over and over, and replaying
 		 * the scene up to it is costly, so an unchanged position is a no-op.
+		 * Playback drifts off the grid by float dust, so frame indices are
+		 * compared instead of raw times.
 		 */
-		if (snapped === this.time) return;
+		if (Math.round(snapped * this.#fps) === Math.round(this.time * this.#fps)) return;
 		this.time = snapped;
 		this.#manager.seekToTime(this.time);
 	}
