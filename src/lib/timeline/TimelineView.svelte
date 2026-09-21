@@ -1,5 +1,7 @@
 <script lang="ts">
-	import { goto } from '$app/navigation';
+	import { onMount } from 'svelte';
+	import { afterNavigate, goto } from '$app/navigation';
+	import { page } from '$app/state';
 	import { ASPECT_RATIOS, getOptions } from '../scene/options.js';
 	import RenderButton from './RenderButton.svelte';
 	import RenderMenu from './RenderMenu.svelte';
@@ -16,6 +18,16 @@
 	}
 
 	let { sequence, sceneId }: Props = $props();
+
+	onMount(() => {
+		// timeline alone shows the first scene without its name, so use the named url instead
+		useNamedUrl();
+	});
+
+	afterNavigate(() => {
+		// going back can land on timeline alone, so use the named url instead
+		useNamedUrl();
+	});
 
 	const index = $derived(
 		Math.max(
@@ -42,6 +54,11 @@
 	let actionError = $state<string | null>(null);
 	const renderError = $derived(status.current?.phase === 'failed' ? status.current.error : null);
 	const headerError = $derived(actionError ?? renderError);
+
+	function useNamedUrl() {
+		if (page.params.scene || !sequence[0]) return;
+		void goto(`/timeline/${sequence[0].id}`, { replace: true });
+	}
 
 	function select(id: string) {
 		if (id !== sceneId) goto(`/timeline/${id}`);

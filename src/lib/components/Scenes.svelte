@@ -111,6 +111,8 @@
 	let animated = $state(false);
 
 	onMount(() => {
+		// slash alone shows the first scene without its name, so use the named url instead
+		if (useNamedUrl()) return;
 		pluginManager.setup();
 		// child scenes mount first, so their load already corrected the bar
 		requestAnimationFrame(() => (animated = true));
@@ -123,6 +125,8 @@
 	afterNavigate((navigation) => {
 		// shallow navigations only mirror the step in the url hash
 		if (navigation.shallow) return;
+		// going back can land on slash which shows the first scene without its name, so use the named url instead
+		if (useNamedUrl()) return;
 		presentationState.sceneId = id;
 		presentationState.sceneIndex = index;
 		pluginManager.emitSceneChange({ id, index });
@@ -203,6 +207,14 @@
 		return new Promise((resolve) => {
 			for (const event of events) el.addEventListener(event, () => resolve(), { once: true });
 		});
+	}
+
+	function useNamedUrl() {
+		if (page.params.scene || !sequence[0]) return false;
+		const search = page.url.search;
+		const hash = page.url.hash;
+		void goto(`/${sequence[0].id}${search}${hash}`, { replace: true });
+		return true;
 	}
 
 	function navigateTo(targetId: string) {
