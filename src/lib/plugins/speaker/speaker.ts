@@ -145,7 +145,7 @@ export function speakerPlugin(options: SpeakerPluginOptions = {}): Plugin {
 			if (state.sceneId !== pendingSceneId) {
 				pendingSceneId = state.sceneId;
 				manager?.setStepState(state.sceneId, stepIndex, state.stepCompleted);
-				void ctx.navigateTo(state.sceneId);
+				ctx.navigateTo(state.sceneId);
 			}
 		} else {
 			pendingSceneId = '';

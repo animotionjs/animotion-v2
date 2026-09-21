@@ -69,7 +69,7 @@ function ensureInit(): Promise<void> {
 		if (gen === generation) {
 			ready = highlighter;
 			runRefresh();
-			void loadLanguages();
+			loadLanguages();
 		}
 	})();
 	return initPromise;
@@ -102,7 +102,7 @@ export function configure(options: ConfigureOptions) {
 		initPromise = null;
 		ensureInit();
 	} else {
-		void loadLanguages();
+		loadLanguages();
 	}
 	if (options.aspectRatio || options.render || options.transition) {
 		setOptions({

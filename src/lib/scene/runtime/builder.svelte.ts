@@ -189,7 +189,7 @@ export function createScene<T extends Object>(initial: T = {} as T) {
 	let currentCodeName = 'default';
 	const initialCode = rawInitial.code as unknown;
 	const initialLanguage = rawInitial.language as string | undefined;
-	if (initialLanguage) void registerLanguages([initialLanguage]);
+	if (initialLanguage) registerLanguages([initialLanguage]);
 	if (typeof initialCode === 'string') {
 		codeStates.set(
 			'default',
@@ -439,7 +439,7 @@ export function createScene<T extends Object>(initial: T = {} as T) {
 	) {
 		const target = requireCodeState();
 		const lang = opts?.language ?? target.language;
-		if (opts?.language) void registerLanguages([opts.language]);
+		if (opts?.language) registerLanguages([opts.language]);
 		steps.push(
 			new CodeStep(
 				target,

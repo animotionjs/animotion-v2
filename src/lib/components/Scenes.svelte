@@ -172,7 +172,7 @@
 	function signalReady() {
 		const resolve = resolveReady;
 		if (!resolve) return;
-		void settleMedia().then(() => {
+		settleMedia().then(() => {
 			// wait two frames so the browser has actually painted the result
 			requestAnimationFrame(() => requestAnimationFrame(resolve));
 		});

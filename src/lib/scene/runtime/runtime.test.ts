@@ -10,9 +10,7 @@ class SpyStep implements Step {
 	start() {
 		this.starts++;
 	}
-	setProgress(p: number) {
-		void p;
-	}
+	setProgress() {}
 	end() {
 		this.ends++;
 	}

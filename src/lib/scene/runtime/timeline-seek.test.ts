@@ -52,8 +52,7 @@ describe('SceneManager.timeline metadata', () => {
 			b.tween('opacity', 1, 0.3);
 			b.tween('y', 0, 0.8);
 		};
-		const scene = createSceneWithEnter(manager, enter);
-		void scene;
+		createSceneWithEnter(manager, enter);
 
 		expect(manager.timeline.enterDuration).toBe(0.8);
 		expect(manager.timeline.totalDuration).toBeCloseTo(0.8 + 0.5);

@@ -42,9 +42,9 @@
 
 	function toggleFullscreen() {
 		if (document.fullscreenElement) {
-			void document.exitFullscreen();
+			document.exitFullscreen();
 		} else if (document.fullscreenEnabled) {
-			void document.documentElement.requestFullscreen();
+			document.documentElement.requestFullscreen();
 		}
 	}
 

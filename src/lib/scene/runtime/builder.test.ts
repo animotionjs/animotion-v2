@@ -20,9 +20,7 @@ vi.mock('svelte', async (importOriginal) => {
 class TimedStep implements Step {
 	duration = 1;
 	start() {}
-	setProgress(p: number) {
-		void p;
-	}
+	setProgress() {}
 	end() {}
 	revert() {}
 }
