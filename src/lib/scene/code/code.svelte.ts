@@ -1,4 +1,5 @@
 import { createContext } from 'svelte';
+import { SvelteMap } from 'svelte/reactivity';
 import {
 	highlight,
 	onHighlighterReady,
@@ -29,11 +30,32 @@ export interface CodeState {
 	previousSelection: CodeRange[] | null;
 }
 
+/** A single named code block input as plain source or as source with its own language. */
+export type CodeBlockInput = string | { code: string; language?: string };
+
+/** Map of block name to its reactive state. The single block form uses `default`. */
+export type CodeStateMap = SvelteMap<string, CodeState>;
+
+/*
+	The scene shares one map of named code states through context. Each
+	<Code> picks its entry by name so blocks morph and highlight independently.
+*/
+export const [getCodeStates, setCodeStates] = createContext<CodeStateMap>();
+
 /**
- * Svelte context accessor for the active code state. Available only within a
- * component tree containing a `<Code>` component.
+ * Svelte context accessor for a named code state. Defaults to the single
+ * block form. Available only within a scene that called `createScene`
+ * with initial `code`.
  */
-export const [getCodeState, setCodeState] = createContext<CodeState>();
+export function getCodeState(name = 'default'): CodeState {
+	const states = getCodeStates();
+	const state = states.get(name);
+	if (!state) {
+		const available = [...states.keys()].join(', ') || '(none)';
+		throw new Error(`unknown code block "${name}". Available: ${available}.`);
+	}
+	return state;
+}
 
 /** Sentinel meaning "no explicit value" (e.g. {@link SceneBuilder#codeSelection}). */
 export const DEFAULT = Symbol('DEFAULT');

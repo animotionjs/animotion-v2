@@ -77,7 +77,8 @@ export {
 	ALL_LINES,
 	smartIndent,
 	code,
-	getCodeState
+	getCodeState,
+	getCodeStates
 } from './scene/index.js';
 export {
 	Camera,

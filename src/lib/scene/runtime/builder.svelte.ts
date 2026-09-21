@@ -1,4 +1,5 @@
 import { onMount } from 'svelte';
+import { SvelteMap } from 'svelte/reactivity';
 import {
 	TweenStep,
 	LayoutStep,
@@ -17,13 +18,14 @@ import { clamp, easeInOut, type Easing } from '../easing';
 import { getOptions, type TransitionConfig } from '../options';
 import { registerLanguages } from '../code/highlighter';
 import {
-	setCodeState,
+	setCodeStates,
 	createCodeState,
 	buildEditTrees,
 	makeCodeTree,
 	resolveSingleRange,
 	smartIndent,
 	DEFAULT,
+	type CodeBlockInput,
 	type CodeState,
 	type CodeRange,
 	type RangeResolver,
@@ -54,6 +56,13 @@ export interface SceneBuilder<T> {
 	slideTransition(opts?: { duration?: number; ease?: Easing; distance?: number }): this;
 	fadeTransition(opts?: { duration?: number; ease?: Easing }): this;
 	zoomTransition(opts?: { duration?: number; ease?: Easing; scale?: number }): this;
+	/**
+	 * Selects the named code block for the following `code*` steps. Returns
+	 * the scene so calls chain across blocks without storing handles.
+	 *
+	 * @throws if the block name was not passed in `createScene({ code })`
+	 */
+	codeBlock(name?: string): this;
 	codeTo(code: string, duration?: number, opts?: { language?: string; ease?: Easing }): this;
 	codeAppend(code: string, duration?: number, ease?: Easing): this;
 	codePrepend(code: string, duration?: number, ease?: Easing): this;
@@ -109,11 +118,13 @@ type Object = Record<string, unknown>;
  * builder. A copy of `initial` becomes the scene's reactive state; the
  * returned object carries both the state fields and the builder methods.
  *
- * Pass `code` (and optionally `language`) in `initial` to back a `<Code>`
- * component with code-morphing steps. A special `indent` field sets the
- * re-indentation unit (default `'  '`) and is removed from the state. The
- * read-only `step` (current step index) and `progress` (0..1 through it) are
- * reserved and always driven by the timeline.
+ * Pass `code` (and optionally `language`) in `initial` to back `<Code>`
+ * components with code morphing steps. `code` accepts a string for a single
+ * `default` block or an object map of block name to source for multiple
+ * blocks. A special `indent` field sets the re-indentation unit (default
+ * `'  '`) and is removed from the state. The read-only `step` (current step
+ * index) and `progress` (0..1 through it) are reserved and always driven by
+ * the timeline.
  *
  * Must run during a component's setup so the scene manager context (from
  * `<Scenes>`) is available. Steps are loaded into the manager on mount.
@@ -174,13 +185,58 @@ export function createScene<T extends Object>(initial: T = {} as T) {
 	let enterBuild: TransitionBuild | null = null;
 	let exitBuild: TransitionBuild | null = null;
 
-	let codeState: CodeState | null = null;
-	const initialCode = rawInitial.code;
+	const codeStates = new SvelteMap<string, CodeState>();
+	let currentCodeName = 'default';
+	const initialCode = rawInitial.code as unknown;
 	const initialLanguage = rawInitial.language as string | undefined;
 	if (initialLanguage) void registerLanguages([initialLanguage]);
 	if (typeof initialCode === 'string') {
-		codeState = createCodeState(initialLanguage ?? 'ts', smartIndent(initialCode, indent));
-		setCodeState(codeState);
+		codeStates.set(
+			'default',
+			createCodeState(initialLanguage ?? 'ts', smartIndent(initialCode, indent))
+		);
+	} else if (initialCode !== undefined && initialCode !== null) {
+		if (typeof initialCode !== 'object' || Array.isArray(initialCode)) {
+			throw new Error(
+				'createScene: `code` must be a string or an object map of block name to code.'
+			);
+		}
+		const entries = Object.entries(initialCode as Record<string, CodeBlockInput>);
+		const blockLanguages: string[] = [];
+		for (const [name, input] of entries) {
+			let source: string;
+			let language = initialLanguage ?? 'ts';
+			if (typeof input === 'string') {
+				source = input;
+			} else if (input && typeof input === 'object' && typeof input.code === 'string') {
+				source = input.code;
+				if (typeof input.language === 'string' && input.language.length > 0) {
+					language = input.language;
+				}
+			} else {
+				throw new Error(
+					`createScene: code block "${name}" must be a string or { code, language }.`
+				);
+			}
+			blockLanguages.push(language);
+			codeStates.set(name, createCodeState(language, smartIndent(source, indent)));
+		}
+		if (blockLanguages.length > 0) registerLanguages(blockLanguages);
+	}
+	if (codeStates.size > 0) setCodeStates(codeStates);
+
+	function availableBlocks(): string {
+		return [...codeStates.keys()].join(', ') || '(none)';
+	}
+
+	function requireCodeState(): CodeState {
+		const target = codeStates.get(currentCodeName);
+		if (!target) {
+			throw new Error(
+				`no code block selected. Call .codeBlock(name) first. Available: ${availableBlocks()}.`
+			);
+		}
+		return target;
 	}
 
 	function applyIndent(code: string): string {
@@ -356,6 +412,20 @@ export function createScene<T extends Object>(initial: T = {} as T) {
 	};
 
 	/**
+	 * Selects the named code block for the following `code*` steps. With no
+	 * argument selects the single `default` block.
+	 *
+	 * @throws if the block name was not passed in `createScene({ code })`
+	 */
+	state.codeBlock = function (this: Scene<T>, name = 'default') {
+		if (!codeStates.has(name)) {
+			throw new Error(`codeBlock: unknown code block "${name}". Available: ${availableBlocks()}.`);
+		}
+		currentCodeName = name;
+		return this;
+	};
+
+	/**
 	 * Morphs the whole code block to `code`. Re-indents the target with the
 	 * scene's indent unit.
 	 *
@@ -367,14 +437,14 @@ export function createScene<T extends Object>(initial: T = {} as T) {
 		duration = 0.6,
 		opts?: { language?: string; ease?: Easing }
 	) {
-		if (!codeState) throw new Error('codeTo: no code state. Pass initial `code` to createScene().');
-		const lang = opts?.language ?? codeState.language;
+		const target = requireCodeState();
+		const lang = opts?.language ?? target.language;
 		if (opts?.language) void registerLanguages([opts.language]);
 		steps.push(
 			new CodeStep(
-				codeState,
+				target,
 				() => ({
-					from: makeCodeTree(codeState.resolved),
+					from: makeCodeTree(target.resolved),
 					to: makeCodeTree(applyIndent(code)),
 					resolved: applyIndent(code)
 				}),
@@ -393,15 +463,14 @@ export function createScene<T extends Object>(initial: T = {} as T) {
 		duration = 0.6,
 		ease: Easing = easeInOut
 	) {
-		if (!codeState)
-			throw new Error('codeAppend: no code state. Pass initial `code` to createScene().');
+		const target = requireCodeState();
 		steps.push(
 			new CodeStep(
-				codeState,
+				target,
 				() => {
-					const resolved = applyIndent(codeState.resolved + code);
+					const resolved = applyIndent(target.resolved + code);
 					return {
-						from: makeCodeTree(codeState.resolved),
+						from: makeCodeTree(target.resolved),
 						to: makeCodeTree(resolved),
 						resolved
 					};
@@ -420,15 +489,14 @@ export function createScene<T extends Object>(initial: T = {} as T) {
 		duration = 0.6,
 		ease: Easing = easeInOut
 	) {
-		if (!codeState)
-			throw new Error('codePrepend: no code state. Pass initial `code` to createScene().');
+		const target = requireCodeState();
 		steps.push(
 			new CodeStep(
-				codeState,
+				target,
 				() => {
-					const resolved = applyIndent(code + codeState.resolved);
+					const resolved = applyIndent(code + target.resolved);
 					return {
-						from: makeCodeTree(codeState.resolved),
+						from: makeCodeTree(target.resolved),
 						to: makeCodeTree(resolved),
 						resolved
 					};
@@ -451,13 +519,12 @@ export function createScene<T extends Object>(initial: T = {} as T) {
 		duration = 0.6,
 		ease: Easing = easeInOut
 	) {
-		if (!codeState)
-			throw new Error('codeInsert: no code state. Pass initial `code` to createScene().');
+		const target = requireCodeState();
 		steps.push(
 			new CodeStep(
-				codeState,
+				target,
 				() => {
-					const current = codeState.resolved;
+					const current = target.resolved;
 					const range = resolveSingleRange(anchor, current);
 					const { start } = rangeToSplice(current, range);
 					const result = applyIndent(current.slice(0, start) + text + current.slice(start));
@@ -485,13 +552,12 @@ export function createScene<T extends Object>(initial: T = {} as T) {
 		duration = 0.6,
 		ease: Easing = easeInOut
 	) {
-		if (!codeState)
-			throw new Error('codeReplace: no code state. Pass initial `code` to createScene().');
+		const block = requireCodeState();
 		steps.push(
 			new CodeStep(
-				codeState,
+				block,
 				() => {
-					const current = codeState.resolved;
+					const current = block.resolved;
 					const range = resolveSingleRange(target, current);
 					const { start, end } = rangeToSplice(current, range);
 					const result = applyIndent(current.slice(0, start) + text + current.slice(end));
@@ -515,13 +581,12 @@ export function createScene<T extends Object>(initial: T = {} as T) {
 		duration = 0.6,
 		ease: Easing = easeInOut
 	) {
-		if (!codeState)
-			throw new Error('codeRemove: no code state. Pass initial `code` to createScene().');
+		const block = requireCodeState();
 		steps.push(
 			new CodeStep(
-				codeState,
+				block,
 				() => {
-					const current = codeState.resolved;
+					const current = block.resolved;
 					const range = resolveSingleRange(target, current);
 					const { start, end } = rangeToSplice(current, range);
 					const result = applyIndent(current.slice(0, start) + current.slice(end));
@@ -546,16 +611,15 @@ export function createScene<T extends Object>(initial: T = {} as T) {
 	 * scene.codeEdit(0.6)`return ${code.insert('result;')};`;
 	 */
 	state.codeEdit = function (this: Scene<T>, duration = 0.6) {
-		if (!codeState)
-			throw new Error('codeEdit: no code state. Pass initial `code` to createScene().');
+		const target = requireCodeState();
 		return (strings: TemplateStringsArray, ...tags: (string | RawCodeFragment)[]) => {
 			steps.push(
 				new CodeStep(
-					codeState,
+					target,
 					() => {
 						const { to } = buildEditTrees(strings, tags);
 						const resolved = applyIndent(to);
-						return { from: codeState.resolved, to: resolved, resolved };
+						return { from: target.resolved, to: resolved, resolved };
 					},
 					duration,
 					easeInOut
@@ -574,9 +638,7 @@ export function createScene<T extends Object>(initial: T = {} as T) {
 		range: CodeRange | CodeRange[] | RangeResolver | string | typeof DEFAULT = DEFAULT,
 		duration = 0.6
 	) {
-		if (!codeState)
-			throw new Error('codeSelection: no code state. Pass initial `code` to createScene().');
-		steps.push(new SelectionStep(codeState, range, duration));
+		steps.push(new SelectionStep(requireCodeState(), range, duration));
 		return this;
 	};
 

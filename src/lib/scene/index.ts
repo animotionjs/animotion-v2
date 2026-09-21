@@ -78,6 +78,8 @@ export {
 	ALL_LINES,
 	smartIndent,
 	code,
-	getCodeState
+	getCodeState,
+	getCodeStates
 } from './code/code.svelte.js';
+export type { CodeBlockInput, CodeState, CodeStateMap } from './code/code.svelte.js';
 export { default as Code } from '../components/Code.svelte';

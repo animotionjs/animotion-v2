@@ -16,12 +16,14 @@
 		revealTargetLine,
 		scrollMask
 	} from '../scene/code/code-scroll.js';
-	import { getCodeState, type CodeRange } from '../scene/code/code.svelte.js';
+	import { getCodeStates, type CodeRange } from '../scene/code/code.svelte.js';
 	import { clamp, easeInOutSine, lerp } from '../scene/easing.js';
 
 	interface Props {
 		/** Size and typography classes, e.g. `text-2xl` (default). */
 		class?: string;
+		/** Which named code block to render (default `default`). */
+		name?: string;
 		/** Opacity of code outside the current selection (default `0.32`). */
 		unselectedOpacity?: number;
 		/** Line height in `em` (default `1.5`). */
@@ -38,6 +40,7 @@
 
 	let {
 		class: classes = 'text-2xl',
+		name = 'default',
 		unselectedOpacity = 0.32,
 		lineHeight = 1.5,
 		lineNumbers = false,
@@ -45,7 +48,15 @@
 		fadeSize = 4,
 		scrollMode = 'both'
 	}: Props = $props();
-	const slot = getCodeState();
+	const states = getCodeStates();
+	const slot = $derived.by(() => {
+		const target = states.get(name);
+		if (!target) {
+			const available = [...states.keys()].join(', ') || '(none)';
+			throw new Error(`unknown code block "${name}". Available: ${available}.`);
+		}
+		return target;
+	});
 
 	const spans: RenderSpan[] = $derived.by(() => {
 		if (Array.isArray(slot.tokens)) {

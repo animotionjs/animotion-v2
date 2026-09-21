@@ -142,7 +142,7 @@ Every scene carries a built-in camera: a reactive `{ x, y, zoom, deg }` state th
 
 ## Code animations
 
-Scenes can morph source code between states. Pass initial `code` (and optional `language`) to `createScene`, render `<Code />`, then chain `code*` steps:
+Scenes can morph source code between states. Pass initial `code` (and optional `language`) to `createScene`, render `<Code />`, then chain `code*` steps. `code` accepts a single source string or an object map of block name to source for multiple independent blocks:
 
 ```svelte
 <script lang="ts">
@@ -171,6 +171,32 @@ Scenes can morph source code between states. Pass initial `code` (and optional `
 <Code class="text-2xl" />
 ```
 
+Multiple blocks each morph and highlight independently. `codeBlock(name)` selects the target for the `code*` steps after it:
+
+```svelte
+<script lang="ts">
+	import { createScene, Code } from '#lib/scene';
+
+	createScene({
+		code: {
+			left: `let x = 1;`,
+			right: `let y = 2;`
+		}
+	})
+		.codeBlock('left').codeTo(`let x = 2;`)
+		.codeBlock('right').codeTo(`let y = 3;`);
+</script>
+
+<div class="flex gap-8">
+	<Code name="left" class="text-2xl" />
+	<Code name="right" class="text-2xl" />
+</div>
+```
+
+- `codeBlock(name?)`: selects the named block for the following `code*` steps and returns the scene, so chains can switch blocks without storing handles. Defaults to `default`.
+- Map values accept a string or `{ code, language }`; the top-level `language` is the fallback for plain-string entries.
+- `<Code name>` selects which block to render (default `default`). Unknown block names throw and list the available blocks.
+
 - `codeTo(code, duration)`: morph the whole snippet to new source.
 - `codeAppend(code)` / `codePrepend(code)`: add to the start or end.
 - `codeInsert(range, code)`: insert at a position.
@@ -186,6 +212,7 @@ Ranges target `[line, col]` positions with **1-indexed lines and 0-indexed colum
 The `<Code />` component accepts a few props:
 
 - `class`: size and typography classes (default `text-2xl`).
+- `name`: which named code block to render (default `default`).
 - `lineHeight`: line height in `em` (default `1.5`).
 - `unselectedOpacity`: opacity of code outside the current `codeSelection` (default `0.32`).
 - `lineNumbers`: show a line-number gutter on the left (default `false`).
