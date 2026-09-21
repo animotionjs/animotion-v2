@@ -46,6 +46,7 @@
 	},
 	"publishConfig": {
 		"access": "public",
+		"tag": "next",
 		"imports": {
 			"#lib": "./dist/index.js",
 			"#lib/*": "./dist/*",
