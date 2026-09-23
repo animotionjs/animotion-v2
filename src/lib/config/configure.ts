@@ -1,8 +1,7 @@
 import { configure } from '#lib/scene';
 
 configure({
-	theme: 'poimandres',
-	languages: ['svelte'],
+	theme: 'animotion-dark',
 	transition: { type: 'slide', duration: 0.4 },
 	aspectRatio: 'video',
 	render: {

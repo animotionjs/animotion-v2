@@ -1,10 +1,4 @@
-import {
-	createHighlighter,
-	type BundledLanguage,
-	type BundledTheme,
-	type Highlighter
-} from 'shiki';
-import { createJavaScriptRegexEngine } from 'shiki/engine/javascript';
+import { DEFAULT_THEME, themes, type Theme } from './themes.js';
 import {
 	setOptions,
 	type AspectRatio,
@@ -12,26 +6,17 @@ import {
 	type TransitionConfig
 } from '../options.js';
 
-export const DEFAULT_THEME: BundledTheme = 'poimandres';
+export type Tokenizer = (code: string) => { tokens: Uint32Array; token_types: string[] };
 
-const DEFAULT_LANGUAGES: BundledLanguage[] = [
-	'typescript',
-	'javascript',
-	'html',
-	'css',
-	'json',
-	'markdown'
-];
+/** A language package factory, e.g. `tokenize` from `@twinkleplop/rust`. Called once with no arguments. */
+export type LanguageFactory = () => Tokenizer;
 
-const jsEngine = createJavaScriptRegexEngine();
+const tokenizers: Record<string, Tokenizer> = {};
 
-let theme: BundledTheme = DEFAULT_THEME;
-let ready: Highlighter | null = null;
-let initPromise: Promise<void> | null = null;
-let generation = 0;
-const pendingLanguages = new Set<string>();
-let refreshCallbacks: (() => void)[] = [];
+let theme: Theme = DEFAULT_THEME;
 
+/* Refresh waiters fire only when the theme changes, the sole late event
+in the synchronous backend */
 let refreshWaiters: (() => void)[] = [];
 
 function notifyRefreshWaiters() {
@@ -40,69 +25,25 @@ function notifyRefreshWaiters() {
 	for (const waiter of waiters) waiter();
 }
 
-function runRefresh() {
-	const callbacks = refreshCallbacks;
-	refreshCallbacks = [];
-	for (const callback of callbacks) callback();
-	notifyRefreshWaiters();
-}
-
-function loadLanguages() {
-	if (!ready) return Promise.resolve();
-	return Promise.all(
-		[...pendingLanguages].map((language) => ready!.loadLanguage(language as never))
-	).then(
-		() => notifyRefreshWaiters(),
-		() => notifyRefreshWaiters()
-	);
-}
-
-function ensureInit(): Promise<void> {
-	if (initPromise) return initPromise;
-	const gen = generation;
-	initPromise = (async () => {
-		const highlighter = await createHighlighter({
-			themes: [theme],
-			langs: DEFAULT_LANGUAGES,
-			engine: jsEngine
-		});
-		if (gen === generation) {
-			ready = highlighter;
-			runRefresh();
-			loadLanguages();
-		}
-	})();
-	return initPromise;
-}
-
-ensureInit();
-
 /** Presentation-wide highlighter and render settings. */
 export interface ConfigureOptions {
-	theme?: BundledTheme;
-	languages?: BundledLanguage[];
+	theme?: Theme;
+	languages?: Record<string, LanguageFactory>;
 	aspectRatio?: AspectRatio;
 	render?: RenderOptionsInput;
 	transition?: TransitionConfig | null;
 }
 
-/**
- * Configures the highlighter and global options. Languages listed here are
- * registered lazily as the highlighter loads; switching the theme restarts
- * the highlighter.
- */
 export function configure(options: ConfigureOptions) {
-	if (options.languages) {
-		for (const language of options.languages) pendingLanguages.add(language);
-	}
-	if (options.theme && options.theme !== theme) {
+	if (options.theme && themes[options.theme] && options.theme !== theme) {
 		theme = options.theme;
-		generation++;
-		ready = null;
-		initPromise = null;
-		ensureInit();
-	} else {
-		loadLanguages();
+		notifyRefreshWaiters();
+	}
+	if (options.languages) {
+		for (const [name, factory] of Object.entries(options.languages)) {
+			tokenizers[name] = factory();
+		}
+		notifyRefreshWaiters();
 	}
 	if (options.aspectRatio || options.render || options.transition) {
 		setOptions({
@@ -113,50 +54,34 @@ export function configure(options: ConfigureOptions) {
 	}
 }
 
-/** Resolves once the highlighter is initialized and usable. */
 export function whenReady(): Promise<void> {
-	return ensureInit();
+	return Promise.resolve();
 }
 
-/** Calls `callback` once the highlighter is ready, immediately if it already is. */
+/** Calls `callback` immediately. There is no async init to wait for. */
 export function onHighlighterReady(callback: () => void) {
-	if (ready) {
-		callback();
-	} else {
-		refreshCallbacks.push(callback);
-		ensureInit();
-	}
+	callback();
 }
 
-/** Whether the highlighter has been created and can tokenize. */
+/** Always true. Tokenizers are created at import time. */
 export function isHighlighterReady(): boolean {
-	return ready !== null;
+	return true;
 }
 
 /**
- * Calls `callback` on the next highlighter readiness or language-load
- * notification. Unlike {@link onHighlighterReady}, it never invokes the
- * callback synchronously, so a callback may re-register to wait for the next
- * notification (for example while an extra language is still loading).
+ * Calls `callback` on the next theme change. Never fires otherwise.
  */
 export function onHighlighterRefresh(callback: () => void) {
 	refreshWaiters.push(callback);
 }
 
-/** Registers additional languages with the highlighter, loading them if needed. */
-export async function registerLanguages(languages: string[]) {
-	for (const language of languages) pendingLanguages.add(language);
-	await ensureInit();
-	await loadLanguages();
-}
-
-/** A highlighted token: its source text and resolved color. */
+/** A highlighted token with its source text and resolved color. */
 export interface Token {
 	code: string;
 	color: string;
 }
 
-/** A token positioned within the code grid; `line`/`col` are 0-indexed. */
+/** A token positioned within the code grid. `line` and `col` are 0-indexed. */
 export interface PositionedToken extends Token {
 	line: number;
 	col: number;
@@ -173,33 +98,97 @@ export interface MorphToken extends Token {
 	to: [number, number] | null;
 }
 
+// brackets share one muted color while other punctuation keeps the text color
+const BRACKETS = new Set(['(', ')', '{', '}', '[', ']']);
+
+function pushPunctuation(
+	out: PositionedToken[],
+	text: string,
+	color: string,
+	muted: string,
+	line: number,
+	col: number
+): { line: number; col: number } {
+	let run = '';
+	let runMuted = false;
+	function flush() {
+		if (run.length === 0) return;
+		({ line, col } = pushText(out, run, runMuted ? muted : color, line, col));
+		run = '';
+	}
+	for (const char of text) {
+		const mutedChar = BRACKETS.has(char);
+		if (run.length > 0 && mutedChar !== runMuted) flush();
+		runMuted = mutedChar;
+		run += char;
+	}
+	flush();
+	return { line, col };
+}
+
+function pushText(
+	out: PositionedToken[],
+	text: string,
+	color: string,
+	line: number,
+	col: number
+): { line: number; col: number } {
+	const parts = text.split('\n');
+	for (let i = 0; i < parts.length; i++) {
+		if (i > 0) {
+			line++;
+			col = 0;
+		}
+		if (parts[i].length === 0) continue;
+		out.push({ code: parts[i], color, line, col });
+		col += parts[i].length;
+	}
+	return { line, col };
+}
+
 /**
  * Tokenizes `code` with the current theme.
  *
- * @returns positioned tokens, or `[]` if the highlighter is not ready or the
- *   language is unknown
+ * @returns positioned tokens, or `[]` if the language is unknown
  */
 export function highlight(code: string, language: string): PositionedToken[] {
-	const highlighter = ready;
-	if (!highlighter) return [];
+	const tokenize = tokenizers[language];
+	if (!tokenize) return [];
+	const colors = themes[theme];
+	// plain text inherits the identifier color, matching the theme stylesheet
+	const fg = colors['identifier'] ?? '';
 	try {
-		const { tokens, fg } = highlighter.codeToTokens(code, {
-			lang: language as BundledLanguage,
-			theme
-		});
+		const { tokens, token_types } = tokenize(code);
 		const positioned: PositionedToken[] = [];
-		for (let line = 0; line < tokens.length; line++) {
-			let col = 0;
-			for (const token of tokens[line]) {
-				if (token.content.length === 0) continue;
-				positioned.push({
-					code: token.content,
-					color: token.color ?? fg ?? '',
+		let line = 0;
+		let col = 0;
+		let cursor = 0;
+		for (let i = 0; i < tokens.length; i += 3) {
+			const name = token_types[tokens[i]];
+			const start = tokens[i + 1];
+			const end = tokens[i + 2];
+			// twinkleplop leaves whitespace between tokens uncovered, so gaps become plain spans
+			if (start > cursor) {
+				const gap = code.slice(cursor, start);
+				({ line, col } = pushText(positioned, gap, fg, line, col));
+			}
+			const color = colors[name] ?? fg;
+			if (name === 'punctuation') {
+				({ line, col } = pushPunctuation(
+					positioned,
+					code.slice(start, end),
+					color,
+					colors['bracket'] ?? fg,
 					line,
 					col
-				});
-				col += token.content.length;
+				));
+			} else {
+				({ line, col } = pushText(positioned, code.slice(start, end), color, line, col));
 			}
+			cursor = end;
+		}
+		if (cursor < code.length) {
+			pushText(positioned, code.slice(cursor), fg, line, col);
 		}
 		return positioned;
 	} catch {
@@ -349,7 +338,7 @@ function patienceDiff(
  * Diffs two highlighted code strings into morph tokens by matching token
  * codes with a patience diff. Matched tokens are `retain` (using the target's
  * color), tokens only in `from` are `delete`, and tokens only in `to` are
- * `create`; each token carries its `[col, line]` position on the relevant
+ * `create`. Each token carries its `[col, line]` position on the relevant
  * side.
  */
 export function diffStrings(from: string, to: string, language: string): MorphToken[] {

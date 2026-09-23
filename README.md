@@ -183,8 +183,10 @@ Multiple blocks each morph and highlight independently. `codeBlock(name)` select
 			right: `let y = 2;`
 		}
 	})
-		.codeBlock('left').codeTo(`let x = 2;`)
-		.codeBlock('right').codeTo(`let y = 3;`);
+		.codeBlock('left')
+		.codeTo(`let x = 2;`)
+		.codeBlock('right')
+		.codeTo(`let y = 3;`);
 </script>
 
 <div class="flex gap-8">
@@ -382,8 +384,7 @@ The `src/lib/config/` directory holds the presentation settings.
 import { configure } from '#lib/scene';
 
 configure({
-	theme: 'poimandres',
-	languages: ['svelte'],
+	theme: 'animotion-dark',
 	aspectRatio: 'video',
 	transition: { type: 'slide', duration: 0.4 },
 	render: {
@@ -393,8 +394,7 @@ configure({
 });
 ```
 
-- `theme` is a shiki `BundledTheme` name (e.g. `'poimandres'`, `'github-dark'`, `'tokyo-night'`).
-- `languages` is a `BundledLanguage[]` of languages to register beyond the defaults (typescript, javascript, html, css, json, markdown).
+- `theme` is a [twinkleplop](https://twinkleplop.pngwn.at) theme.
 - `aspectRatio` is a preset that sets the on-screen slide shape and the default render resolution:
   - `'video'` — 16:9, 1920×1080 (YouTube, X, presentations; default)
   - `'vertical'` — 9:16, 1080×1920 (Reels, TikTok, Shorts)
@@ -402,7 +402,22 @@ configure({
 - `render` sets the default options used by `animotion render`. `resolution` picks a size tier — `'720p'`, `'1080p'`, `'2k'`, `'4k'` — scaling the shape so its smaller side matches (e.g. `'2k'` gives 2560×1440 landscape, `'4k'` gives 3840×2160 landscape, 2160×3840 vertical, 2160×2160 square). Explicit `width`/`height` override the tier; the remaining options fall back to their defaults. `gpu` toggles hardware acceleration for the headless browser (default `true`, with an automatic software fallback when the GPU looks unavailable).
 - `transition` sets the default scene transition: `{ type: 'slide' | 'fade' | 'zoom', duration?, ease?, distance?, scale? }` or `null` to disable. See [Default transition](#default-transition).
 
-Both highlighter options are typed against shiki's bundles, so editor autocomplete suggests the valid names.
+The theme option is typed, so editor autocomplete suggests the valid names.
+
+To use a language, install the corresponding twinkleplop package, and pass it to the config:
+
+```ts
+import { configure } from '#lib/scene';
+import { tokenize as svelte } from '@twinkleplop/svelte';
+import { tokenize as rust } from '@twinkleplop/rust';
+
+configure({
+	languages: {
+		svelte,
+		rust
+	}
+});
+```
 
 ### Plugins
 
@@ -499,8 +514,6 @@ Scenes are matched by their id (the filename without the number prefix and `.sve
 ## Styling
 
 Global styles are defined with Tailwind CSS v4 `@theme` tokens in `src/styles/theme.css`, imported in `src/routes/+layout.svelte`. The default theme provides semantic color tokens (`--color-background`, `--color-foreground`, `--color-surface`, and `--color-accent`) used by scenes as `bg-background`, `text-foreground`, and so on. Spacing, radii, and typography scale with `cqi` so the layout resizes with the slide container.
-
-Code-highlight colors are applied inline from the shiki theme set in `configure({ theme })`; there is no separate CSS file to import.
 
 ## Developing
 

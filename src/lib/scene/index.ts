@@ -49,9 +49,21 @@ export type { SceneEntry, Sequence } from './runtime/sequence.js';
 export { TickStep, type TickFrame } from './runtime/steps.js';
 export type { LayoutTransition, LayoutTransitionValue, LayoutOptions } from './runtime/steps.js';
 export { createScene, type SceneBuilder } from './runtime/builder.svelte.js';
-export { Camera, CameraStep, frameCenter, type CameraOptions, type CameraTarget } from './camera/index.js';
-export { configure, registerLanguages, highlight, whenReady } from './code/highlighter.js';
-export type { Token, PositionedToken, MorphToken } from './code/highlighter.js';
+export {
+	Camera,
+	CameraStep,
+	frameCenter,
+	type CameraOptions,
+	type CameraTarget
+} from './camera/index.js';
+export { configure, highlight, whenReady } from './code/highlighter.js';
+export type {
+	Token,
+	PositionedToken,
+	MorphToken,
+	Tokenizer,
+	LanguageFactory
+} from './code/highlighter.js';
 export { getOptions, setOptions } from './options.js';
 export type {
 	Options,

@@ -652,7 +652,7 @@ export function createCodeState(language: string, initial: string): CodeState {
 	onHighlighterReady(function refresh() {
 		if (state.tokens === null) {
 			state.settled = highlight(state.resolved, state.language);
-			// the highlighter can be ready while an extra language (e.g. `svelte`) still loads, so retry until the tokens resolve
+			// an unbundled language resolves to no tokens, so retry on the next theme change in case it resolves then
 			if (state.settled.length === 0 && state.resolved.length > 0) {
 				onHighlighterRefresh(refresh);
 			}

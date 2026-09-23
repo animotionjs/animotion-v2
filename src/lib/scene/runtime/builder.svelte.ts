@@ -16,7 +16,6 @@ import { getSceneManager, getSceneId } from './context.svelte';
 import { TransitionBuilder, type TransitionBuild } from './runtime.svelte';
 import { clamp, easeInOut, type Easing } from '../easing';
 import { getOptions, type TransitionConfig } from '../options';
-import { registerLanguages } from '../code/highlighter';
 import {
 	setCodeStates,
 	createCodeState,
@@ -189,11 +188,10 @@ export function createScene<T extends Object>(initial: T = {} as T) {
 	let currentCodeName = 'default';
 	const initialCode = rawInitial.code as unknown;
 	const initialLanguage = rawInitial.language as string | undefined;
-	if (initialLanguage) registerLanguages([initialLanguage]);
 	if (typeof initialCode === 'string') {
 		codeStates.set(
 			'default',
-			createCodeState(initialLanguage ?? 'ts', smartIndent(initialCode, indent))
+			createCodeState(initialLanguage ?? 'typescript', smartIndent(initialCode, indent))
 		);
 	} else if (initialCode !== undefined && initialCode !== null) {
 		if (typeof initialCode !== 'object' || Array.isArray(initialCode)) {
@@ -202,10 +200,9 @@ export function createScene<T extends Object>(initial: T = {} as T) {
 			);
 		}
 		const entries = Object.entries(initialCode as Record<string, CodeBlockInput>);
-		const blockLanguages: string[] = [];
 		for (const [name, input] of entries) {
 			let source: string;
-			let language = initialLanguage ?? 'ts';
+			let language = initialLanguage ?? 'typescript';
 			if (typeof input === 'string') {
 				source = input;
 			} else if (input && typeof input === 'object' && typeof input.code === 'string') {
@@ -218,10 +215,8 @@ export function createScene<T extends Object>(initial: T = {} as T) {
 					`createScene: code block "${name}" must be a string or { code, language }.`
 				);
 			}
-			blockLanguages.push(language);
 			codeStates.set(name, createCodeState(language, smartIndent(source, indent)));
 		}
-		if (blockLanguages.length > 0) registerLanguages(blockLanguages);
 	}
 	if (codeStates.size > 0) setCodeStates(codeStates);
 
@@ -439,7 +434,6 @@ export function createScene<T extends Object>(initial: T = {} as T) {
 	) {
 		const target = requireCodeState();
 		const lang = opts?.language ?? target.language;
-		if (opts?.language) registerLanguages([opts.language]);
 		steps.push(
 			new CodeStep(
 				target,

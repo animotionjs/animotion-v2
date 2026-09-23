@@ -1,5 +1,5 @@
 export { createSequence } from './scene/runtime/sequence.js';
-export { configure, registerLanguages, highlight, whenReady } from './scene/code/highlighter.js';
+export { configure, highlight, whenReady } from './scene/code/highlighter.js';
 export { getOptions, setOptions } from './scene/options.js';
 export { TransitionBuilder, SceneManager } from './scene/runtime/runtime.svelte.js';
 export {
@@ -105,7 +105,13 @@ export type {
 	SpeakerCommand
 } from './plugins/index.js';
 export type { RenderBridge } from './scene/runtime/render-bridge.js';
-export type { Token, PositionedToken, MorphToken } from './scene/code/highlighter.js';
+export type {
+	Token,
+	PositionedToken,
+	MorphToken,
+	Tokenizer,
+	LanguageFactory
+} from './scene/code/highlighter.js';
 export type {
 	Options,
 	AspectRatio,

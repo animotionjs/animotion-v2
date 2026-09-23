@@ -1938,10 +1938,9 @@ export class ParallelStep implements Step {
  * Morphs a {@link CodeState} between two source versions. `start()` runs
  * `build()` and diffs the versions into morph tokens; when the language
  * changes, all existing tokens are deleted and the target is re-highlighted as
- * all-new creates. If the highlighter is not ready when the step starts (or an
- * extra language is still loading), the diff is deferred and recomputed on the
- * next highlighter readiness or language-load notification, so a step that
- * begins before Shiki loads never commits empty tokens. `setProgress` feeds
+ * all-new creates. If the highlighter yields no tokens when the step starts,
+ * the diff is deferred and recomputed on the next theme change, so a step that
+ * begins before highlighting resolves never commits empty tokens. `setProgress` feeds
  * the raw progress through the easing into `morphProgress` (remapped within
  * the 0.2..0.8 window), and the resulting morph is committed on `end()`.
  * `revert()` restores the full pre-step snapshot.
@@ -2051,7 +2050,7 @@ export class CodeStep implements Step {
 				if (this.#active) this.#applyDiff();
 			});
 		} else {
-			// an extra language may still be loading, so recompute on the next language-load notification
+			// an unbundled language yields no tokens, so recompute on the next theme change
 			onHighlighterRefresh(() => {
 				if (this.#active) this.#applyDiff();
 			});

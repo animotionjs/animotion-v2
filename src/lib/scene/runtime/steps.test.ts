@@ -16,9 +16,12 @@ import {
 	type TickFrame
 } from './steps';
 import { easeInOut } from '../easing';
-import { whenReady } from '../code/highlighter';
+import { configure, whenReady } from '../code/highlighter';
+import { registerTestLanguages, stubTokenizer } from '../code/test-languages';
 
 beforeAll(async () => {
+	registerTestLanguages();
+	configure({ languages: { other: () => stubTokenizer } });
 	await whenReady();
 });
 
@@ -30,7 +33,7 @@ describe('ParallelStep duration', () => {
 
 describe('CodeStep morph timing', () => {
 	it('opens the morph window at the timeline boundaries despite easing', () => {
-		const state = createCodeState('ts', 'const x = 1;');
+		const state = createCodeState('typescript', 'const x = 1;');
 		const step = new CodeStep(
 			state,
 			() => ({ from: state.resolved, to: 'const x = 2;', resolved: 'const x = 2;' }),
@@ -239,16 +242,16 @@ describe('ParallelStep', () => {
 
 describe('CodeStep language change', () => {
 	it('fades between languages: all delete + create, no retain', () => {
-		const state = createCodeState('ts', 'const x = 1;');
+		const state = createCodeState('typescript', 'const x = 1;');
 		const step = new CodeStep(
 			state,
 			() => ({ from: state.resolved, to: 'const x = 2;', resolved: 'const x = 2;' }),
 			0.6,
 			undefined,
-			'js'
+			'other'
 		);
 		step.start();
-		expect(state.language).toBe('js');
+		expect(state.language).toBe('other');
 		expect(state.tokens).not.toBeNull();
 		expect(state.tokens?.some((t) => t.morph === 'retain')).toBe(false);
 		expect(state.tokens?.some((t) => t.morph === 'delete')).toBe(true);
@@ -259,34 +262,34 @@ describe('CodeStep language change', () => {
 	});
 
 	it('same language keeps the normal retain morph', () => {
-		const state = createCodeState('ts', 'const x = 1;');
+		const state = createCodeState('typescript', 'const x = 1;');
 		const step = new CodeStep(
 			state,
 			() => ({ from: state.resolved, to: 'const x = 2;', resolved: 'const x = 2;' }),
 			0.6,
 			undefined,
-			'ts'
+			'typescript'
 		);
 		step.start();
-		expect(state.language).toBe('ts');
+		expect(state.language).toBe('typescript');
 		expect(state.tokens?.some((t) => t.morph === 'retain')).toBe(true);
 	});
 
 	it('revert restores the previous language and settled tokens', () => {
-		const state = createCodeState('ts', 'const x = 1;');
+		const state = createCodeState('typescript', 'const x = 1;');
 		const beforeSettled = state.settled;
 		const step = new CodeStep(
 			state,
 			() => ({ from: state.resolved, to: 'const x = 2;', resolved: 'const x = 2;' }),
 			0.6,
 			undefined,
-			'js'
+			'typescript'
 		);
 		step.start();
 		step.end();
-		expect(state.language).toBe('js');
+		expect(state.language).toBe('typescript');
 		step.revert();
-		expect(state.language).toBe('ts');
+		expect(state.language).toBe('typescript');
 		expect(state.settled).toEqual(beforeSettled);
 	});
 });

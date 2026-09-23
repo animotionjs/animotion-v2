@@ -3,6 +3,9 @@ import { flushSync, mount, unmount } from 'svelte';
 import MultiCodeFixture from './fixtures/MultiCodeFixture.svelte';
 import { managers } from './fixtures/code-scroll-managers.js';
 import { whenReady } from './highlighter';
+import { registerTestLanguages } from './test-languages';
+
+registerTestLanguages();
 
 beforeEach(() => {
 	document.body.innerHTML = '';

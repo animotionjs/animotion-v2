@@ -5,7 +5,10 @@ import CodeScrollAppendFixture from './fixtures/CodeScrollAppendFixture.svelte';
 import CodeScrollFixture from './fixtures/CodeScrollFixture.svelte';
 import { managers } from './fixtures/code-scroll-managers.js';
 import { whenReady } from './highlighter';
+import { registerTestLanguages } from './test-languages';
 import type { SceneManager } from '../runtime/runtime.svelte.js';
+
+registerTestLanguages();
 
 beforeEach(() => {
 	document.body.innerHTML = '';
