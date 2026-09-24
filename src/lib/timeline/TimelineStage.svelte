@@ -1,6 +1,7 @@
 <script lang="ts">
-	import { onDestroy, untrack } from 'svelte';
+	import { onDestroy, onMount, untrack } from 'svelte';
 	import { SceneManager } from '../scene/runtime/runtime.svelte.js';
+	import { AudioController } from '../scene/audio/controller.js';
 	import { setSceneId, setSceneManager } from '../scene/runtime/context.svelte.js';
 	import Monitor from './Monitor.svelte';
 	import Transport from './Transport.svelte';
@@ -43,10 +44,72 @@
 		untrack(() => fps)
 	);
 
+	let audio: AudioController | null = null;
+	let audioUnlocked = false;
+
+	const syncLoad = manager.onLoad(() => {
+		if (audio) loadAudio();
+	});
+
+	const syncPlayback = active.onPlaybackChange((time, playing) => {
+		syncAudio(time, playing);
+	});
+
+	onMount(() => {
+		const controller = new AudioController();
+		audio = controller;
+		loadAudio();
+		controller.sync(active.time, active.playing, active.speed);
+	});
+
 	onDestroy(() => {
+		syncLoad();
+		syncPlayback();
+		const controller = audio;
+		audio = null;
+		controller?.destroy();
 		active.destroy();
 		manager.clear();
 	});
+
+	function loadAudio() {
+		const controller = audio;
+		if (!controller) return;
+		controller.stop();
+		controller.load(manager.sounds, active.duration);
+	}
+
+	function syncAudio(time: number, playing: boolean) {
+		const controller = audio;
+		if (!controller) return;
+		controller.sync(time, playing, active.speed);
+	}
+
+	function unlockAudio() {
+		const controller = audio;
+		if (!controller) return;
+		if (audioUnlocked) {
+			if (active.playing) syncAudio(active.time, true);
+			return;
+		}
+		audioUnlocked = true;
+		try {
+			void Promise.resolve(controller.unlock())
+				.then((unlocked) => {
+					if (audio !== controller) return;
+					if (unlocked === false) {
+						audioUnlocked = false;
+						return;
+					}
+					if (active.playing) syncAudio(active.time, true);
+				})
+				.catch(() => {
+					if (audio === controller) audioUnlocked = false;
+				});
+		} catch {
+			audioUnlocked = false;
+		}
+	}
 
 	function onkeydown(event: KeyboardEvent) {
 		const target = event.target;
@@ -55,6 +118,7 @@
 			(target.closest('input, select, textarea') || target.isContentEditable)
 		)
 			return;
+		unlockAudio();
 		// held toggle keys would flip on every repeat, so only stepping keys repeat
 		if (event.repeat && (event.key === ' ' || event.key === 'l' || event.key === 'L')) return;
 		const timeline = active;
@@ -93,7 +157,7 @@
 	}
 </script>
 
-<svelte:window {onkeydown} />
+<svelte:window {onkeydown} onpointerdown={unlockAudio} onclick={unlockAudio} />
 
 <div class="flex min-h-0 flex-1 flex-col">
 	<main class="flex min-h-0 flex-1 items-center justify-center">

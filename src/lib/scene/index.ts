@@ -1,3 +1,5 @@
+export { SOUND_NAMES } from './audio/index.js';
+export type { SoundCue, SoundName, SoundOptions } from './audio/index.js';
 export type { Easing } from './easing.js';
 export {
 	clamp,

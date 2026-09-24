@@ -1,5 +1,8 @@
+import { SvelteSet } from 'svelte/reactivity';
 import { clamp } from '../scene/easing';
 import { timelineSegments, type SceneManager } from '../scene/runtime/runtime.svelte';
+
+type PlaybackListener = (time: number, playing: boolean) => void;
 
 /**
  * Plays a single scene exactly like the video renderer would. Time advances
@@ -23,6 +26,17 @@ export class TimelineController {
 	#rafId: number | null = null;
 	#lastNow = 0;
 	#accumulator = 0;
+	#playbackListeners = new SvelteSet<PlaybackListener>();
+
+	/** Subscribes to playhead updates; returns an unsubscribe function. */
+	onPlaybackChange(listener: PlaybackListener) {
+		this.#playbackListeners.add(listener);
+		return () => this.#playbackListeners.delete(listener);
+	}
+
+	#emitPlaybackChange() {
+		for (const listener of this.#playbackListeners) listener(this.time, this.playing);
+	}
 
 	constructor(manager: SceneManager, fps: number) {
 		this.#manager = manager;
@@ -76,6 +90,7 @@ export class TimelineController {
 		if (Math.round(snapped * this.#fps) === Math.round(this.time * this.#fps)) return;
 		this.time = snapped;
 		this.#manager.seekToTime(this.time);
+		this.#emitPlaybackChange();
 	}
 
 	/** Moves the playhead by whole rendered frames. */
@@ -105,16 +120,19 @@ export class TimelineController {
 		if (this.time >= this.duration - 1e-6) {
 			this.time = 0;
 			this.#manager.seekToTime(0);
+			this.#emitPlaybackChange();
 		}
 		this.#startPlayback();
 	}
 
 	pause() {
+		const wasPlaying = this.playing || this.#rafId !== null;
 		if (this.#rafId !== null) {
 			cancelAnimationFrame(this.#rafId);
 			this.#rafId = null;
 		}
 		this.playing = false;
+		if (wasPlaying) this.#emitPlaybackChange();
 	}
 
 	destroy() {
@@ -131,6 +149,7 @@ export class TimelineController {
 		if (this.time < enterDuration) {
 			// awaiting playEnter here would start the next step unplayed
 			this.#manager.playEnter(enterDuration > 0 ? this.time / enterDuration : 0);
+			this.#emitPlaybackChange();
 			return;
 		}
 		/*
@@ -138,6 +157,7 @@ export class TimelineController {
 		 * an earlier seek, so its current step can simply resume.
 		 */
 		this.#manager.play();
+		this.#emitPlaybackChange();
 	}
 
 	#frame = (now: number) => {
@@ -162,6 +182,7 @@ export class TimelineController {
 			this.#manager.next();
 		}
 
+		this.#emitPlaybackChange();
 		this.#rafId = requestAnimationFrame(this.#frame);
 	};
 
@@ -169,6 +190,7 @@ export class TimelineController {
 		if (this.loop && this.duration > 0) {
 			this.time = 0;
 			this.#manager.seekToTime(0);
+			this.#emitPlaybackChange();
 			this.#startPlayback();
 			return;
 		}

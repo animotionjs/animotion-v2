@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { createSoundCue } from '../audio/index.js';
 import { SceneManager, type TransitionBuild } from './runtime.svelte';
 import { ParallelStep, TickStep, TweenStep, type Step, type TickFrame } from './steps';
 
@@ -38,6 +39,72 @@ describe('SceneManager + TickStep (render mode)', () => {
 		expect(frames.at(-1)!.time).toBe(1);
 		expect(frames.at(-1)!.progress).toBe(1);
 		expect(manager.step).toBe(0);
+	});
+});
+
+describe('SceneManager sounds', () => {
+	it('replaces cues on load and clears them when a new scene has none', () => {
+		const manager = new SceneManager();
+		const first = createSoundCue('chime', { at: 0.1 });
+		const second = createSoundCue('chime', { at: 0.2, duration: 0.5 });
+
+		manager.load({ steps: [new SpyStep()], sounds: [first] });
+		expect(manager.sounds).toEqual([first]);
+		expect(manager.timeline.steps).toHaveLength(1);
+		expect(manager.timeline.totalDuration).toBe(1);
+
+		manager.load({ steps: [new SpyStep()], sounds: [second] });
+		expect(manager.sounds).toEqual([second]);
+
+		manager.load({ steps: [new SpyStep()] });
+		expect(manager.sounds).toEqual([]);
+	});
+
+	it('rejects a sound that ends after the visual scene', () => {
+		const manager = new SceneManager();
+
+		expect(() =>
+			manager.load({
+				steps: [new SpyStep()],
+				sounds: [createSoundCue('chime', { duration: 1.5 })]
+			})
+		).toThrow(/Reduce duration or add visual time/);
+	});
+});
+
+describe('SceneManager playback clock', () => {
+	it('maps live time to completed and active step durations', () => {
+		const manager = new SceneManager();
+		const first = new SpyStep();
+		const second = new SpyStep();
+		first.duration = 1;
+		second.duration = 2;
+		const events: Array<{ time: number; playing: boolean }> = [];
+		const unsubscribe = manager.onPlaybackChange((time, playing) => events.push({ time, playing }));
+
+		manager.load({ steps: [first, second] });
+		expect(manager.liveTime).toBe(0);
+
+		manager.seekToTime(1.5);
+		expect(manager.liveTime).toBeCloseTo(1.5, 6);
+		expect(events.at(-1)).toEqual({ time: 1.5, playing: false });
+
+		const eventCount = events.length;
+		unsubscribe();
+		manager.seekToTime(0.5);
+		expect(events).toHaveLength(eventCount);
+	});
+
+	it('notifies load subscribers until they unsubscribe', () => {
+		const manager = new SceneManager();
+		let loads = 0;
+		const unsubscribe = manager.onLoad(() => loads++);
+
+		manager.load({ steps: [new SpyStep()] });
+		expect(loads).toBe(1);
+		unsubscribe();
+		manager.load({ steps: [new SpyStep()] });
+		expect(loads).toBe(1);
 	});
 });
 

@@ -32,7 +32,7 @@ A presentation is an ordered `sequence` of scenes. Each scene is a component tha
 </div>
 ```
 
-The library provides the player shell (`Scene`), the animation engine (`createScene`, `SceneManager`, step types), a code component (`Code`) that morphs between source states, a camera component (`Camera`) for flying across an oversized canvas, and a plugin system (`PluginManager`, `fullscreenPlugin`).
+The library provides the player shell (`Scene`), the animation engine (`createScene`, `SceneManager`, step types), synthesized sound cues, a code component (`Code`) that morphs between source states, a camera component (`Camera`) for flying across an oversized canvas, and a plugin system (`PluginManager`, `fullscreenPlugin`).
 
 Scenes live in `src/scenes/`. A scene is either a file (`04-code.svelte`) or a folder containing a `scene.svelte` component (`04-code/scene.svelte`), so you can colocate assets and helper components with the scene. Each scene must be prefixed with a number that sets its order in the sequence: `01-intro.svelte` plays before `02-about.svelte`. The rest of the name becomes the scene id (`intro`). The sequence is built automatically by `src/lib/config/scenes.ts`.
 
@@ -222,6 +222,39 @@ The `<Code />` component accepts a few props:
 ```svelte
 <Code class="text-2xl" lineNumbers />
 ```
+
+## Synthesized sound
+
+Scenes can add deterministic sound cues without any audio files. A `.sound(name)` call starts at the current visual timeline cursor. Its `{ delay }` is relative to that cursor, while `{ at }` overrides it with an absolute start time in seconds from the beginning of the scene timeline. Sound cues do not add visual steps or move the cursor.
+
+Sound cues do not change the visual scene duration. Each cue must finish within the scene timeline, so keep its `at` plus `duration` within the scene length. If a sound needs more time, add a visual step or extend the scene. A cue that outlasts the scene reports a readable error.
+
+```svelte
+<script lang="ts">
+	import { createScene } from '#lib/scene';
+
+	const scene = createScene({ opacity: 0 })
+		.tween('opacity', 1, 0.8)
+		.sound('chime', { delay: 0.1 })
+		.all((s) => {
+			s.tween('opacity', 0, 0.8);
+			s.sound('whoosh');
+		})
+		.sound('click', { at: 2.5, volume: 0.4 });
+</script>
+```
+
+The built-in presets are `click`, `pop`, `chime`, `whoosh`, `riser`, and `impact`. Every cue accepts:
+
+- `delay` for a start delay in seconds relative to the current cursor
+- `at` for an absolute start time in seconds from the beginning of the scene timeline
+- `duration` for the length of the generated sound
+- `volume` from `0` to `1`
+- `pitch` as a positive frequency multiplier
+- `seed` for deterministic tonal phase or character variation
+- `fadeIn` and `fadeOut` for edge fades in seconds
+
+Sound cues are mixed into the final video with ffmpeg after the scene frames have been captured. They also play in the regular presentation and timeline editor through the Web Audio API. Timeline playback follows its playhead when playing, pausing, seeking, or stepping frames, and the speed control changes audio rate too. Regular presentation audio starts with the scene's first live animation and stops when navigating away; its timing follows live step progression, so waits are skipped just like the visuals. Browsers require a user gesture before audio can start, so interact with the presentation or timeline once to enable sound. Image sequence renders do not contain audio.
 
 ## Other steps
 

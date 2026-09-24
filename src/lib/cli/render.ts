@@ -2,14 +2,16 @@
 import { spawn, type ChildProcess, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { once } from 'node:events';
 import { existsSync } from 'node:fs';
-import { mkdir, rm, writeFile } from 'node:fs/promises';
+import { mkdir, rename, rm, writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { availableParallelism, tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import ffmpeg from 'ffmpeg-static';
 import { chromium, type Browser, type Page } from 'playwright';
+import { SOUND_SAMPLE_RATE, encodePcm16, mixSoundCues } from '../scene/audio/sound.ts';
 import { resolveScenes } from './scenes.ts';
 import { sliceRanges, type SliceRange } from '../scene/runtime/slices.ts';
+import type { SoundCue } from '../scene/audio/sound.ts';
 import type { RenderBridge } from '../scene/runtime/render-bridge.js';
 import { PREVIEW_JPEG_QUALITY, type FrameFormat } from '../scene/options.ts';
 import type { RenderReport } from '../scene/runtime/report.js';
@@ -132,6 +134,8 @@ let browser: Browser | null = null;
 let isCrashed = false;
 const pageErrors: string[] = [];
 const sceneStats: { id: string; frames: number; ms: number }[] = [];
+const sceneSounds = new Map<string, readonly SoundCue[]>();
+const sceneTotals = new Map<string, number>();
 const progress: {
 	id: string;
 	frames: number;
@@ -151,7 +155,8 @@ async function main() {
 	if (process.argv.includes('--help') || process.argv.includes('-h')) {
 		console.log(`animotion render [scenes...]
 
-Record a presentation into a video.
+Record a presentation into a video. Scenes with synthesized sound cues
+automatically receive an AAC audio track.
 
 Arguments:
   scenes             scene ids to render individually (default: all scenes)
@@ -528,6 +533,7 @@ Examples:
 	console.log(
 		`Captured ${targets.length} scenes, ${totalFrames} frames in ${captureElapsed.toFixed(2)}s`
 	);
+	const hasAudio = targets.some((id) => (sceneSounds.get(id)?.length ?? 0) > 0);
 
 	if (reporting && !args.framesOnly) report({ type: 'encoding' });
 
@@ -549,6 +555,9 @@ Examples:
 				}
 				await rm(resolve('rendered', 'slices'), { recursive: true, force: true });
 			}
+			await addSceneAudio(targets, args, !perScene && !args.separate && hasAudio, (id) =>
+				sceneVideoOut(id, perScene, args)
+			);
 			if (perScene) {
 				for (const id of targets) {
 					console.log(`Done. Output: ${resolve(sceneOutput(id, args))}`);
@@ -559,7 +568,7 @@ Examples:
 				}
 			} else {
 				console.log('Encoding final video...');
-				await concatSceneVideos(targets, args.out);
+				await concatSceneVideos(targets, args.out, hasAudio);
 				console.log('Done. Output:', resolve(args.out));
 			}
 		} else {
@@ -567,6 +576,10 @@ Examples:
 
 			if (perScene || args.separate) {
 				await encodeEachScene(targets, args);
+			} else if (hasAudio) {
+				console.log('Encoding final video...');
+				await encodePresentationWithAudio(targets, args);
+				console.log('Done. Output:', resolve(args.out));
 			} else {
 				console.log('Encoding final video...');
 				await encodeFinalVideo(scenes, args);
@@ -675,6 +688,10 @@ async function runWorker(
 			reportItems.push(reportItem);
 
 			await loadScenePage(page, item.id, renderQs);
+			sceneSounds.set(
+				item.id,
+				await client.evaluate<SoundCue[]>('window.__sequenceRenderer.sounds')
+			);
 
 			const streaming = !args.framesOnly && !args.keepFrames;
 			let sink: FrameSink;
@@ -687,7 +704,7 @@ async function runWorker(
 
 			progress[item.sceneIndex].startMs ||= performance.now();
 			try {
-				const { written } = await driveScene(
+				const { written, total } = await driveScene(
 					client,
 					item.id,
 					item.isLast,
@@ -697,6 +714,8 @@ async function runWorker(
 					sink,
 					reportItem
 				);
+				const capturedTotal = item.range?.end ?? total;
+				sceneTotals.set(item.id, Math.max(sceneTotals.get(item.id) ?? 0, capturedTotal));
 				const ms = performance.now() - progress[item.sceneIndex].startMs;
 				await sink.close();
 				sceneStats.push({ id: item.id, frames: written, ms });
@@ -1059,6 +1078,10 @@ async function encodeEachScene(ids: string[], args: ResolvedArgs) {
 		console.log(`Encoding ${id}...`);
 		const sceneStart = performance.now();
 		await encodeSceneVideo(id, args);
+		const cues = sceneSounds.get(id) ?? [];
+		if (cues.length > 0) {
+			await muxSceneAudioInPlace(sceneOutput(id, args), cues, sceneDuration(id, args));
+		}
 		console.log(
 			`Done. Output: ${resolve(sceneOutput(id, args))} (${((performance.now() - sceneStart) / 1000).toFixed(2)}s)`
 		);
@@ -1071,16 +1094,110 @@ async function encodeEachScene(ids: string[], args: ResolvedArgs) {
 	}
 }
 
-/**
- * Stitches per-scene videos (encoded during capture) into a single video.
- * All scenes share identical encoder settings, so the streams are copied.
+async function encodePresentationWithAudio(ids: string[], args: ResolvedArgs) {
+	for (const id of ids) {
+		console.log(`Encoding ${id}...`);
+		await encodeSceneVideo(id, args);
+	}
+	await addSceneAudio(ids, args, true);
+	await concatSceneVideos(ids, args.out, true);
+	if (!args.keepFrames) await cleanupFrames(ids);
+}
+
+/*
+ * silent scenes need a track too because the concat demuxer cannot join inputs
+ * whose stream layouts differ
  */
-async function concatSceneVideos(ids: string[], out: string) {
+async function addSceneAudio(
+	ids: string[],
+	args: ResolvedArgs,
+	mixSilent: boolean,
+	output: (id: string) => string = (id) => resolve('rendered', `${id}.mp4`)
+) {
+	for (const id of ids) {
+		const cues = sceneSounds.get(id) ?? [];
+		if (!mixSilent && cues.length === 0) continue;
+		await muxSceneAudioInPlace(output(id), cues, sceneDuration(id, args));
+	}
+}
+
+function sceneDuration(id: string, args: ResolvedArgs) {
+	const frames = sceneTotals.get(id);
+	if (frames === undefined) throw new Error(`Missing captured frame count for scene ${id}`);
+	return frames / args.fps;
+}
+
+async function muxSceneAudioInPlace(video: string, cues: readonly SoundCue[], duration: number) {
+	const temp = `${video}.audio.mp4`;
+	try {
+		await muxSceneAudio(video, temp, cues, duration);
+		await rm(video, { force: true });
+		await rename(temp, video);
+	} catch (error) {
+		await rm(temp, { force: true });
+		throw error;
+	}
+}
+
+async function muxSceneAudio(
+	video: string,
+	out: string,
+	cues: readonly SoundCue[],
+	duration: number
+) {
+	const samples = mixSoundCues(cues, duration, SOUND_SAMPLE_RATE);
+	const pcm = encodePcm16(samples);
+	const input = Buffer.from(pcm.buffer, pcm.byteOffset, pcm.byteLength);
+	await runFfmpeg(
+		[
+			'-y',
+			'-loglevel',
+			'error',
+			'-i',
+			video,
+			'-f',
+			's16le',
+			'-ar',
+			String(SOUND_SAMPLE_RATE),
+			'-ac',
+			'1',
+			'-i',
+			'pipe:0',
+			'-map',
+			'0:v:0',
+			'-map',
+			'1:a:0',
+			'-c:v',
+			'copy',
+			'-c:a',
+			'aac',
+			'-b:a',
+			'192k',
+			'-ar',
+			String(SOUND_SAMPLE_RATE),
+			'-ac',
+			'2',
+			'-t',
+			duration.toFixed(6),
+			'-movflags',
+			'+faststart',
+			out
+		],
+		input
+	);
+}
+
+/*
+ * every scene uses the same video and audio settings so both streams can be
+ * copied without another generation loss
+ */
+async function concatSceneVideos(ids: string[], out: string, withAudio = false) {
 	await mkdir(resolve(dirname(out)), { recursive: true });
 	const listPath = resolve('rendered', 'concat.txt');
 	const list = ids.map((id) => `file '${resolve('rendered', `${id}.mp4`)}'`).join('\n');
 	await writeFile(listPath, list);
 	try {
+		const codecs = withAudio ? ['-c', 'copy', '-movflags', '+faststart'] : ['-c', 'copy'];
 		await runFfmpeg([
 			'-y',
 			'-loglevel',
@@ -1091,8 +1208,7 @@ async function concatSceneVideos(ids: string[], out: string) {
 			'0',
 			'-i',
 			listPath,
-			'-c',
-			'copy',
+			...codecs,
 			out
 		]);
 	} finally {
@@ -1174,10 +1290,14 @@ function encodeFlags(out: string): string[] {
 	];
 }
 
-async function runFfmpeg(argv: string[]) {
+async function runFfmpeg(argv: string[], input?: Buffer) {
 	await new Promise<void>((resolve, reject) => {
 		const ff = spawn(ffmpeg!, argv) as ChildProcessWithoutNullStreams;
 		ff.stderr.on('data', (d: Buffer) => process.stderr.write(d));
+		if (input) {
+			ff.stdin.on('error', () => {});
+			ff.stdin.end(input);
+		}
 
 		ff.on('error', (err) => reject(new Error(`ffmpeg error: ${err.message}`)));
 		ff.on('exit', (code) => {

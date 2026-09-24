@@ -1,6 +1,12 @@
 import { onMount } from 'svelte';
 import { SvelteMap } from 'svelte/reactivity';
 import {
+	createSoundCue,
+	type SoundCue,
+	type SoundName,
+	type SoundOptions
+} from '../audio/index.js';
+import {
 	TweenStep,
 	LayoutStep,
 	ParallelStep,
@@ -45,6 +51,8 @@ export interface SceneBuilder<T> {
 	readonly progress: number;
 	tween(key: keyof T, to: number, duration?: number, ease?: Easing): this;
 	tick(onTick: (frame: TickFrame) => void, duration?: number, ease?: Easing): this;
+	/** Adds a nonvisual sound cue. */
+	sound(name: SoundName, options?: SoundOptionsWithDelay): this;
 	wait(seconds?: number): this;
 	layout(change: (scene: Scene<T>) => void, duration?: number, options?: LayoutOptions): this;
 	all(fn: (scene: this) => void): this;
@@ -111,6 +119,11 @@ export interface SceneBuilder<T> {
 }
 type Scene<T> = T & SceneBuilder<T>;
 type Object = Record<string, unknown>;
+
+/*
+  the builder resolves relative delays so the audio layer receives absolute cue times
+*/
+type SoundOptionsWithDelay = SoundOptions & { delay?: number };
 
 /**
  * Creates a reactive scene state object extended with the chainable step
@@ -180,6 +193,8 @@ export function createScene<T extends Object>(initial: T = {} as T) {
 
 	const state = $state(rawInitial) as Scene<T>;
 	let steps: Step[] = [];
+	let parallelStart: number | null = null;
+	const sounds: SoundCue[] = [];
 	let holdBeforeFirstStep = 0;
 	let enterBuild: TransitionBuild | null = null;
 	let exitBuild: TransitionBuild | null = null;
@@ -238,9 +253,25 @@ export function createScene<T extends Object>(initial: T = {} as T) {
 		return smartIndent(code, indent);
 	}
 
+	/*
+		sound timing follows the description being built so cues stay stable before playback
+	*/
+	function visualDuration(collection: readonly Step[]): number {
+		return collection.reduce((total, step) => total + step.duration + (step.wait ?? 0), 0);
+	}
+
+	function currentVisualCursor(): number {
+		if (parallelStart !== null) return parallelStart;
+		return holdBeforeFirstStep + visualDuration(steps);
+	}
+
+	function appendVisualStep(step: Step) {
+		steps.push(step);
+	}
+
 	/** Tweens state field `key` to `to` over `duration` seconds. */
 	state.tween = function (key: string, to: number, duration = 0.5, ease: Easing = easeInOut) {
-		steps.push(new TweenStep(state, key, to, duration, ease));
+		appendVisualStep(new TweenStep(state, key, to, duration, ease));
 		return this;
 	};
 
@@ -253,7 +284,30 @@ export function createScene<T extends Object>(initial: T = {} as T) {
 		duration = 0.5,
 		ease: Easing = (p) => p
 	) {
-		steps.push(new TickStep(onTick, duration, ease));
+		appendVisualStep(new TickStep(onTick, duration, ease));
+		return this;
+	};
+
+	/*
+		sound cues stay alongside the visual description without adding visual steps
+	*/
+	state.sound = function (name: SoundName, options?: SoundOptionsWithDelay) {
+		const { delay, ...cueOptions } = options ?? {};
+		if (cueOptions.at !== undefined && delay !== undefined) {
+			throw new RangeError('at and delay cannot be used together');
+		}
+		if (delay !== undefined && (!Number.isFinite(delay) || delay < 0)) {
+			throw new RangeError('delay must be a finite nonnegative number');
+		}
+
+		let at = currentVisualCursor();
+		if (cueOptions.at !== undefined) {
+			at = cueOptions.at;
+		} else if (delay !== undefined) {
+			at += delay;
+		}
+
+		sounds.push(createSoundCue(name, { ...cueOptions, at }, sounds.length + 1));
 		return this;
 	};
 
@@ -312,18 +366,31 @@ export function createScene<T extends Object>(initial: T = {} as T) {
 		duration = 0.5,
 		options: LayoutOptions = {}
 	) {
-		steps.push(new LayoutStep(state, () => change(state), duration, options));
+		appendVisualStep(new LayoutStep(state, () => change(state), duration, options));
 		return this;
 	};
 
-	/** Runs every step added inside `fn` in parallel as a single step. At most one of them may be a layout step. */
+	/*
+		sounds in a parallel group share its starting cursor
+	*/
 	state.all = function (this: Scene<T>, fn: (scene: Scene<T>) => void) {
-		const saved = steps;
+		const savedSteps = steps;
+		const savedParallelStart = parallelStart;
+		const groupStart = currentVisualCursor();
 		const parallelSteps: Step[] = [];
+
 		steps = parallelSteps;
-		fn(this);
-		steps = saved;
-		steps.push(new ParallelStep(parallelSteps));
+		parallelStart = groupStart;
+		try {
+			fn(this);
+		} finally {
+			steps = savedSteps;
+			parallelStart = savedParallelStart;
+		}
+
+		if (parallelSteps.length > 0) {
+			appendVisualStep(new ParallelStep(parallelSteps));
+		}
 		return this;
 	};
 
@@ -434,7 +501,7 @@ export function createScene<T extends Object>(initial: T = {} as T) {
 	) {
 		const target = requireCodeState();
 		const lang = opts?.language ?? target.language;
-		steps.push(
+		appendVisualStep(
 			new CodeStep(
 				target,
 				() => ({
@@ -458,7 +525,7 @@ export function createScene<T extends Object>(initial: T = {} as T) {
 		ease: Easing = easeInOut
 	) {
 		const target = requireCodeState();
-		steps.push(
+		appendVisualStep(
 			new CodeStep(
 				target,
 				() => {
@@ -484,7 +551,7 @@ export function createScene<T extends Object>(initial: T = {} as T) {
 		ease: Easing = easeInOut
 	) {
 		const target = requireCodeState();
-		steps.push(
+		appendVisualStep(
 			new CodeStep(
 				target,
 				() => {
@@ -514,7 +581,7 @@ export function createScene<T extends Object>(initial: T = {} as T) {
 		ease: Easing = easeInOut
 	) {
 		const target = requireCodeState();
-		steps.push(
+		appendVisualStep(
 			new CodeStep(
 				target,
 				() => {
@@ -547,7 +614,7 @@ export function createScene<T extends Object>(initial: T = {} as T) {
 		ease: Easing = easeInOut
 	) {
 		const block = requireCodeState();
-		steps.push(
+		appendVisualStep(
 			new CodeStep(
 				block,
 				() => {
@@ -576,7 +643,7 @@ export function createScene<T extends Object>(initial: T = {} as T) {
 		ease: Easing = easeInOut
 	) {
 		const block = requireCodeState();
-		steps.push(
+		appendVisualStep(
 			new CodeStep(
 				block,
 				() => {
@@ -607,7 +674,7 @@ export function createScene<T extends Object>(initial: T = {} as T) {
 	state.codeEdit = function (this: Scene<T>, duration = 0.6) {
 		const target = requireCodeState();
 		return (strings: TemplateStringsArray, ...tags: (string | RawCodeFragment)[]) => {
-			steps.push(
+			appendVisualStep(
 				new CodeStep(
 					target,
 					() => {
@@ -632,7 +699,7 @@ export function createScene<T extends Object>(initial: T = {} as T) {
 		range: CodeRange | CodeRange[] | RangeResolver | string | typeof DEFAULT = DEFAULT,
 		duration = 0.6
 	) {
-		steps.push(new SelectionStep(requireCodeState(), range, duration));
+		appendVisualStep(new SelectionStep(requireCodeState(), range, duration));
 		return this;
 	};
 
@@ -642,7 +709,7 @@ export function createScene<T extends Object>(initial: T = {} as T) {
 	 * wherever it actually sits at that point in the timeline.
 	 */
 	state.frame = function (target: CameraTarget = {}, options: CameraOptions = {}) {
-		steps.push(new CameraStep(state.camera as Camera, target, options));
+		appendVisualStep(new CameraStep(state.camera as Camera, target, options));
 		return this;
 	};
 
@@ -655,6 +722,7 @@ export function createScene<T extends Object>(initial: T = {} as T) {
 	onMount(() => {
 		manager.load({
 			steps,
+			sounds,
 			holdBeforeFirstStep,
 			enterBuild,
 			exitBuild,

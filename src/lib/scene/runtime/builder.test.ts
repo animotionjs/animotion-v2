@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { onMount } from 'svelte';
+import { createSoundCue, type SoundCue } from '../audio/index.js';
 import { createScene, type SceneBuilder } from './builder.svelte.js';
 import { SceneManager } from './runtime.svelte.js';
 import { getSceneManager } from './context.svelte.js';
@@ -97,23 +98,167 @@ describe('createScene step/progress', () => {
 	});
 });
 
+describe('createScene sound', () => {
+	it('normalizes cues separately from visual steps and uses sequential default seeds', () => {
+		const { steps, sounds } = stepsAfter((scene) => {
+			scene
+				.sound('chime', { at: 0.1, volume: 0.3 })
+				.tick(() => {}, 1)
+				.sound('chime', { at: 0.4 })
+				.sound('chime', { seed: 20 });
+		});
+
+		expect(steps).toHaveLength(1);
+		expect(sounds).toEqual([
+			createSoundCue('chime', { at: 0.1, volume: 0.3 }, 1),
+			createSoundCue('chime', { at: 0.4 }, 2),
+			createSoundCue('chime', { at: 1, seed: 20 }, 3)
+		]);
+	});
+
+	it('uses the visual cursor for omitted timing after steps, all groups, and waits', () => {
+		const { sounds } = stepsAfter((scene) => {
+			scene
+				.tick(() => {}, 1)
+				.sound('click')
+				.all((s) => {
+					s.tween('x', 1, 2);
+					s.sound('click');
+				})
+				.sound('click')
+				.layout(() => {}, 0.5)
+				.sound('click')
+				.wait(0.25)
+				.sound('click');
+		});
+
+		expect(sounds.map((cue) => cue.at)).toEqual([1, 1, 3, 3.5, 3.75]);
+	});
+
+	it('resolves delay relative to the current cursor without moving that cursor', () => {
+		const { sounds } = stepsAfter((scene) => {
+			scene
+				.tick(() => {}, 2)
+				.sound('click', { delay: 0.25 })
+				.sound('click', { delay: 0 });
+		});
+
+		expect(sounds.map((cue) => cue.at)).toEqual([2.25, 2]);
+	});
+
+	it('keeps repeat and waits in the visual cursor', () => {
+		const { steps, sounds, holdBeforeFirstStep } = stepsAfter((scene) => {
+			scene
+				.wait(1)
+				.sound('click')
+				.repeat(2, (s, index) => {
+					s.tick(() => {}, index + 1);
+					s.sound('click');
+					s.wait(0.5);
+				})
+				.sound('click');
+		});
+
+		expect(holdBeforeFirstStep).toBe(1);
+		expect(steps).toEqual([
+			{ duration: 1, wait: 0.5 },
+			{ duration: 2, wait: 0.5 }
+		]);
+		expect(sounds.map((cue) => cue.at)).toEqual([1, 2, 4.5, 5]);
+	});
+
+	it('keeps an explicit at value absolute after visual work', () => {
+		const { sounds } = stepsAfter((scene) => {
+			scene.tick(() => {}, 2).sound('click', { at: 0.25 });
+		});
+
+		expect(sounds[0]?.at).toBe(0.25);
+	});
+
+	it('anchors sounds in an all group to its start', () => {
+		const { steps, sounds } = stepsAfter((scene) => {
+			scene
+				.tick(() => {}, 2)
+				.all((s) => {
+					s.tween('x', 1, 4);
+					s.sound('click');
+					s.sound('click', { delay: 0.5 });
+					s.sound('click', { at: 0.25 });
+				})
+				.sound('click');
+		});
+
+		expect(steps).toEqual([
+			{ duration: 2, wait: 0 },
+			{ duration: 4, wait: 0 }
+		]);
+		expect(sounds.map((cue) => cue.at)).toEqual([2, 2.5, 0.25, 6]);
+	});
+
+	it('keeps nested all groups on the outer group start', () => {
+		const { steps, sounds } = stepsAfter((scene) => {
+			scene
+				.all((s) => {
+					s.all((inner) => {
+						inner.tween('x', 1, 2);
+						inner.sound('click');
+					});
+					s.sound('click', { delay: 0.5 });
+				})
+				.sound('click');
+		});
+
+		expect(steps).toEqual([{ duration: 2, wait: 0 }]);
+		expect(sounds.map((cue) => cue.at)).toEqual([0, 0.5, 2]);
+	});
+
+	it('does not add a visual step for a sound only all group', () => {
+		const { steps, sounds } = stepsAfter((scene) => {
+			scene
+				.tick(() => {}, 1)
+				.all((s) => {
+					s.sound('click');
+					s.sound('chime', { delay: 0.25 });
+				})
+				.sound('click');
+		});
+
+		expect(steps).toEqual([{ duration: 1, wait: 0 }]);
+		expect(sounds.map((cue) => cue.at)).toEqual([1, 1.25, 1]);
+	});
+
+	it('rejects conflicting or invalid relative timing', () => {
+		setupManager();
+		const scene = createScene({});
+
+		expect(() => scene.sound('click', { at: 0, delay: 0 })).toThrow(RangeError);
+		expect(() => scene.sound('click', { delay: -1 })).toThrow(/finite.*nonnegative/);
+		expect(() => scene.sound('click', { delay: Number.NaN })).toThrow(RangeError);
+		expect(() => scene.sound('click', { delay: Number.POSITIVE_INFINITY })).toThrow(RangeError);
+	});
+});
+
 /** Mounts a scene and captures what `createScene` hands to `manager.load`. */
 function stepsAfter(configure: (scene: SceneBuilder<Record<string, unknown>>) => void) {
 	const manager = setupManager();
 	let steps: { duration: number; wait: number }[] = [];
+	let sounds: readonly SoundCue[] = [];
 	let holdBeforeFirstStep = 0;
 	const mount = vi.fn<(fn: () => void) => void>();
 	vi.mocked(onMount).mockImplementation((fn: () => void) => mount(fn));
-	vi.spyOn(manager, 'load').mockImplementation(({ steps: loaded, holdBeforeFirstStep: first }) => {
-		steps = loaded.map((step) => ({ duration: step.duration, wait: step.wait ?? 0 }));
-		holdBeforeFirstStep = first ?? 0;
-	});
+	vi.spyOn(manager, 'load').mockImplementation(
+		({ steps: loaded, sounds: loadedSounds, holdBeforeFirstStep: first }) => {
+			steps = loaded.map((step) => ({ duration: step.duration, wait: step.wait ?? 0 }));
+			sounds = loadedSounds ?? [];
+			holdBeforeFirstStep = first ?? 0;
+		}
+	);
 
 	const scene = createScene({});
 	configure(scene);
 	mount.mock.calls[0]?.[0]?.();
 
-	return { steps, holdBeforeFirstStep, manager };
+	return { steps, sounds, holdBeforeFirstStep, manager };
 }
 
 describe('createScene camera', () => {

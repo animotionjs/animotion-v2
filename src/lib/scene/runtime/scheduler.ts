@@ -12,7 +12,7 @@ export class RealTimeScheduler implements FrameScheduler {
 	}
 
 	cancel(id: number): void {
-		cancelAnimationFrame(id);
+		if (typeof cancelAnimationFrame !== 'undefined') cancelAnimationFrame(id);
 	}
 
 	now(): number {

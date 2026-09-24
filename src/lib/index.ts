@@ -1,3 +1,5 @@
+export { SOUND_NAMES } from './scene/audio/index.js';
+export type { SoundCue, SoundName, SoundOptions } from './scene/audio/index.js';
 export { createSequence } from './scene/runtime/sequence.js';
 export { configure, highlight, whenReady } from './scene/code/highlighter.js';
 export { getOptions, setOptions } from './scene/options.js';
