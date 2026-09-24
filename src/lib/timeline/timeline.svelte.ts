@@ -20,6 +20,7 @@ export class TimelineController {
 	playing = $state(false);
 	speed = $state(1);
 	loop = $state(false);
+	locked = $state(false);
 
 	#manager: SceneManager;
 	#fps: number;
@@ -77,8 +78,14 @@ export class TimelineController {
 		return points;
 	}
 
+	/** Locks timeline interaction while a voiceover recording is active. */
+	lock(value: boolean) {
+		this.locked = value;
+	}
+
 	/** Pauses (if playing) and jumps to the snapped position. */
 	seekTo(seconds: number) {
+		if (this.locked) return;
 		this.pause();
 		const snapped = this.snap(seconds);
 		/*
@@ -116,7 +123,7 @@ export class TimelineController {
 	}
 
 	play() {
-		if (this.playing || this.duration <= 0) return;
+		if (this.locked || this.playing || this.duration <= 0) return;
 		if (this.time >= this.duration - 1e-6) {
 			this.time = 0;
 			this.#manager.seekToTime(0);
@@ -140,6 +147,7 @@ export class TimelineController {
 	}
 
 	#startPlayback() {
+		if (this.locked) return;
 		this.playing = true;
 		this.#lastNow = performance.now();
 		this.#accumulator = 0;

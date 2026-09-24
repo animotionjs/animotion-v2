@@ -295,6 +295,25 @@ export function mixSoundCues(
 	return mixed;
 }
 
+export function mixPcmSource(
+	target: Float32Array,
+	source: Float32Array,
+	offsetSeconds: number,
+	sampleRate = SOUND_SAMPLE_RATE
+): void {
+	validateSampleRate(sampleRate);
+	if (!Number.isFinite(offsetSeconds) || offsetSeconds < 0) {
+		throw new RangeError('offsetSeconds must be a finite nonnegative number');
+	}
+
+	const offset = Math.round(offsetSeconds * sampleRate);
+	if (offset >= target.length) return;
+	const count = Math.min(source.length, target.length - offset);
+	for (let index = 0; index < count; index++) {
+		target[offset + index] = clamp(target[offset + index] + source[index]);
+	}
+}
+
 export function encodePcm16(samples: Float32Array): Int16Array {
 	const encoded = new Int16Array(samples.length);
 

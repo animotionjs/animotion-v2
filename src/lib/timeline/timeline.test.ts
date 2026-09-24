@@ -128,6 +128,20 @@ describe('TimelineController stepping', () => {
 		controller.destroy();
 	});
 
+	it('locks seeking and playback while a recording is active', () => {
+		const controller = griddedController();
+		controller.lock(true);
+		controller.seekTo(1.5);
+		controller.play();
+		expect(controller.time).toBe(0);
+		expect(controller.playing).toBe(false);
+
+		controller.lock(false);
+		controller.seekTo(1.5);
+		expect(controller.time).toBe(1.5);
+		controller.destroy();
+	});
+
 	it('lays out boundaries across enter, hold, steps and waits', () => {
 		const controller = griddedController();
 		expect(controller.boundaries()).toEqual([0, 0.5, 2, 3]);

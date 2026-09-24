@@ -256,6 +256,12 @@ The built-in presets are `click`, `pop`, `chime`, `whoosh`, `riser`, and `impact
 
 Sound cues are mixed into the final video with ffmpeg after the scene frames have been captured. They also play in the regular presentation and timeline editor through the Web Audio API. Timeline playback follows its playhead when playing, pausing, seeking, or stepping frames, and the speed control changes audio rate too. Regular presentation audio starts with the scene's first live animation and stops when navigating away; its timing follows live step progression, so waits are skipped just like the visuals. Browsers require a user gesture before audio can start, so interact with the presentation or timeline once to enable sound. Image sequence renders do not contain audio.
 
+## Timeline voiceover
+
+The timeline view includes a voiceover lane for recording narration without leaving the editor. Move the playhead to the place where narration should begin, press **record voiceover**, and press **stop** when finished. The scene stays paused while recording, and existing audio is muted to avoid microphone feedback.
+
+Each scene can contain any number of recordings. Recordings are shown as waveform blocks, snap to the timeline frame grid while dragging, and cannot overlap. Select a recording to seek to it or delete it. Recordings are stored locally under `.animotion/voiceovers`, survive reloads, and are mixed into rendered video audio. The first version does not include trimming, filters, or text-to-speech.
+
 ## Other steps
 
 - `wait(seconds = 1)`: keeps the previous step's finished frame on screen for `seconds` longer, so the viewer has time to read. Waits aren't steps: they don't count toward `scene.step` or `totalSteps`, and the live player skips them. They only show up in rendered video. A wait before anything else keeps the first frame up until the first step starts.

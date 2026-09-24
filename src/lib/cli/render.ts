@@ -8,10 +8,17 @@ import { availableParallelism, tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import ffmpeg from 'ffmpeg-static';
 import { chromium, type Browser, type Page } from 'playwright';
-import { SOUND_SAMPLE_RATE, encodePcm16, mixSoundCues } from '../scene/audio/sound.ts';
+import {
+	SOUND_SAMPLE_RATE,
+	encodePcm16,
+	mixPcmSource,
+	mixSoundCues
+} from '../scene/audio/sound.ts';
 import { resolveScenes } from './scenes.ts';
 import { sliceRanges, type SliceRange } from '../scene/runtime/slices.ts';
 import type { SoundCue } from '../scene/audio/sound.ts';
+import { readVoiceoverManifest, voiceoverFilePath } from '../server/voiceovers.ts';
+import type { VoiceoverClip } from '../voiceover/types.ts';
 import type { RenderBridge } from '../scene/runtime/render-bridge.js';
 import { PREVIEW_JPEG_QUALITY, type FrameFormat } from '../scene/options.ts';
 import type { RenderReport } from '../scene/runtime/report.js';
@@ -135,6 +142,7 @@ let isCrashed = false;
 const pageErrors: string[] = [];
 const sceneStats: { id: string; frames: number; ms: number }[] = [];
 const sceneSounds = new Map<string, readonly SoundCue[]>();
+const sceneVoiceovers = new Map<string, readonly VoiceoverClip[]>();
 const sceneTotals = new Map<string, number>();
 const progress: {
 	id: string;
@@ -319,6 +327,13 @@ Examples:
 
 	const perScene = args.scenes.length > 0;
 	const targets = perScene ? resolveScenes(args.scenes, scenes) : scenes;
+	if (!args.framesOnly && !args.bench) {
+		await Promise.all(
+			targets.map(async (id) => {
+				sceneVoiceovers.set(id, (await readVoiceoverManifest(id)).clips);
+			})
+		);
+	}
 
 	if (perScene && args.outSet && targets.length > 1) {
 		console.error('--out can only be used when rendering a single scene');
@@ -533,7 +548,9 @@ Examples:
 	console.log(
 		`Captured ${targets.length} scenes, ${totalFrames} frames in ${captureElapsed.toFixed(2)}s`
 	);
-	const hasAudio = targets.some((id) => (sceneSounds.get(id)?.length ?? 0) > 0);
+	const hasAudio = targets.some(
+		(id) => (sceneSounds.get(id)?.length ?? 0) > 0 || (sceneVoiceovers.get(id)?.length ?? 0) > 0
+	);
 
 	if (reporting && !args.framesOnly) report({ type: 'encoding' });
 
@@ -1079,8 +1096,9 @@ async function encodeEachScene(ids: string[], args: ResolvedArgs) {
 		const sceneStart = performance.now();
 		await encodeSceneVideo(id, args);
 		const cues = sceneSounds.get(id) ?? [];
-		if (cues.length > 0) {
-			await muxSceneAudioInPlace(sceneOutput(id, args), cues, sceneDuration(id, args));
+		const voiceovers = sceneVoiceovers.get(id) ?? [];
+		if (cues.length > 0 || voiceovers.length > 0) {
+			await muxSceneAudioInPlace(sceneOutput(id, args), cues, voiceovers, sceneDuration(id, args));
 		}
 		console.log(
 			`Done. Output: ${resolve(sceneOutput(id, args))} (${((performance.now() - sceneStart) / 1000).toFixed(2)}s)`
@@ -1116,8 +1134,9 @@ async function addSceneAudio(
 ) {
 	for (const id of ids) {
 		const cues = sceneSounds.get(id) ?? [];
-		if (!mixSilent && cues.length === 0) continue;
-		await muxSceneAudioInPlace(output(id), cues, sceneDuration(id, args));
+		const voiceovers = sceneVoiceovers.get(id) ?? [];
+		if (!mixSilent && cues.length === 0 && voiceovers.length === 0) continue;
+		await muxSceneAudioInPlace(output(id), cues, voiceovers, sceneDuration(id, args));
 	}
 }
 
@@ -1127,10 +1146,15 @@ function sceneDuration(id: string, args: ResolvedArgs) {
 	return frames / args.fps;
 }
 
-async function muxSceneAudioInPlace(video: string, cues: readonly SoundCue[], duration: number) {
+async function muxSceneAudioInPlace(
+	video: string,
+	cues: readonly SoundCue[],
+	voiceovers: readonly VoiceoverClip[],
+	duration: number
+) {
 	const temp = `${video}.audio.mp4`;
 	try {
-		await muxSceneAudio(video, temp, cues, duration);
+		await muxSceneAudio(video, temp, cues, voiceovers, duration);
 		await rm(video, { force: true });
 		await rename(temp, video);
 	} catch (error) {
@@ -1143,9 +1167,19 @@ async function muxSceneAudio(
 	video: string,
 	out: string,
 	cues: readonly SoundCue[],
+	voiceovers: readonly VoiceoverClip[],
 	duration: number
 ) {
 	const samples = mixSoundCues(cues, duration, SOUND_SAMPLE_RATE);
+	for (const clip of voiceovers) {
+		if (clip.start + clip.duration > duration + 1e-6) {
+			throw new Error(
+				`Voiceover recording ${clip.label} ends after the scene timeline (${duration.toFixed(2)}s).`
+			);
+		}
+		const source = await decodeVoiceover(voiceoverFilePath(clip.sceneId, clip.file));
+		mixPcmSource(samples, source, clip.start, SOUND_SAMPLE_RATE);
+	}
 	const pcm = encodePcm16(samples);
 	const input = Buffer.from(pcm.buffer, pcm.byteOffset, pcm.byteLength);
 	await runFfmpeg(
@@ -1288,6 +1322,40 @@ function encodeFlags(out: string): string[] {
 		'+faststart',
 		out
 	];
+}
+
+async function decodeVoiceover(path: string): Promise<Float32Array> {
+	return new Promise<Float32Array>((resolve, reject) => {
+		const ff = spawn(ffmpeg!, [
+			'-v',
+			'error',
+			'-i',
+			path,
+			'-f',
+			'f32le',
+			'-ar',
+			String(SOUND_SAMPLE_RATE),
+			'-ac',
+			'1',
+			'pipe:1'
+		]);
+		const chunks: Buffer[] = [];
+		ff.stdout.on('data', (chunk: Buffer) => chunks.push(Buffer.from(chunk)));
+		ff.stderr.on('data', (chunk: Buffer) => process.stderr.write(chunk));
+		ff.on('error', (error) => reject(new Error(`ffmpeg error: ${error.message}`)));
+		ff.on('exit', (code) => {
+			if (code !== 0) {
+				reject(new Error(`Could not decode voiceover ${path}`));
+				return;
+			}
+			const data = Buffer.concat(chunks);
+			const samples = new Float32Array(Math.floor(data.byteLength / 4));
+			for (let index = 0; index < samples.length; index++) {
+				samples[index] = data.readFloatLE(index * 4);
+			}
+			resolve(samples);
+		});
+	});
 }
 
 async function runFfmpeg(argv: string[], input?: Buffer) {

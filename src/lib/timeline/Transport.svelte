@@ -1,16 +1,50 @@
 <script lang="ts">
 	import IconButton from '../components/IconButton.svelte';
+	import type { VoiceoverRecorderState } from '../voiceover/recorder.js';
 	import type { TimelineController } from './timeline.svelte.js';
 
 	interface Props {
 		controller: TimelineController;
+		recordingState: VoiceoverRecorderState;
+		recordingElapsed: number;
+		voiceoverBusy: boolean;
+		canRecord: boolean;
+		onrecord: () => void;
+		onstoprecording: () => void;
 	}
 
-	let { controller }: Props = $props();
+	let {
+		controller,
+		recordingState,
+		recordingElapsed,
+		voiceoverBusy,
+		canRecord,
+		onrecord,
+		onstoprecording
+	}: Props = $props();
 
 	const SPEED_PRESETS = [0.25, 0.5, 1, 2] as const;
 
 	const label = $derived(`${format(controller.time)} / ${format(controller.duration)}`);
+	const recording = $derived(
+		recordingState === 'requesting' ||
+			recordingState === 'recording' ||
+			recordingState === 'stopping'
+	);
+	const recordDisabled = $derived(
+		voiceoverBusy || recordingState === 'requesting' || recordingState === 'stopping' || !canRecord
+	);
+	const recordLabel = $derived.by(() => {
+		if (recordingState === 'requesting') return 'requesting microphone...';
+		if (recordingState === 'stopping') return 'saving recording...';
+		if (recordingState === 'recording') return `stop ${format(recordingElapsed)}`;
+		return 'record voiceover';
+	});
+
+	function toggleRecording() {
+		if (recording) onstoprecording();
+		else onrecord();
+	}
 
 	function format(seconds: number) {
 		// rounding in hundredths keeps a 59.99x second from displaying as 60.00
@@ -23,17 +57,26 @@
 
 <div class="flex flex-wrap items-center gap-1 px-3 py-1 sm:px-4 sm:py-2">
 	<div class="flex items-center gap-1">
-		<IconButton label="Restart (Home)" onclick={() => controller.seekTo(0)}>
+		<IconButton label="Restart (Home)" disabled={recording} onclick={() => controller.seekTo(0)}>
 			<path d="M4 3v10M13 3L6.5 8 13 13z" />
 		</IconButton>
-		<IconButton label="Previous segment (ArrowLeft)" onclick={() => controller.jumpPrev()}>
+		<IconButton
+			label="Previous segment (ArrowLeft)"
+			disabled={recording}
+			onclick={() => controller.jumpPrev()}
+		>
 			<path d="M9 3L3.5 8 9 13zM15.5 3L10 8l5.5 5z" />
 		</IconButton>
-		<IconButton label="One frame back (,)" onclick={() => controller.nudge(-1)}>
+		<IconButton
+			label="One frame back (,)"
+			disabled={recording}
+			onclick={() => controller.nudge(-1)}
+		>
 			<path d="M11 4L6 8l5 4z" />
 		</IconButton>
 		<IconButton
 			label={controller.playing ? 'Pause (space)' : 'Play (space)'}
+			disabled={recording}
 			onclick={() => controller.toggle()}
 			accent
 		>
@@ -43,16 +86,58 @@
 				<path d="M5 3l9 5-9 5z" />
 			{/if}
 		</IconButton>
-		<IconButton label="One frame forward (.)" onclick={() => controller.nudge(1)}>
+		<IconButton
+			label="One frame forward (.)"
+			disabled={recording}
+			onclick={() => controller.nudge(1)}
+		>
 			<path d="M7 4l5 4-5 4z" />
 		</IconButton>
-		<IconButton label="Next segment (ArrowRight)" onclick={() => controller.jumpNext()}>
+		<IconButton
+			label="Next segment (ArrowRight)"
+			disabled={recording}
+			onclick={() => controller.jumpNext()}
+		>
 			<path d="M9 3l5.5 5L9 13zM3 3l5.5 5L3 13z" />
 		</IconButton>
-		<IconButton label="Jump to end (End)" onclick={() => controller.seekTo(controller.duration)}>
+		<IconButton
+			label="Jump to end (End)"
+			disabled={recording}
+			onclick={() => controller.seekTo(controller.duration)}
+		>
 			<path d="M14 3v10M5 3l6.5 5L5 13z" />
 		</IconButton>
 	</div>
+
+	<button
+		type="button"
+		class={[
+			'inline-flex cursor-pointer items-center gap-1 rounded px-2 py-1 text-xs transition-colors',
+			{
+				'bg-red-500/20 text-red-300 hover:bg-red-500/30': recording,
+				'bg-surface text-foreground hover:bg-accent/40': !recording
+			}
+		]}
+		disabled={recordDisabled}
+		aria-pressed={recording}
+		title={recordLabel}
+		onclick={toggleRecording}
+	>
+		<svg viewBox="0 0 18 16" class="h-4 w-4" aria-hidden="true">
+			{#if recording}
+				<rect x="5" y="4" width="8" height="8" rx="1" fill="currentColor" />
+			{:else}
+				<path
+					d="M9 2.5a2 2 0 0 0-2 2v3a2 2 0 0 0 4 0v-3a2 2 0 0 0-2-2Zm-4 5a4 4 0 0 0 8 0M9 11.5v2"
+					fill="none"
+					stroke="currentColor"
+					stroke-width="1.5"
+					stroke-linecap="round"
+				/>
+			{/if}
+		</svg>
+		<span class="whitespace-nowrap">{recordLabel}</span>
+	</button>
 
 	<span class="ml-2 font-mono text-xs text-foreground/80 tabular-nums sm:ml-3">{label}</span>
 

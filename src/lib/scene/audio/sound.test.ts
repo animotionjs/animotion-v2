@@ -5,6 +5,7 @@ import {
 	createSoundCue,
 	synthesizeSound,
 	mixSoundCues,
+	mixPcmSource,
 	encodePcm16,
 	type SoundCue,
 	type SoundName,
@@ -258,6 +259,26 @@ describe('mixSoundCues', () => {
 		expect(() => mixSoundCues([], Number.NaN)).toThrow(RangeError);
 		expect(() => mixSoundCues([], 1, 0)).toThrow(RangeError);
 		expect(() => mixSoundCues([{ ...createSoundCue('click'), volume: 2 }], 1)).toThrow(RangeError);
+	});
+});
+
+describe('mixPcmSource', () => {
+	it('places, truncates, and clamps a decoded source', () => {
+		const target = new Float32Array([0.2, 0.2, 0.2, 0.2]);
+		const source = new Float32Array([0.4, 0.4, 0.4]);
+
+		mixPcmSource(target, source, 1 / 8000, 8000);
+
+		expect(target[0]).toBeCloseTo(0.2, 5);
+		expect(target[1]).toBeCloseTo(0.6, 5);
+		expect(target[2]).toBeCloseTo(0.6, 5);
+		expect(target[3]).toBeCloseTo(0.6, 5);
+	});
+
+	it('ignores sources that begin after the destination', () => {
+		const target = new Float32Array([0, 0]);
+		mixPcmSource(target, new Float32Array([1]), 1, 8000);
+		expect(target).toEqual(new Float32Array([0, 0]));
 	});
 });
 

@@ -27,7 +27,11 @@
 	const ratio = $derived(
 		presentation ? presentation.aspectRatio.width / presentation.aspectRatio.height : 16 / 9
 	);
-	const mirrorSrc = $derived(`${resolve('/')}?embed&session=${encodeURIComponent(sessionName)}`);
+	// the optional scene route has no literal root route id
+	const rootPath: string = '/';
+	const mirrorSrc = $derived(
+		`${resolve(rootPath)}?embed&session=${encodeURIComponent(sessionName)}`
+	);
 	const notes = $derived(presentation?.notes ?? '');
 
 	function send(message: SpeakerMessage) {

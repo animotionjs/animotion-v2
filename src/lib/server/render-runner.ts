@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
  */
 import '#lib/config/configure.js';
 import { getOptions, PREVIEW_JPEG_QUALITY, resolveRenderSize } from '../scene/options.js';
+import { flushVoiceoverWrites } from './voiceovers.js';
 import { parseRenderReport } from '../scene/runtime/report.js';
 import type { AspectRatio, ResolutionName } from '../scene/options.js';
 
@@ -41,14 +42,7 @@ export interface StartRenderInput {
 export type QualityTier = 'full' | 'balanced' | 'preview';
 
 export type RenderPhase =
-	| 'idle'
-	| 'starting'
-	| 'downloading'
-	| 'measuring'
-	| 'rendering'
-	| 'encoding'
-	| 'done'
-	| 'failed';
+	'idle' | 'starting' | 'downloading' | 'measuring' | 'rendering' | 'encoding' | 'done' | 'failed';
 
 export interface RenderSnapshot {
 	phase: RenderPhase;
@@ -173,6 +167,7 @@ export async function startRender(input: StartRenderInput) {
 
 	// ffmpeg only creates the video file, so the folder must exist first
 	await mkdir(OUT_DIR, { recursive: true });
+	await flushVoiceoverWrites();
 
 	const renderer = spawn(process.execPath, [RENDER_SCRIPT, ...flags], {
 		// the renderer logs to the same terminal that runs the dev server

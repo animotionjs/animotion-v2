@@ -9,6 +9,7 @@ node_modules
 /build
 /dist
 /rendered
+/.animotion
 
 # OS
 .DS_Store
