@@ -75,7 +75,7 @@ describe('SpeakerView', () => {
 		unmount(app);
 	});
 
-	it('renders the notes, scene outline, and a mirror iframe from a state message', async () => {
+	it('renders the notes, scene outline, and a live copy from a state message', async () => {
 		const app = mount(SpeakerView, { target: document.body });
 		flushSync();
 		await vi.waitFor(() => expect(channel().posts).toContainEqual({ type: 'hello' }));
@@ -94,7 +94,7 @@ describe('SpeakerView', () => {
 
 		const iframe = document.querySelector('iframe');
 		expect(iframe).not.toBeNull();
-		expect(iframe).toHaveAttribute('src', '/?embed&session=animotion%3Aspeaker');
+		expect(iframe).toHaveAttribute('src', '/presentation?embed&session=animotion%3Aspeaker');
 
 		unmount(app);
 	});

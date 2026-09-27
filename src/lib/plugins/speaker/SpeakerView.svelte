@@ -1,6 +1,5 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { resolve } from '$app/paths';
 	import {
 		SPEAKER_SESSION,
 		SpeakerSession,
@@ -11,9 +10,11 @@
 	interface Props {
 		/** The speaker session id shared with the presentation window. */
 		session?: string;
+		/** Presentation URL shown in the framed copy. */
+		base?: string;
 	}
 
-	let { session: sessionName = SPEAKER_SESSION }: Props = $props();
+	let { session: sessionName = SPEAKER_SESSION, base = '/presentation' }: Props = $props();
 
 	const channelSupported = typeof BroadcastChannel !== 'undefined';
 
@@ -27,7 +28,8 @@
 	const ratio = $derived(
 		presentation ? presentation.aspectRatio.width / presentation.aspectRatio.height : 16 / 9
 	);
-	const mirrorSrc = $derived(`${resolve('/')}?embed&session=${encodeURIComponent(sessionName)}`);
+	/* Query flags make the framed presentation follow the presenter. */
+	const followSrc = $derived(`${base}?embed&session=${encodeURIComponent(sessionName)}`);
 	const notes = $derived(presentation?.notes ?? '');
 
 	function send(message: SpeakerMessage) {
@@ -148,8 +150,8 @@
 				<div class="aspect-(--ratio) w-[min(100%,calc(100cqh*var(--ratio)))]">
 					<iframe
 						class="h-full w-full border-0 bg-background"
-						title="Presentation mirror"
-						src={mirrorSrc}
+						title="Presentation preview"
+						src={followSrc}
 					></iframe>
 				</div>
 			</div>

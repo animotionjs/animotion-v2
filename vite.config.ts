@@ -18,6 +18,13 @@ export default defineConfig({
 			experimental: { remoteFunctions: true }
 		})
 	],
+	server: {
+		/*
+		 * Project manifests are read with the file system on demand, never
+		 * imported, so watching them only causes pointless page reloads.
+		 */
+		watch: { ignored: ['**/src/projects/**/project.json'] }
+	},
 	test: {
 		expect: { requireAssertions: true },
 		projects: [

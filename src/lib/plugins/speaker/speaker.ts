@@ -25,21 +25,20 @@ export interface SpeakerPluginOptions {
  *
  * Open the speaker view by pressing {@link SpeakerPluginOptions.shortcut}
  * (`s` by default) or by calling {@link openSpeakerView}. The speaker view
- * opens at `/?speaker` and shows the presentation mirrored in an iframe,
+ * opens at `/presentation?speaker` and shows a live copy of the presentation,
  * the current scene's notes, a timer, an outline, and next/prev controls.
  *
- * Loading the deck with `?embed` (as the mirror iframe does) turns this
- * plugin into a passive mirror instead of the presenter. It follows the
- * presenter's broadcasts in place and never broadcasts or opens the popup.
+ * Loading the presentation with `?embed` turns this plugin into a follower
+ * instead of the presenter. It follows the presenter's broadcasts without
+ * broadcasting back or opening the popup.
  */
 export function speakerPlugin(options: SpeakerPluginOptions = {}): Plugin {
 	const shortcut = options.shortcut ?? 's';
 
 	/*
-		The mirror iframe loads the deck with `?embed`, which turns this
-		plugin into a passive mirror. Both windows learn their session from
-		the URL the presenter opened, so the app shell never has to know
-		about it.
+		`?embed` marks the framed copy, which follows the presenter. Both
+		windows learn their session from the URL the presenter opened, so the
+		app shell never has to know about it.
 	*/
 	const params = typeof window !== 'undefined' ? new URLSearchParams(window.location.search) : null;
 	const embed = params?.has('embed') ?? false;
@@ -98,7 +97,7 @@ export function speakerPlugin(options: SpeakerPluginOptions = {}): Plugin {
 
 	function handleMessage(message: SpeakerMessage) {
 		if (embed) {
-			// the mirror only adopts `state` broadcasts and never re-broadcasts, keeping the shared channel clean
+			// in embed mode the plugin only adopts `state` broadcasts and never re-broadcasts, keeping the shared channel clean
 			if (message.type === 'state') embedState(message.state);
 			return;
 		}
@@ -131,7 +130,7 @@ export function speakerPlugin(options: SpeakerPluginOptions = {}): Plugin {
 	 * `PresentationState.step`. `seek` and `setStepState` address steps
 	 * by raw index, so a completed step's offset is folded back out first.
 	 * A step the presenter is animating (`state.playing`) is played in place
-	 * after seeking, so the mirror shows the animation live.
+	 * after seeking, so the animation plays live here too.
 	 */
 	function embedState(state: SpeakerState) {
 		if (!ctx) return;
@@ -155,7 +154,7 @@ export function speakerPlugin(options: SpeakerPluginOptions = {}): Plugin {
 				state.finished === ctx.state.finished;
 			if (!position) {
 				manager?.seek(stepIndex, state.stepCompleted, state.finished);
-				// play in place, the mirror runs the same deck so both finish at about the same time
+				// play in place, both run the same presentation so both finish at about the same time
 				if (state.playing) manager?.play();
 			} else if (state.playing && !ctx.state.playing) {
 				// play in place without seeking, re-seeking would rebuild DOM-driven steps and lose their animation
@@ -176,7 +175,7 @@ export function speakerPlugin(options: SpeakerPluginOptions = {}): Plugin {
 				channel = new SpeakerSession(sessionName);
 				channel.onmessage = handleMessage;
 				if (embed) {
-					// ask the presenter for its current state to mirror it
+					// ask the presenter for its current state in order to follow it
 					channel.post({ type: 'hello' });
 				} else {
 					broadcast();
@@ -207,12 +206,7 @@ export function speakerPlugin(options: SpeakerPluginOptions = {}): Plugin {
 
 		onKeydown(event) {
 			if (embed) {
-				/*
-					The mirror never navigates itself. Forward arrows to the
-					presenter so keyboard input (focus often lives inside the
-					embedded iframe) still drives the authoritative window the
-					same as the speaker's buttons.
-				*/
+				// arrows drive the presenter, since focus usually sits inside the frame
 				if (event.metaKey || event.ctrlKey || event.altKey || event.repeat) return;
 				if (event.key === 'ArrowRight') {
 					channel?.post({ type: 'next' });
@@ -245,6 +239,6 @@ export function speakerPlugin(options: SpeakerPluginOptions = {}): Plugin {
  */
 export function openSpeakerView(session?: string) {
 	if (typeof window === 'undefined') return;
-	const path = session ? `/?speaker&session=${encodeURIComponent(session)}` : '/?speaker';
-	window.open(path, 'animotion-speaker', 'popup,width=1360,height=860');
+	const query = session ? `?speaker&session=${encodeURIComponent(session)}` : '?speaker';
+	window.open(window.location.pathname + query, 'animotion-speaker', 'popup,width=1360,height=860');
 }

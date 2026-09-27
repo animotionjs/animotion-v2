@@ -1,6 +1,6 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import { mkdir } from 'node:fs/promises';
-import { dirname } from 'node:path';
+import { dirname, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
 /*
  * Applying the project config keeps the default output path in sync with
@@ -27,6 +27,8 @@ const OPENERS: Partial<Record<NodeJS.Platform, string>> = { darwin: 'open', win3
 export interface StartRenderInput {
 	/** Scene id to render, or null for the whole presentation. */
 	scene: string | null;
+	/** Project slug to render. */
+	project: string | null;
 	aspect: AspectRatio;
 	resolution: ResolutionName;
 	fps: number;
@@ -41,14 +43,7 @@ export interface StartRenderInput {
 export type QualityTier = 'full' | 'balanced' | 'preview';
 
 export type RenderPhase =
-	| 'idle'
-	| 'starting'
-	| 'downloading'
-	| 'measuring'
-	| 'rendering'
-	| 'encoding'
-	| 'done'
-	| 'failed';
+	'idle' | 'starting' | 'downloading' | 'measuring' | 'rendering' | 'encoding' | 'done' | 'failed';
 
 export interface RenderSnapshot {
 	phase: RenderPhase;
@@ -131,13 +126,16 @@ export async function startRender(input: StartRenderInput) {
 	 * full quality output.
 	 */
 	const suffix = input.quality === 'preview' ? '.preview' : '';
+	/* Project renders land in their own folder so scene files never collide. */
+	const outDir = input.project ? `${OUT_DIR}/${input.project}` : OUT_DIR;
 	let output: string;
 	if (input.output === 'images') {
-		output = input.scene ? `${OUT_DIR}/frames/${input.scene}` : `${OUT_DIR}/frames`;
+		output = input.scene ? `${outDir}/frames/${input.scene}` : `${outDir}/frames`;
 	} else if (input.scene) {
-		output = `${OUT_DIR}/${input.scene}${suffix}.mp4`;
+		output = `${outDir}/${input.scene}${suffix}.mp4`;
 	} else {
-		output = getOptions().render.out.replace(/\.mp4$/, `${suffix}.mp4`);
+		const configured = getOptions().render.out.replace(/\.mp4$/, `${suffix}.mp4`);
+		output = input.project ? `${outDir}/${basename(configured)}` : configured;
 	}
 
 	startedAt = Date.now();
@@ -166,13 +164,17 @@ export async function startRender(input: StartRenderInput) {
 	 */
 	outputFolder = input.output === 'images' ? output : dirname(output);
 	if (input.output === 'images') flags.push('--frames-only');
+	if (input.project) flags.push('--project', input.project);
 	if (input.scene) {
 		flags.push(input.scene);
 		if (input.output === 'video') flags.push('--out', output);
+	} else if (input.project && input.output === 'video') {
+		// without an explicit out flag the CLI default applies, so name the file outright
+		flags.push('--out', output);
 	}
 
 	// ffmpeg only creates the video file, so the folder must exist first
-	await mkdir(OUT_DIR, { recursive: true });
+	await mkdir(input.project ? `${OUT_DIR}/${input.project}` : OUT_DIR, { recursive: true });
 
 	const renderer = spawn(process.execPath, [RENDER_SCRIPT, ...flags], {
 		// the renderer logs to the same terminal that runs the dev server

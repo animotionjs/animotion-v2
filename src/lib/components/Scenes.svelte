@@ -15,9 +15,11 @@
 		sequence: Sequence;
 		/** Plugins to register. */
 		plugins?: Plugin[];
+		/** Presentation URL for this project. */
+		base?: string;
 	}
 
-	let { sequence, plugins = [] }: Props = $props();
+	let { sequence, plugins = [], base = '/presentation' }: Props = $props();
 
 	const manager = new SceneManager();
 	setSceneManager(manager);
@@ -27,9 +29,9 @@
 	setSceneId(() => id);
 
 	/*
-	 * Seed the current scene's position from the URL hash (`/scene#N`) before
-	 * the scene child mounts and calls `manager.load`. No-op on the server,
-	 * where the hash is never sent.
+	 * Seed the current scene's position from the URL hash
+	 * (`/presentation/scene#N`) before the scene child mounts and calls
+	 * `manager.load`. No-op on the server, where the hash is never sent.
 	 */
 	untrack(() => applyUrlStep(id, page.url));
 
@@ -53,7 +55,7 @@
 	);
 
 	/*
-	 * Renders use the picked size rather than the deck config, so the video
+	 * Renders use the picked size rather than the presentation config, so the video
 	 * comes out full bleed instead of pillarboxed inside a square stage.
 	 */
 	const renderAspect = $derived.by(() => {
@@ -112,8 +114,14 @@
 
 	onMount(() => {
 		// slash alone shows the first scene without its name, so use the named url instead
-		if (useNamedUrl()) return;
+		const redirected = useNamedUrl();
+		/*
+		 * Plugins set up on every mount, even when redirecting. The redirect
+		 * is a same-route replace, so this mount is the only one. Skipping
+		 * setup here would leave every plugin silently dead.
+		 */
 		pluginManager.setup();
+		if (redirected) return () => pluginManager.cleanup();
 		// child scenes mount first, so their load already corrected the bar
 		requestAnimationFrame(() => (animated = true));
 		signalReady();
@@ -213,7 +221,7 @@
 		if (page.params.scene || !sequence[0]) return false;
 		const search = page.url.search;
 		const hash = page.url.hash;
-		void goto(`/${sequence[0].id}${search}${hash}`, { replace: true });
+		goto(`${base}/${sequence[0].id}${search}${hash}`, { replace: true });
 		return true;
 	}
 
@@ -223,12 +231,12 @@
 		if (saved) step = saved.stepCompleted ? saved.stepIndex + 1 : saved.stepIndex;
 		const search = page.url.search;
 		const hash = step === null || step === 0 ? '' : `#${step}`;
-		return goto(`/${targetId}${search}${hash}`);
+		return goto(`${base}/${targetId}${search}${hash}`);
 	}
 
 	/**
 	 * Restores the saved position for `sceneId` from `url`'s hash fragment
-	 * (`/scene#N`). A valid non-negative integer becomes the paused step the
+	 * (`/presentation/scene#N`). A valid non-negative integer becomes the paused step the
 	 * scene resumes at; anything else leaves the scene at its start.
 	 */
 	function applyUrlStep(sceneId: string, url: { hash: string }) {
@@ -240,7 +248,7 @@
 		}
 	}
 
-	/** Mirrors the current step in the URL hash (`/scene#N`) without navigating. */
+	/** Mirrors the current step in the URL hash (`/presentation/scene#N`) without navigating. */
 	function updateUrlStep(step: number) {
 		if (typeof window === 'undefined') return;
 		if (page.url.searchParams.has('render')) return;

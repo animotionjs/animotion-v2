@@ -5,13 +5,14 @@ import { existsSync } from 'node:fs';
 import { mkdir, rm, writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { availableParallelism, tmpdir } from 'node:os';
-import { dirname, join, resolve } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 import ffmpeg from 'ffmpeg-static';
 import { chromium, type Browser, type Page } from 'playwright';
 import { resolveScenes } from './scenes.ts';
+import { defaultProjectSlug } from '../server/projects.ts';
 import { sliceRanges, type SliceRange } from '../scene/runtime/slices.ts';
-import type { RenderBridge } from '../scene/runtime/render-bridge.js';
 import { PREVIEW_JPEG_QUALITY, type FrameFormat } from '../scene/options.ts';
+import type { RenderBridge } from '../scene/runtime/render-bridge.js';
 import type { RenderReport } from '../scene/runtime/report.js';
 
 declare global {
@@ -38,6 +39,7 @@ type ParsedArgs = {
 	slices?: number;
 	separate?: boolean;
 	server?: string;
+	project?: string;
 	scenes: string[];
 };
 
@@ -60,6 +62,7 @@ type ResolvedArgs = {
 	/** Slice mode. 0 disables slicing, 1 fills idle workers automatically, larger numbers force that many slices per scene. */
 	slices: number;
 	separate: boolean;
+	project: string | null;
 	scenes: string[];
 };
 
@@ -127,6 +130,14 @@ const parsedArgs = parseArgs(process.argv.slice(2));
  * reuses the dev server the app is already running on.
  */
 const baseUrl = parsedArgs.server ?? 'http://127.0.0.1:4173';
+/*
+ * Project renders are scoped under their own folder so scene files never collide.
+ * Assigned in main once the project is known, since the default resolves from disk.
+ */
+let RENDER_ROOT = 'rendered';
+const renderedPath = (...parts: string[]) => resolve(RENDER_ROOT, ...parts);
+/* Every presentation lives under its slug, so scene URLs never need a query. Assigned in main. */
+let pageBase = '';
 let server: ChildProcess | null = null;
 let browser: Browser | null = null;
 let isCrashed = false;
@@ -192,6 +203,7 @@ Options:
    --progress-bar     show a progress bar
    --server <url>     load scene pages from an already running dev server
                       instead of starting one (used by the timeline UI)
+   --project <slug>   render a project (default: example if present, else first project)
 
 By default frames are streamed straight into ffmpeg while they are captured.
 Pass --frames-only or --keep-frames to write frames to rendered/frames/ instead.
@@ -258,7 +270,7 @@ Examples:
 		tempPage.on('crash', () => {
 			isCrashed = true;
 		});
-		await tempPage.goto(`${baseUrl}/?render`, { waitUntil: 'domcontentloaded' });
+		await tempPage.goto(`${pageBase}?render`, { waitUntil: 'domcontentloaded' });
 		await tempPage.waitForFunction(() => window.__sequenceRenderer !== undefined, undefined, {
 			timeout: 15000
 		});
@@ -270,6 +282,14 @@ Examples:
 		await tempPage.close();
 		return { ...probe, gpuHealthy };
 	}
+
+	const project = parsedArgs.project ?? (await defaultProjectSlug());
+	if (!project) {
+		console.error('No projects found in src/projects/.');
+		process.exit(1);
+	}
+	RENDER_ROOT = join('rendered', project);
+	pageBase = `${baseUrl}/presentation/${encodeURIComponent(project)}`;
 
 	let probe = await acquireProbe();
 	/*
@@ -289,7 +309,7 @@ Examples:
 	const jobs = parsedArgs.jobs ?? (renderOptions.jobs === 'auto' ? autoJobs() : renderOptions.jobs);
 
 	const args: ResolvedArgs = {
-		out: parsedArgs.out ?? renderOptions.out,
+		out: parsedArgs.out ?? renderedPath(basename(renderOptions.out)),
 		outSet: parsedArgs.out !== undefined,
 		fps: parsedArgs.fps ?? (parsedArgs.preview ? 30 : renderOptions.fps),
 		width: parsedArgs.width ?? renderOptions.width,
@@ -307,6 +327,7 @@ Examples:
 		bench: parsedArgs.bench ?? false,
 		slices: parsedArgs.slices ?? 1,
 		separate: parsedArgs.separate ?? false,
+		project: parsedArgs.project ?? null,
 		scenes: parsedArgs.scenes
 	};
 	// the picked size rides along so the stage fills the viewport exactly
@@ -314,6 +335,12 @@ Examples:
 
 	const perScene = args.scenes.length > 0;
 	const targets = perScene ? resolveScenes(args.scenes, scenes) : scenes;
+	if (targets.length === 0) {
+		console.error(
+			args.project ? `No scenes found for project "${args.project}".` : 'No scenes found.'
+		);
+		process.exit(1);
+	}
 
 	if (perScene && args.outSet && targets.length > 1) {
 		console.error('--out can only be used when rendering a single scene');
@@ -547,7 +574,7 @@ Examples:
 					console.log(`Stitching slices of ${id}...`);
 					await concatSliceVideos(id, count, sceneVideoOut(id, perScene, args));
 				}
-				await rm(resolve('rendered', 'slices'), { recursive: true, force: true });
+				await rm(renderedPath('slices'), { recursive: true, force: true });
 			}
 			if (perScene) {
 				for (const id of targets) {
@@ -555,7 +582,7 @@ Examples:
 				}
 			} else if (args.separate) {
 				for (const id of targets) {
-					console.log(`Done. Output: ${resolve('rendered', `${id}.mp4`)}`);
+					console.log(`Done. Output: ${renderedPath(`${id}.mp4`)}`);
 				}
 			} else {
 				console.log('Encoding final video...');
@@ -580,7 +607,7 @@ Examples:
 			`Total: ${totalElapsed.toFixed(2)}s (capture ${captureElapsed.toFixed(2)}s, encode ${encodeElapsed.toFixed(2)}s)`
 		);
 	} else {
-		console.log('Done. Frames saved in rendered/frames/');
+		console.log(`Done. Frames saved in ${RENDER_ROOT}/frames/`);
 	}
 }
 
@@ -726,7 +753,7 @@ async function runWorker(
  * after 15s rather than hanging forever.
  */
 async function loadScenePage(page: Page, id: string, renderQs: string, settle = true) {
-	await page.goto(`${baseUrl}/${id}?${renderQs}`, {
+	await page.goto(`${pageBase}/${id}?${renderQs}`, {
 		waitUntil: 'domcontentloaded',
 		timeout: 10000
 	});
@@ -869,7 +896,7 @@ const BENCH_FRAMES = 60;
  */
 async function benchScene(page: Page, id: string, args: ResolvedArgs, renderQs: string) {
 	for (const format of ['png', 'jpeg'] as const) {
-		await page.goto(`${baseUrl}/${id}?${renderQs}`, {
+		await page.goto(`${pageBase}/${id}?${renderQs}`, {
 			waitUntil: 'domcontentloaded',
 			timeout: 10000
 		});
@@ -955,6 +982,7 @@ async function timedRender(
 		...(parsedArgs.width !== undefined ? ['--width', String(parsedArgs.width)] : []),
 		...(parsedArgs.height !== undefined ? ['--height', String(parsedArgs.height)] : []),
 		...(parsedArgs.preview ? ['--preview'] : []),
+		...(parsedArgs.project ? ['--project', parsedArgs.project] : []),
 		...(format === 'jpeg' ? ['--jpeg'] : []),
 		...(args.gpu ? ['--gpu'] : []),
 		...extraFlags,
@@ -1018,7 +1046,7 @@ async function encodeFinalVideo(slugs: string[], args: ResolvedArgs) {
 			'-framerate',
 			String(args.fps),
 			'-i',
-			join('rendered/frames', id, `frame_%06d.${args.format}`)
+			join(RENDER_ROOT, 'frames', id, `frame_%06d.${args.format}`)
 		);
 	}
 
@@ -1048,7 +1076,7 @@ async function encodeSceneVideo(id: string, args: ResolvedArgs) {
 		'-framerate',
 		String(args.fps),
 		'-i',
-		join('rendered/frames', id, `frame_%06d.${args.format}`),
+		join(RENDER_ROOT, 'frames', id, `frame_%06d.${args.format}`),
 		...encodeFlags(sceneOutput(id, args))
 	]);
 }
@@ -1065,9 +1093,9 @@ async function encodeEachScene(ids: string[], args: ResolvedArgs) {
 	}
 	if (!args.keepFrames) {
 		for (const id of ids) {
-			await rm(resolve('rendered/frames', id), { recursive: true, force: true });
+			await rm(resolve(RENDER_ROOT, 'frames', id), { recursive: true, force: true });
 		}
-		await rm(resolve('rendered', 'frames'), { recursive: true, force: true });
+		await rm(renderedPath('frames'), { recursive: true, force: true });
 	}
 }
 
@@ -1077,8 +1105,8 @@ async function encodeEachScene(ids: string[], args: ResolvedArgs) {
  */
 async function concatSceneVideos(ids: string[], out: string) {
 	await mkdir(resolve(dirname(out)), { recursive: true });
-	const listPath = resolve('rendered', 'concat.txt');
-	const list = ids.map((id) => `file '${resolve('rendered', `${id}.mp4`)}'`).join('\n');
+	const listPath = renderedPath('concat.txt');
+	const list = ids.map((id) => `file '${renderedPath(`${id}.mp4`)}'`).join('\n');
 	await writeFile(listPath, list);
 	try {
 		await runFfmpeg([
@@ -1099,7 +1127,7 @@ async function concatSceneVideos(ids: string[], out: string) {
 		await rm(listPath, { force: true });
 	}
 	for (const id of ids) {
-		const path = resolve('rendered', `${id}.mp4`);
+		const path = renderedPath(`${id}.mp4`);
 		if (path === resolve(out)) continue;
 		await rm(path, { force: true });
 	}
@@ -1107,17 +1135,17 @@ async function concatSceneVideos(ids: string[], out: string) {
 
 function sceneOutput(id: string, args: ResolvedArgs): string {
 	if (args.outSet && args.scenes.length === 1) return args.out;
-	return resolve('rendered', `${id}.mp4`);
+	return renderedPath(`${id}.mp4`);
 }
 
 /** The scene-level video file a capture (sliced or not) ultimately produces. */
 function sceneVideoOut(id: string, perScene: boolean, args: ResolvedArgs): string {
-	return perScene ? sceneOutput(id, args) : resolve('rendered', `${id}.mp4`);
+	return perScene ? sceneOutput(id, args) : renderedPath(`${id}.mp4`);
 }
 
 /** The intermediate mp4 a worker streams one slice of a scene into. */
 function sliceSinkPath(id: string, sliceK: number): string {
-	return resolve('rendered', 'slices', `${id}.${sliceK}.mp4`);
+	return renderedPath('slices', `${id}.${sliceK}.mp4`);
 }
 
 /**
@@ -1126,8 +1154,8 @@ function sliceSinkPath(id: string, sliceK: number): string {
  */
 async function concatSliceVideos(id: string, count: number, out: string) {
 	await mkdir(resolve(dirname(out)), { recursive: true });
-	const sliceDir = resolve('rendered', 'slices');
-	const listPath = resolve('rendered', 'slices-concat.txt');
+	const sliceDir = renderedPath('slices');
+	const listPath = renderedPath('slices-concat.txt');
 	const list: string[] = [];
 	for (let k = 1; k <= count; k++) {
 		list.push(`file '${resolve(sliceDir, `${id}.${k}.mp4`)}'`);
@@ -1189,9 +1217,9 @@ async function runFfmpeg(argv: string[]) {
 
 async function cleanupFrames(ids: string[]) {
 	for (const id of ids) {
-		await rm(resolve('rendered/frames', id), { recursive: true, force: true });
+		await rm(resolve(RENDER_ROOT, 'frames', id), { recursive: true, force: true });
 	}
-	await rm(resolve('rendered', 'frames'), { recursive: true, force: true });
+	await rm(renderedPath('frames'), { recursive: true, force: true });
 }
 
 /**
@@ -1321,7 +1349,7 @@ async function safeCapture(client: PageClient, retries = 3): Promise<Buffer> {
 
 /** Writes frames to rendered/frames/<id>/frame_%06d.<format> on disk. */
 async function createFileSink(id: string, args: ResolvedArgs): Promise<FrameSink> {
-	const frameDir = resolve('rendered/frames', id);
+	const frameDir = resolve(RENDER_ROOT, 'frames', id);
 	await mkdir(frameDir, { recursive: true });
 	let index = 0;
 	return {
@@ -1503,6 +1531,9 @@ function parseArgs(argv: string[]): ParsedArgs {
 				break;
 			case '--server':
 				args.server = argv[++i];
+				break;
+			case '--project':
+				args.project = argv[++i];
 				break;
 			case '--png':
 				args.format = 'png';

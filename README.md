@@ -8,7 +8,7 @@ A Svelte engine for animated presentations. Every scene is a component that anim
 npm create @animotion@next
 ```
 
-The CLI scaffolds a project with the presentation template. Edit the scenes in `src/scenes/` to build your own.
+The CLI scaffolds a project with the presentation template. Edit the scenes in `src/projects/example/scenes/` to build your own.
 
 ## Usage
 
@@ -34,7 +34,7 @@ A presentation is an ordered `sequence` of scenes. Each scene is a component tha
 
 The library provides the player shell (`Scene`), the animation engine (`createScene`, `SceneManager`, step types), a code component (`Code`) that morphs between source states, a camera component (`Camera`) for flying across an oversized canvas, and a plugin system (`PluginManager`, `fullscreenPlugin`).
 
-Scenes live in `src/scenes/`. A scene is either a file (`04-code.svelte`) or a folder containing a `scene.svelte` component (`04-code/scene.svelte`), so you can colocate assets and helper components with the scene. Each scene must be prefixed with a number that sets its order in the sequence: `01-intro.svelte` plays before `02-about.svelte`. The rest of the name becomes the scene id (`intro`). The sequence is built automatically by `src/lib/config/scenes.ts`.
+Scenes live in `src/projects/<slug>/scenes/`, the bundled example in `src/projects/example/scenes/`. A scene is either a file (`04-code.svelte`) or a folder containing a `scene.svelte` component (`04-code/scene.svelte`), so you can colocate assets and helper components with the scene. Each scene must be prefixed with a number that sets its order in the sequence: `01-intro.svelte` plays before `02-about.svelte`. The rest of the name becomes the scene id (`intro`). The sequence is built automatically by `src/lib/config/scenes.ts`.
 
 ## Layout animations
 
@@ -345,7 +345,7 @@ The `<Code />` component accepts a few props:
 
 ## Previewing a scene
 
-The `/timeline/[[scene]]` route is a scrubbable editor for one scene at a time. Visit `/timeline` to open the first scene, or `/timeline/<id>` (e.g. `/timeline/about`) to jump straight to a scene. The URL stays in sync as you move between scenes, so a link deep-links to the exact scene.
+The `/timeline/[slug]/[[scene]]` route is a scrubbable editor for one scene at a time. Visit `/timeline/example` to open the first scene of the example, or `/timeline/example/about` to jump straight to a scene. The URL stays in sync as you move between scenes, so a link deep-links to the exact scene.
 
 The track shows the scene as four kinds of segment laid out left to right:
 
@@ -370,7 +370,7 @@ Every frame is driven by the same engine and FPS used to render, so what you scr
 
 `Preview` renders a 30 fps draft with lower-quality JPEG written to a separate `*.preview.mp4` file; `Full` captures lossless PNG frames and `Balanced` full-resolution JPEG. Every tier renders at the same size, so the layout always matches the final render.
 
-The render attaches to the dev server you are already running, so the page never reloads, and one render runs at a time. Video renders land in `rendered/<id>.mp4` (previews in `rendered/<id>.preview.mp4`), full presentations in `rendered/video.mp4` or whatever `configure({ render: { out } })` names, and image sequences in `rendered/frames/<id>/` as `frame_000001.png` files.
+The render attaches to the dev server you are already running, so the page never reloads, and one render runs at a time. Video renders land in `rendered/<slug>/<id>.mp4` (previews in `rendered/<slug>/<id>.preview.mp4`), full presentations in `rendered/<slug>/video.mp4` or whatever `configure({ render: { out } })` names, and image sequences in `rendered/<slug>/frames/<id>/` as `frame_000001.png` files.
 
 ## Configuration
 
@@ -431,7 +431,7 @@ export const plugins: Plugin[] = [fullscreenPlugin(), speakerPlugin()];
 
 A plugin is an object with a `name` and optional hooks:
 
-- `setup(ctx)` — runs when the presentation mounts; `ctx.state` is a read-only view of the current scene and step (`sceneId`, `sceneIndex`, `totalScenes`, `step`, `totalSteps`, `stepCompleted`, `finished`), so plugins can read where the deck started, not just what changed. It may return a cleanup function.
+- `setup(ctx)` runs when the presentation mounts; `ctx.state` is a read-only view of the current scene and step (`sceneId`, `sceneIndex`, `totalScenes`, `step`, `totalSteps`, `stepCompleted`, `finished`), so plugins can read where the presentation started, not just what changed. It may return a cleanup function.
 - `onSceneChange({ id, index })` / `onStepChange(step, total)` — run as the presentation plays.
 - `onKeydown(event)` — runs on every keydown; returning `true` consumes the key.
 
@@ -452,7 +452,7 @@ export const plugin: Plugin = {
 
 `fullscreenPlugin()` toggles fullscreen with the `f` key.
 
-`speakerPlugin()` opens a speaker view — press `s` (or call `openSpeakerView()`) to pop out a window showing a live mirror of the presentation in an iframe, the current scene's notes, a timer, a clickable scene outline, and next/prev controls that drive the presentation. Because the mirror runs the real presentation (registered with the plugin in receiver mode), stepping through a scene advances in place without replaying the entrance transition.
+`speakerPlugin()` opens a speaker view. Press `s` (or call `openSpeakerView()`) to pop out a window showing a live copy of the presentation, the current scene's notes, a timer, a clickable scene outline, and next/prev controls that drive the presentation. Because the copy runs the real presentation and follows it, stepping through a scene advances without replaying the entrance transition.
 
 Notes are authored in each scene in a hidden `[data-notes]` box, which the presenter forwards to the speaker view along with the presentation state (so notes can contain styled markup):
 
@@ -460,7 +460,7 @@ Notes are authored in each scene in a hidden `[data-notes]` box, which the prese
 <div data-notes>What I say when this slide is on screen.</div>
 ```
 
-The speaker view opens at `/?speaker`, which the main scene route renders as `<SpeakerView>` instead of the presentation:
+The speaker view opens at `/presentation?speaker`, which the presentation route renders as `<SpeakerView>` instead of the presentation:
 
 ```svelte
 <script lang="ts">
@@ -480,7 +480,11 @@ The speaker view opens at `/?speaker`, which the main scene route renders as `<S
 {/if}
 ```
 
-For example, `/?speaker&session=demo` connects the speaker view to the `demo` session.
+For example, `?speaker&session=demo` on the current presentation path connects the speaker view to the `demo` session.
+
+## Projects
+
+`/` lists projects. The example lives in `src/projects/example/scenes/` like any other project. Each presentation plays at `/presentation/<slug>` and its editor lives at `/timeline/<slug>`. Bare `/presentation` and `/timeline` redirect to the default project, which is `example` when present and the first project otherwise.
 
 ## Rendering a video
 

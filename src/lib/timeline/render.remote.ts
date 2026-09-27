@@ -33,11 +33,12 @@ function isOutput(value: unknown): value is 'video' | 'images' {
 /** Whitelist validation for the render settings coming from the browser. */
 function parseRequest(input: unknown) {
 	if (typeof input !== 'object' || input === null) error(400, 'Invalid render request');
-	const { scene, aspect, resolution, fps, quality, output, origin } = input as Record<
+	const { scene, project, aspect, resolution, fps, quality, output, origin } = input as Record<
 		string,
 		unknown
 	>;
 	if (scene !== null && typeof scene !== 'string') error(400, 'Invalid scene');
+	if (project != null && typeof project !== 'string') error(400, 'Invalid project');
 	if (!isAspectRatio(aspect)) error(400, 'Unknown aspect ratio');
 	if (!isResolution(resolution)) error(400, 'Unknown resolution');
 	if (typeof fps !== 'number' || !RATES.includes(fps)) error(400, 'Unsupported frame rate');
@@ -53,7 +54,7 @@ function parseRequest(input: unknown) {
 	) {
 		error(400, 'Invalid dev server origin');
 	}
-	return { scene, aspect, resolution, fps, quality, output, origin };
+	return { scene, project: project ?? null, aspect, resolution, fps, quality, output, origin };
 }
 
 export type RenderStatus = ReturnType<typeof renderStatus>;

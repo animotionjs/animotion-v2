@@ -162,7 +162,7 @@ describe('speakerPlugin', () => {
 
 	it('opens the speaker view from the shortcut key', async () => {
 		const open = vi.fn();
-		vi.stubGlobal('window', { location: { search: '' }, open });
+		vi.stubGlobal('window', { location: { pathname: '/presentation/intro', search: '' }, open });
 		const ctx = createContext();
 		const plugin = speakerPlugin();
 		plugin.setup?.(ctx);
@@ -177,13 +177,17 @@ describe('speakerPlugin', () => {
 		const consumed = plugin.onKeydown?.(event);
 
 		expect(consumed).toBe(true);
-		expect(open).toHaveBeenCalledWith('/?speaker', 'animotion-speaker', expect.any(String));
+		expect(open).toHaveBeenCalledWith(
+			'/presentation/intro?speaker',
+			'animotion-speaker',
+			expect.any(String)
+		);
 	});
 
 	it('passes a custom channel to the speaker view route', () => {
 		const open = vi.fn();
-		vi.stubGlobal('window', { location: { search: '' }, open });
-		const plugin = speakerPlugin({ session: 'deck/channel' });
+		vi.stubGlobal('window', { location: { pathname: '/projects/demo', search: '' }, open });
+		const plugin = speakerPlugin({ session: 'talk/channel' });
 		plugin.setup?.(createContext());
 
 		plugin.onKeydown?.({
@@ -195,7 +199,7 @@ describe('speakerPlugin', () => {
 		} as KeyboardEvent);
 
 		expect(open).toHaveBeenCalledWith(
-			'/?speaker&session=deck%2Fchannel',
+			'/projects/demo?speaker&session=talk%2Fchannel',
 			'animotion-speaker',
 			expect.any(String)
 		);
@@ -488,7 +492,7 @@ describe('speakerPlugin', () => {
 		it('plays in place without re-seeking when the presenter starts animating the current step', () => {
 			const { ctx, manager, channel } = setupEmbed();
 
-			// the mirror already sits on the step the presenter is about to play
+			// the framed copy already sits on the step the presenter is about to play
 			Object.assign(ctx.state, { step: 1, stepCompleted: false, playing: false, finished: false });
 
 			channel.dispatch({

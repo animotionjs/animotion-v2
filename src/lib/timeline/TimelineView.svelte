@@ -15,9 +15,13 @@
 		sequence: Sequence;
 		/** The scene to show, matching a `sequence` id. */
 		sceneId: string;
+		/** Active project slug. */
+		project: string;
+		/** Timeline URL for this project. */
+		base?: string;
 	}
 
-	let { sequence, sceneId }: Props = $props();
+	let { sequence, sceneId, project, base = '/timeline' }: Props = $props();
 
 	onMount(() => {
 		// timeline alone shows the first scene without its name, so use the named url instead
@@ -57,11 +61,11 @@
 
 	function useNamedUrl() {
 		if (page.params.scene || !sequence[0]) return;
-		void goto(`/timeline/${sequence[0].id}`, { replace: true });
+		goto(`${base}/${sequence[0].id}`, { replace: true });
 	}
 
 	function select(id: string) {
-		if (id !== sceneId) goto(`/timeline/${id}`);
+		if (id !== sceneId) goto(`${base}/${id}`);
 	}
 
 	function messageOf(error: unknown) {
@@ -75,6 +79,7 @@
 		try {
 			await startRender({
 				scene: settings.scope === 'all' ? null : sceneId,
+				project,
 				aspect: settings.aspect,
 				resolution: settings.resolution,
 				fps: settings.rate,
