@@ -2,16 +2,18 @@
 import { spawn, type ChildProcess, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { once } from 'node:events';
 import { existsSync } from 'node:fs';
-import { mkdir, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rename, rm, writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { availableParallelism, tmpdir } from 'node:os';
-import { basename, dirname, join, resolve } from 'node:path';
+import { basename, dirname, extname, join, resolve } from 'node:path';
 import ffmpeg from 'ffmpeg-static';
 import { chromium, type Browser, type Page } from 'playwright';
 import { resolveScenes } from './scenes.ts';
 import { defaultProjectSlug } from '../server/projects.ts';
 import { sliceRanges, type SliceRange } from '../scene/runtime/slices.ts';
 import { PREVIEW_JPEG_QUALITY, type FrameFormat } from '../scene/options.ts';
+import type { AudioTrack } from '../scene/audio/tracks.ts';
+import { buildAudioFilters, buildMixFilter } from '../scene/audio/render-filters.ts';
 import type { RenderBridge } from '../scene/runtime/render-bridge.js';
 import type { RenderReport } from '../scene/runtime/report.js';
 
@@ -143,6 +145,8 @@ let browser: Browser | null = null;
 let isCrashed = false;
 const pageErrors: string[] = [];
 const sceneStats: { id: string; frames: number; ms: number }[] = [];
+const sceneTracks = new Map<string, readonly AudioTrack[]>();
+const sceneTotals = new Map<string, number>();
 const progress: {
 	id: string;
 	frames: number;
@@ -162,7 +166,8 @@ async function main() {
 	if (process.argv.includes('--help') || process.argv.includes('-h')) {
 		console.log(`animotion render [scenes...]
 
-Record a presentation into a video.
+Record a presentation into a video. Scenes with audio tracks
+automatically receive an AAC audio track.
 
 Arguments:
   scenes             scene ids to render individually (default: all scenes)
@@ -555,6 +560,7 @@ Examples:
 	console.log(
 		`Captured ${targets.length} scenes, ${totalFrames} frames in ${captureElapsed.toFixed(2)}s`
 	);
+	const hasAudio = targets.some((id) => (sceneTracks.get(id)?.length ?? 0) > 0);
 
 	if (reporting && !args.framesOnly) report({ type: 'encoding' });
 
@@ -576,6 +582,9 @@ Examples:
 				}
 				await rm(renderedPath('slices'), { recursive: true, force: true });
 			}
+			await addSceneAudio(targets, args, !perScene && !args.separate && hasAudio, (id) =>
+				sceneVideoOut(id, perScene, args)
+			);
 			if (perScene) {
 				for (const id of targets) {
 					console.log(`Done. Output: ${resolve(sceneOutput(id, args))}`);
@@ -586,7 +595,7 @@ Examples:
 				}
 			} else {
 				console.log('Encoding final video...');
-				await concatSceneVideos(targets, args.out);
+				await concatSceneVideos(targets, args.out, hasAudio);
 				console.log('Done. Output:', resolve(args.out));
 			}
 		} else {
@@ -594,6 +603,10 @@ Examples:
 
 			if (perScene || args.separate) {
 				await encodeEachScene(targets, args);
+			} else if (hasAudio) {
+				console.log('Encoding final video...');
+				await encodePresentationWithAudio(targets, args);
+				console.log('Done. Output:', resolve(args.out));
 			} else {
 				console.log('Encoding final video...');
 				await encodeFinalVideo(scenes, args);
@@ -702,6 +715,10 @@ async function runWorker(
 			reportItems.push(reportItem);
 
 			await loadScenePage(page, item.id, renderQs);
+			sceneTracks.set(
+				item.id,
+				await client.evaluate<AudioTrack[]>('window.__sequenceRenderer.tracks ?? []')
+			);
 
 			const streaming = !args.framesOnly && !args.keepFrames;
 			let sink: FrameSink;
@@ -714,7 +731,7 @@ async function runWorker(
 
 			progress[item.sceneIndex].startMs ||= performance.now();
 			try {
-				const { written } = await driveScene(
+				const { written, total } = await driveScene(
 					client,
 					item.id,
 					item.isLast,
@@ -724,6 +741,8 @@ async function runWorker(
 					sink,
 					reportItem
 				);
+				const capturedTotal = item.range?.end ?? total;
+				sceneTotals.set(item.id, Math.max(sceneTotals.get(item.id) ?? 0, capturedTotal));
 				const ms = performance.now() - progress[item.sceneIndex].startMs;
 				await sink.close();
 				sceneStats.push({ id: item.id, frames: written, ms });
@@ -1087,6 +1106,10 @@ async function encodeEachScene(ids: string[], args: ResolvedArgs) {
 		console.log(`Encoding ${id}...`);
 		const sceneStart = performance.now();
 		await encodeSceneVideo(id, args);
+		const tracks = sceneTracks.get(id) ?? [];
+		if (tracks.length > 0) {
+			await muxSceneAudioInPlace(sceneOutput(id, args), tracks, sceneDuration(id, args));
+		}
 		console.log(
 			`Done. Output: ${resolve(sceneOutput(id, args))} (${((performance.now() - sceneStart) / 1000).toFixed(2)}s)`
 		);
@@ -1099,16 +1122,177 @@ async function encodeEachScene(ids: string[], args: ResolvedArgs) {
 	}
 }
 
+async function encodePresentationWithAudio(ids: string[], args: ResolvedArgs) {
+	for (const id of ids) {
+		console.log(`Encoding ${id}...`);
+		await encodeSceneVideo(id, args);
+	}
+	await addSceneAudio(ids, args, true);
+	await concatSceneVideos(ids, args.out, true);
+	if (!args.keepFrames) await cleanupFrames(ids);
+}
+
 /**
- * Stitches per-scene videos (encoded during capture) into a single video.
- * All scenes share identical encoder settings, so the streams are copied.
+ * Silent scenes need a track too because the concat demuxer cannot join inputs
+ * whose stream layouts differ.
  */
-async function concatSceneVideos(ids: string[], out: string) {
+async function addSceneAudio(
+	ids: string[],
+	args: ResolvedArgs,
+	mixSilent: boolean,
+	output: (id: string) => string = (id) => renderedPath(`${id}.mp4`)
+) {
+	for (const id of ids) {
+		const tracks = sceneTracks.get(id) ?? [];
+		if (!mixSilent && tracks.length === 0) continue;
+		await muxSceneAudioInPlace(output(id), tracks, sceneDuration(id, args));
+	}
+}
+
+function sceneDuration(id: string, args: ResolvedArgs) {
+	const frames = sceneTotals.get(id);
+	if (frames === undefined) throw new Error(`Missing captured frame count for scene ${id}`);
+	return frames / args.fps;
+}
+
+async function muxSceneAudioInPlace(
+	video: string,
+	tracks: readonly AudioTrack[],
+	duration: number
+) {
+	const temp = `${video}.audio.mp4`;
+	try {
+		await muxSceneAudio(video, temp, tracks, duration);
+		await rm(video, { force: true });
+		await rename(temp, video);
+	} catch (error) {
+		await rm(temp, { force: true });
+		throw error;
+	}
+}
+
+async function muxSceneAudio(
+	video: string,
+	out: string,
+	tracks: readonly AudioTrack[],
+	duration: number
+) {
+	if (tracks.length === 0) {
+		await runFfmpeg([
+			'-y',
+			'-loglevel',
+			'error',
+			'-i',
+			video,
+			'-f',
+			'lavfi',
+			'-i',
+			'anullsrc=r=48000:cl=stereo',
+			'-map',
+			'0:v:0',
+			'-map',
+			'1:a:0',
+			'-c:v',
+			'copy',
+			'-c:a',
+			'aac',
+			'-b:a',
+			'192k',
+			'-ar',
+			'48000',
+			'-ac',
+			'2',
+			'-t',
+			duration.toFixed(6),
+			'-movflags',
+			'+faststart',
+			out
+		]);
+		return;
+	}
+	await muxSceneAudioWithFiles(video, out, tracks, duration);
+}
+
+async function muxSceneAudioWithFiles(
+	video: string,
+	out: string,
+	tracks: readonly AudioTrack[],
+	duration: number
+) {
+	const tmpDir = await mkdtemp(join(tmpdir(), 'animotion-audio-'));
+	const downloaded: string[] = [];
+	try {
+		for (let i = 0; i < tracks.length; i++) {
+			const track = tracks[i]!;
+			const url = track.src.startsWith('http') ? track.src : new URL(track.src, baseUrl).href;
+			const response = await fetch(url);
+			if (!response.ok) {
+				throw new Error(`Could not download audio ${track.src}: ${response.status}`);
+			}
+			const bytes = Buffer.from(await response.arrayBuffer());
+			const ext = extname(new URL(url).pathname) || '.bin';
+			const path = join(tmpDir, `track-${i}${ext}`);
+			await writeFile(path, bytes);
+			downloaded.push(path);
+		}
+
+		const inputs: string[] = ['-i', video];
+		for (const path of downloaded) {
+			inputs.push('-i', path);
+		}
+
+		const filters: string[] = [];
+		const mixInputs: string[] = [];
+		const graph = buildAudioFilters(tracks, duration);
+		filters.push(...graph.filters);
+		mixInputs.push(...graph.mixInputs);
+		filters.push(
+			`${buildMixFilter(mixInputs)},aresample=48000,aformat=channel_layouts=stereo[outa]`
+		);
+
+		await runFfmpeg([
+			'-y',
+			'-loglevel',
+			'error',
+			...inputs,
+			'-filter_complex',
+			filters.join(';'),
+			'-map',
+			'0:v:0',
+			'-map',
+			'[outa]',
+			'-c:v',
+			'copy',
+			'-c:a',
+			'aac',
+			'-b:a',
+			'192k',
+			'-ar',
+			'48000',
+			'-ac',
+			'2',
+			'-t',
+			duration.toFixed(6),
+			'-movflags',
+			'+faststart',
+			out
+		]);
+	} finally {
+		await rm(tmpDir, { recursive: true, force: true });
+	}
+}
+
+/**
+ * Every scene uses the same video and audio settings so both streams can be
+ * copied without another generation loss.
+ */
+async function concatSceneVideos(ids: string[], out: string, withAudio = false) {
 	await mkdir(resolve(dirname(out)), { recursive: true });
 	const listPath = renderedPath('concat.txt');
 	const list = ids.map((id) => `file '${renderedPath(`${id}.mp4`)}'`).join('\n');
 	await writeFile(listPath, list);
 	try {
+		const codecs = withAudio ? ['-c', 'copy', '-movflags', '+faststart'] : ['-c', 'copy'];
 		await runFfmpeg([
 			'-y',
 			'-loglevel',
@@ -1119,8 +1303,7 @@ async function concatSceneVideos(ids: string[], out: string) {
 			'0',
 			'-i',
 			listPath,
-			'-c',
-			'copy',
+			...codecs,
 			out
 		]);
 	} finally {

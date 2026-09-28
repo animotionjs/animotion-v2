@@ -3,12 +3,13 @@
 	import { afterNavigate, beforeNavigate, goto } from '$app/navigation';
 	import { page } from '$app/state';
 	import { SceneManager } from '../scene/runtime/runtime.svelte.js';
+	import { AudioController } from '../scene/audio/controller.js';
 	import { setSceneId, setSceneManager } from '../scene/runtime/context.svelte.js';
 	import { getOptions } from '../scene/index.js';
-	import type { Sequence } from '../scene/runtime/sequence.js';
 	import { PluginManager } from '../plugins/manager.svelte.js';
-	import type { Plugin, PresentationState } from '../plugins/types.js';
 	import Scene from './Scene.svelte';
+	import type { Sequence } from '../scene/runtime/sequence.js';
+	import type { Plugin, PresentationState } from '../plugins/types.js';
 
 	interface Props {
 		/** Ordered scenes to play. */
@@ -23,6 +24,15 @@
 
 	const manager = new SceneManager();
 	setSceneManager(manager);
+
+	let audio: AudioController | null = null;
+	let audioPlaying = false;
+	let audioUnlocked = false;
+	let audioSuppressed = false;
+
+	const isRenderMode = page.url.searchParams.has('render');
+	const audioDisabled = isRenderMode || page.url.searchParams.has('embed');
+	const noopUnsubscribe = () => {};
 
 	const id = $derived(page.params.scene ?? sequence[0].id);
 
@@ -97,6 +107,18 @@
 		updateUrlStep(step);
 	});
 
+	const syncLoad = audioDisabled
+		? noopUnsubscribe
+		: manager.onLoad(() => {
+				if (audio) loadAudio();
+			});
+
+	const syncPlayback = audioDisabled
+		? noopUnsubscribe
+		: manager.onPlaybackChange((time, playing) => {
+				syncAudio(time, playing);
+			});
+
 	const pluginManager = createPluginManager();
 
 	/*
@@ -113,6 +135,10 @@
 	let animated = $state(false);
 
 	onMount(() => {
+		if (!audioDisabled) {
+			audio = new AudioController();
+			loadAudio();
+		}
 		// slash alone shows the first scene without its name, so use the named url instead
 		const redirected = useNamedUrl();
 		/*
@@ -128,11 +154,21 @@
 		return () => pluginManager.cleanup();
 	});
 
-	onDestroy(syncStep);
+	onDestroy(() => {
+		syncStep();
+		syncLoad();
+		syncPlayback();
+		const controller = audio;
+		audio = null;
+		controller?.destroy();
+		audioPlaying = false;
+	});
 
 	afterNavigate((navigation) => {
 		// shallow navigations only mirror the step in the url hash
 		if (navigation.shallow) return;
+		audioSuppressed = false;
+		if (manager.isAnimating) syncAudio(manager.liveTime, true);
 		// going back can land on slash which shows the first scene without its name, so use the named url instead
 		if (useNamedUrl()) return;
 		presentationState.sceneId = id;
@@ -144,6 +180,8 @@
 	// seed the target scene's position from its URL hash before it mounts
 	beforeNavigate((navigation) => {
 		if (navigation.shallow || !navigation.to) return;
+		audioSuppressed = true;
+		stopAudio();
 		applyUrlStep(navigation.to.params?.scene ?? sequence[0].id, navigation.to.url);
 	});
 
@@ -173,11 +211,84 @@
 			manager,
 			scheduler,
 			scenes: sequence.map((s) => s.id),
+			get tracks() {
+				return manager.tracks;
+			},
 			renderOptions: getOptions().render,
 			ready,
 			navigateTo,
 			advanceFrame: (delta: number) => manager.advanceFrame(delta)
 		};
+	}
+
+	function loadAudio() {
+		const controller = audio;
+		if (!controller) return;
+		controller.stop();
+		controller.load(manager.tracks, manager.timeline.totalDuration);
+		audioPlaying = false;
+	}
+
+	function syncAudio(time: number, playing: boolean) {
+		const controller = audio;
+		if (!controller) return;
+		if (audioSuppressed) {
+			controller.pause();
+			audioPlaying = false;
+			return;
+		}
+		if (controller.currentTime >= controller.duration) {
+			controller.pause();
+			audioPlaying = false;
+			return;
+		}
+		if (!playing) {
+			if (audioPlaying) syncLiveAudio(controller, time);
+			else {
+				controller.pause();
+				audioPlaying = false;
+			}
+			return;
+		}
+		if (audioPlaying) syncLiveAudio(controller, time);
+		else void controller.play(time);
+		audioPlaying = true;
+	}
+
+	function syncLiveAudio(controller: AudioController, time: number) {
+		const currentTime = controller.currentTime;
+		if (time !== currentTime) controller.sync(time, true);
+	}
+
+	function stopAudio() {
+		audio?.stop();
+		audioPlaying = false;
+	}
+
+	function unlockAudio() {
+		const controller = audio;
+		if (!controller) return;
+		if (audioUnlocked) {
+			if (manager.isAnimating) syncAudio(manager.liveTime, true);
+			return;
+		}
+		audioUnlocked = true;
+		try {
+			Promise.resolve(controller.unlock())
+				.then((unlocked) => {
+					if (audio !== controller) return;
+					if (unlocked === false) {
+						audioUnlocked = false;
+						return;
+					}
+					if (manager.isAnimating) syncAudio(manager.liveTime, true);
+				})
+				.catch(() => {
+					if (audio === controller) audioUnlocked = false;
+				});
+		} catch {
+			audioUnlocked = false;
+		}
 	}
 
 	/** Raises the ready flag once media has settled and a couple of frames painted. */
@@ -266,6 +377,8 @@
 		if (manager.exitBusy || navigating) return;
 		if (manager.finished) {
 			if (index >= sequence.length - 1) return;
+			audioSuppressed = true;
+			stopAudio();
 			navigating = true;
 			manager.saveState(id);
 			manager.setDirection('forward');
@@ -279,23 +392,27 @@
 		if (manager.exitBusy || navigating) return;
 		if (manager.atStart) {
 			if (index <= 0) return;
+			audioSuppressed = true;
+			stopAudio();
 			navigating = true;
 			manager.saveState(id);
 			manager.setDirection('backward');
 			manager.playExit().then(() => navigateTo(sequence[index - 1].id));
 		} else {
+			stopAudio();
 			manager.prev();
 		}
 	}
 
 	function onkeydown(e: KeyboardEvent) {
+		unlockAudio();
 		if (pluginManager.handleKeydown(e)) return;
 		if (e.key === 'ArrowRight') next();
 		if (e.key === 'ArrowLeft') prev();
 	}
 </script>
 
-<svelte:window {onkeydown} />
+<svelte:window {onkeydown} onpointerdown={unlockAudio} onclick={unlockAudio} />
 
 <!-- Every letter is drawn at its true size instead of snapped to the pixel
 	grid. -->

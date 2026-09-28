@@ -1,5 +1,6 @@
 import { onMount } from 'svelte';
 import { SvelteMap } from 'svelte/reactivity';
+import { createAudioTrack, type AudioOptions, type AudioTrack } from '../audio/index.js';
 import {
 	TweenStep,
 	LayoutStep,
@@ -45,6 +46,8 @@ export interface SceneBuilder<T> {
 	readonly progress: number;
 	tween(key: keyof T, to: number, duration?: number, ease?: Easing): this;
 	tick(onTick: (frame: TickFrame) => void, duration?: number, ease?: Easing): this;
+	/** Adds a sound from a user file. A sound with a duration makes the scene wait until it finishes. */
+	sound(src: string, options?: AudioOptions): this;
 	wait(seconds?: number): this;
 	layout(change: (scene: Scene<T>) => void, duration?: number, options?: LayoutOptions): this;
 	all(fn: (scene: this) => void): this;
@@ -180,6 +183,10 @@ export function createScene<T extends Object>(initial: T = {} as T) {
 
 	const state = $state(rawInitial) as Scene<T>;
 	let steps: Step[] = [];
+	let parallelStart: number | null = null;
+	let parallelSoundEnd = 0;
+	const tracks: AudioTrack[] = [];
+	const implicitCues: boolean[] = [];
 	let holdBeforeFirstStep = 0;
 	let enterBuild: TransitionBuild | null = null;
 	let exitBuild: TransitionBuild | null = null;
@@ -238,9 +245,66 @@ export function createScene<T extends Object>(initial: T = {} as T) {
 		return smartIndent(code, indent);
 	}
 
+	/**
+	 * Sound timing follows the render timeline so sounds stay stable. The
+	 * base cursor counts holds and waits but not the enter transition.
+	 * The enter length is only known once transitions settle, so implicit
+	 * sounds store the base and gain the final enter offset on mount.
+	 */
+	function visualDuration(collection: readonly Step[]): number {
+		return collection.reduce((total, step) => total + step.duration + (step.wait ?? 0), 0);
+	}
+
+	function baseCursor(): number {
+		if (parallelStart !== null) return parallelStart;
+		return holdBeforeFirstStep + visualDuration(steps);
+	}
+
+	function currentVisualCursor(): number {
+		return baseCursor();
+	}
+
+	/**
+	 * Sounds with a duration stretch the scene to fit. Groups hold that
+	 * stretch until close so overlapping sounds share time.
+	 */
+	function ensureTime(end: number): void {
+		if (parallelStart !== null) {
+			if (end > parallelSoundEnd) parallelSoundEnd = end;
+			return;
+		}
+		const extra = end - (holdBeforeFirstStep + visualDuration(steps));
+		if (!(extra > 0)) return;
+		const last = steps.at(-1);
+		if (last) last.wait = (last.wait ?? 0) + extra;
+		else holdBeforeFirstStep += extra;
+	}
+
+	/**
+	 * Sounds placed before the enter transition start after it finishes.
+	 * The enter length is only measurable on mount, so this runs there.
+	 */
+	function moveSoundsAfterEnter(finalEnter: number): void {
+		if (finalEnter <= 0) return;
+		for (let i = 0; i < tracks.length; i++) {
+			if (implicitCues[i]) tracks[i]!.at += finalEnter;
+		}
+	}
+
+	function measureEnter(): number {
+		if (!enterBuild) return 0;
+		const probe = new TransitionBuilder({});
+		enterBuild(probe, manager.direction);
+		return Math.max(0, ...probe.getSteps().map((step) => step.duration));
+	}
+
+	function appendVisualStep(step: Step) {
+		steps.push(step);
+	}
+
 	/** Tweens state field `key` to `to` over `duration` seconds. */
 	state.tween = function (key: string, to: number, duration = 0.5, ease: Easing = easeInOut) {
-		steps.push(new TweenStep(state, key, to, duration, ease));
+		appendVisualStep(new TweenStep(state, key, to, duration, ease));
 		return this;
 	};
 
@@ -253,7 +317,34 @@ export function createScene<T extends Object>(initial: T = {} as T) {
 		duration = 0.5,
 		ease: Easing = (p) => p
 	) {
-		steps.push(new TickStep(onTick, duration, ease));
+		appendVisualStep(new TickStep(onTick, duration, ease));
+		return this;
+	};
+
+	/** Plays a sound that takes time without becoming a step. */
+	state.sound = function (src: string, options?: AudioOptions) {
+		const { delay, ...trackOptions } = options ?? {};
+		if (trackOptions.at !== undefined && delay !== undefined) {
+			throw new RangeError('at and delay cannot be used together');
+		}
+		if (delay !== undefined && (!Number.isFinite(delay) || delay < 0)) {
+			throw new RangeError('delay must be a finite nonnegative number');
+		}
+
+		let at: number;
+		let implicit = false;
+		if (trackOptions.at !== undefined) {
+			at = trackOptions.at;
+		} else {
+			at = baseCursor();
+			implicit = true;
+			if (delay !== undefined) at += delay;
+		}
+
+		const track = createAudioTrack(src, { ...trackOptions, at });
+		tracks.push(track);
+		implicitCues.push(implicit);
+		if (track.duration !== null) ensureTime(at + track.duration);
 		return this;
 	};
 
@@ -312,18 +403,44 @@ export function createScene<T extends Object>(initial: T = {} as T) {
 		duration = 0.5,
 		options: LayoutOptions = {}
 	) {
-		steps.push(new LayoutStep(state, () => change(state), duration, options));
+		appendVisualStep(new LayoutStep(state, () => change(state), duration, options));
 		return this;
 	};
 
 	/** Runs every step added inside `fn` in parallel as a single step. At most one of them may be a layout step. */
 	state.all = function (this: Scene<T>, fn: (scene: Scene<T>) => void) {
-		const saved = steps;
+		const savedSteps = steps;
+		const savedParallelStart = parallelStart;
+		const savedSoundEnd = parallelSoundEnd;
+		const groupStart = currentVisualCursor();
 		const parallelSteps: Step[] = [];
+
 		steps = parallelSteps;
-		fn(this);
-		steps = saved;
-		steps.push(new ParallelStep(parallelSteps));
+		parallelStart = groupStart;
+		parallelSoundEnd = 0;
+		try {
+			fn(this);
+		} finally {
+			steps = savedSteps;
+			parallelStart = savedParallelStart;
+		}
+		const groupNeed = parallelSoundEnd;
+		parallelSoundEnd = savedSoundEnd;
+
+		if (parallelSteps.length > 0) {
+			/**
+			 * The group already spans its longest branch, so stretch the
+			 * last one when a sound outlasts the visuals.
+			 */
+			const extra = groupNeed - (groupStart + visualDuration(parallelSteps));
+			if (extra > 0) {
+				const last = parallelSteps.at(-1)!;
+				last.wait = (last.wait ?? 0) + extra;
+			}
+			appendVisualStep(new ParallelStep(parallelSteps));
+		} else {
+			ensureTime(groupNeed);
+		}
 		return this;
 	};
 
@@ -434,7 +551,7 @@ export function createScene<T extends Object>(initial: T = {} as T) {
 	) {
 		const target = requireCodeState();
 		const lang = opts?.language ?? target.language;
-		steps.push(
+		appendVisualStep(
 			new CodeStep(
 				target,
 				() => ({
@@ -458,7 +575,7 @@ export function createScene<T extends Object>(initial: T = {} as T) {
 		ease: Easing = easeInOut
 	) {
 		const target = requireCodeState();
-		steps.push(
+		appendVisualStep(
 			new CodeStep(
 				target,
 				() => {
@@ -484,7 +601,7 @@ export function createScene<T extends Object>(initial: T = {} as T) {
 		ease: Easing = easeInOut
 	) {
 		const target = requireCodeState();
-		steps.push(
+		appendVisualStep(
 			new CodeStep(
 				target,
 				() => {
@@ -514,7 +631,7 @@ export function createScene<T extends Object>(initial: T = {} as T) {
 		ease: Easing = easeInOut
 	) {
 		const target = requireCodeState();
-		steps.push(
+		appendVisualStep(
 			new CodeStep(
 				target,
 				() => {
@@ -547,7 +664,7 @@ export function createScene<T extends Object>(initial: T = {} as T) {
 		ease: Easing = easeInOut
 	) {
 		const block = requireCodeState();
-		steps.push(
+		appendVisualStep(
 			new CodeStep(
 				block,
 				() => {
@@ -576,7 +693,7 @@ export function createScene<T extends Object>(initial: T = {} as T) {
 		ease: Easing = easeInOut
 	) {
 		const block = requireCodeState();
-		steps.push(
+		appendVisualStep(
 			new CodeStep(
 				block,
 				() => {
@@ -607,7 +724,7 @@ export function createScene<T extends Object>(initial: T = {} as T) {
 	state.codeEdit = function (this: Scene<T>, duration = 0.6) {
 		const target = requireCodeState();
 		return (strings: TemplateStringsArray, ...tags: (string | RawCodeFragment)[]) => {
-			steps.push(
+			appendVisualStep(
 				new CodeStep(
 					target,
 					() => {
@@ -632,7 +749,7 @@ export function createScene<T extends Object>(initial: T = {} as T) {
 		range: CodeRange | CodeRange[] | RangeResolver | string | typeof DEFAULT = DEFAULT,
 		duration = 0.6
 	) {
-		steps.push(new SelectionStep(requireCodeState(), range, duration));
+		appendVisualStep(new SelectionStep(requireCodeState(), range, duration));
 		return this;
 	};
 
@@ -642,7 +759,7 @@ export function createScene<T extends Object>(initial: T = {} as T) {
 	 * wherever it actually sits at that point in the timeline.
 	 */
 	state.frame = function (target: CameraTarget = {}, options: CameraOptions = {}) {
-		steps.push(new CameraStep(state.camera as Camera, target, options));
+		appendVisualStep(new CameraStep(state.camera as Camera, target, options));
 		return this;
 	};
 
@@ -653,8 +770,10 @@ export function createScene<T extends Object>(initial: T = {} as T) {
 	}
 
 	onMount(() => {
+		moveSoundsAfterEnter(measureEnter());
 		manager.load({
 			steps,
+			tracks,
 			holdBeforeFirstStep,
 			enterBuild,
 			exitBuild,

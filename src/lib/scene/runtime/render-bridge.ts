@@ -1,6 +1,7 @@
 import type { SceneManager } from './runtime.svelte';
 import type { RenderScheduler } from './scheduler';
 import type { RenderOptions } from '../options.js';
+import type { AudioTrack } from '../audio/tracks.js';
 
 /**
  * Bridge exposed to the renderer as `window.__sequenceRenderer`. Exists only
@@ -10,6 +11,7 @@ export interface RenderBridge {
 	manager: SceneManager;
 	scheduler: RenderScheduler;
 	scenes: string[];
+	tracks: readonly AudioTrack[];
 	renderOptions: RenderOptions;
 	/**
 	 * Resolves when the mounted scene is safe to photograph, meaning images

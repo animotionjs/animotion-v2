@@ -116,6 +116,71 @@ function stepsAfter(configure: (scene: SceneBuilder<Record<string, unknown>>) =>
 	return { steps, holdBeforeFirstStep, manager };
 }
 
+/** Mounts a scene through the real `manager.load` so timing can be asserted. */
+function mountReal(configure: (scene: SceneBuilder<{ x: number }>) => void) {
+	const manager = setupManager();
+	const mount = vi.fn<(fn: () => void) => void>();
+	vi.mocked(onMount).mockImplementation((fn: () => void) => mount(fn));
+	const scene = createScene({ x: 0 });
+	configure(scene);
+	mount.mock.calls[0]?.[0]?.();
+	return manager;
+}
+
+describe('createScene sound hold', () => {
+	it('holds the intro for a bare bounded sound', () => {
+		const manager = mountReal((s) => {
+			s.sound('a.mp3', { duration: 2 });
+		});
+		expect(manager.timeline.totalDuration).toBe(2);
+		expect(manager.tracks.map((t) => t.at)).toEqual([0]);
+	});
+
+	it('plays bounded sounds in order', () => {
+		const manager = mountReal((s) => {
+			s.sound('a.mp3', { duration: 1 });
+			s.sound('b.mp3', { duration: 1 });
+		});
+		expect(manager.timeline.totalDuration).toBe(2);
+		expect(manager.tracks.map((t) => t.at)).toEqual([0, 1]);
+	});
+
+	it('starts the next visual after the cue ends', () => {
+		const manager = mountReal((s) => {
+			s.sound('a.mp3', { duration: 1.5 });
+			s.tween('x', 1, 1);
+		});
+		expect(manager.timeline.totalDuration).toBe(2.5);
+	});
+
+	it('adds no time for cues layered with at', () => {
+		const manager = mountReal((s) => {
+			s.tween('x', 1, 2);
+			s.sound('bed.mp3', { at: 0, loop: true });
+			s.sound('sting.mp3', { at: 0.5, duration: 1 });
+		});
+		expect(manager.timeline.totalDuration).toBe(2);
+	});
+
+	it('shares time inside all instead of stacking it', () => {
+		const manager = mountReal((s) => {
+			s.all((g) => {
+				g.sound('a.mp3', { duration: 1.5 });
+				g.tween('x', 1, 1);
+			});
+		});
+		expect(manager.timeline.totalDuration).toBe(1.5);
+	});
+
+	it('pins unbounded sounds without holding time', () => {
+		const manager = mountReal((s) => {
+			s.sound('a.mp3');
+			s.tween('x', 1, 1);
+		});
+		expect(manager.timeline.totalDuration).toBe(1);
+	});
+});
+
 describe('createScene camera', () => {
 	it('merges the initial overrides over the defaults', () => {
 		setupManager();

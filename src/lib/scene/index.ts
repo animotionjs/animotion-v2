@@ -44,6 +44,7 @@ export {
 	setSceneId
 } from './runtime/context.svelte.js';
 export { SceneManager } from './runtime/runtime.svelte.js';
+export type { AudioTrack, AudioOptions } from './audio/tracks.js';
 export { createSequence } from './runtime/sequence.js';
 export type { SceneEntry, Sequence } from './runtime/sequence.js';
 export { TickStep, type TickFrame } from './runtime/steps.js';

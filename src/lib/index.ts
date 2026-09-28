@@ -1,4 +1,5 @@
 export { createSequence } from './scene/runtime/sequence.js';
+export type { AudioTrack, AudioOptions } from './scene/audio/tracks.js';
 export { configure, highlight, whenReady } from './scene/code/highlighter.js';
 export { getOptions, setOptions } from './scene/options.js';
 export { TransitionBuilder, SceneManager } from './scene/runtime/runtime.svelte.js';

@@ -3,9 +3,16 @@ import { SvelteMap, SvelteSet } from 'svelte/reactivity';
 import { TweenStep, ParallelStep, type Step } from './steps';
 import { RealTimeScheduler, RenderScheduler, type FrameScheduler } from './scheduler';
 import { clamp, easeInOut, type Easing } from '../easing';
+import type { AudioTrack } from '../audio/tracks.js';
+
+// tolerance for comparing cue boundaries against the scene length
+const TIME_COMPARE_EPSILON_SECONDS = 1e-9;
 
 /** Which way the user is moving through the presentation. */
 export type Direction = 'forward' | 'backward';
+
+type PlaybackListener = (time: number, playing: boolean) => void;
+type LoadListener = () => void;
 
 /** Timing of one step on the video timeline covering its animation and wait tail. */
 export interface TimelineStep {
@@ -127,6 +134,7 @@ export class SceneManager {
 	 */
 	#loadVersion = $state(0);
 	#steps: Step[] = [];
+	#tracks: readonly AudioTrack[] = [];
 	#elapsed = 0;
 	#stepProgress = $state(0);
 	#stepCompleted = $state(false);
@@ -152,6 +160,11 @@ export class SceneManager {
 	#firstLoad = true;
 
 	#stepChangeListeners = new SvelteSet<(step: number, total: number) => void>();
+	#playbackListeners = new SvelteSet<PlaybackListener>();
+	#loadListeners = new SvelteSet<LoadListener>();
+	#activeTransition: 'enter' | 'exit' | null = null;
+	#transitionSeekTime: number | null = null;
+	#liveTimeOffset = 0;
 
 	/** Subscribes to step changes; returns an unsubscribe function. */
 	onStepChange(listener: (step: number, total: number) => void) {
@@ -159,10 +172,33 @@ export class SceneManager {
 		return () => this.#stepChangeListeners.delete(listener);
 	}
 
+	/** Subscribes to live playback updates; returns an unsubscribe function. */
+	onPlaybackChange(listener: PlaybackListener) {
+		this.#playbackListeners.add(listener);
+		return () => this.#playbackListeners.delete(listener);
+	}
+
+	/** Subscribes to scene loads; returns an unsubscribe function. */
+	onLoad(listener: LoadListener) {
+		this.#loadListeners.add(listener);
+		return () => this.#loadListeners.delete(listener);
+	}
+
 	#emitStepChange() {
 		for (const listener of this.#stepChangeListeners) {
 			listener(this.currentStep, this.#totalSteps);
 		}
+	}
+
+	#emitLoad() {
+		for (const listener of this.#loadListeners) listener();
+	}
+
+	#emitPlaybackChange() {
+		if (this.#playbackListeners.size === 0) return;
+		const time = this.liveTime;
+		const playing = this.isAnimating;
+		for (const listener of this.#playbackListeners) listener(time, playing);
 	}
 
 	/** Whether all steps have completed. */
@@ -193,6 +229,11 @@ export class SceneManager {
 		return this.#totalSteps;
 	}
 
+	/** Imported audio tracks loaded with the current scene. */
+	get tracks(): readonly AudioTrack[] {
+		return this.#tracks;
+	}
+
 	/** Whether the current step's animation has fully played. */
 	get stepCompleted() {
 		return this.#stepCompleted;
@@ -201,6 +242,95 @@ export class SceneManager {
 	/** Whether the current step's animation is playing. */
 	get playing() {
 		return this.#phase === 'tweening';
+	}
+
+	/**
+	 * Live audio position skips waits the same way the live player does,
+	 * unless the scene has sounds. Then waits and the start hold play
+	 * out live too so sounds land on the same visuals as the render.
+	 */
+	get liveTime() {
+		const duration = this.#liveDuration();
+		if (this.#activeTransition === 'enter') {
+			return clamp(this.#liveTimeOffset + this.#transitionElapsed, 0, duration);
+		}
+		if (this.#transitionSeekTime !== null) {
+			return clamp(this.#transitionSeekTime, 0, duration);
+		}
+		if (this.#renderMode) return this.#renderTime();
+		return clamp(this.#liveTimeOffset + this.#stepTime(), 0, duration);
+	}
+
+	/** Alias for callers that describe the live clock as playback time. */
+	get playbackTime() {
+		return this.liveTime;
+	}
+
+	#stepTime() {
+		const steps = this.#steps;
+		if (steps.length === 0) return 0;
+
+		if (this.#tracks.length === 0) {
+			let time = 0;
+			const index = clamp(this.#stepIndex, 0, steps.length - 1);
+			for (let i = 0; i < index; i++) time += this.#stepDuration(steps[i]);
+
+			const step = steps[index];
+			if (!step) return time;
+			if (this.#phase === 'finished' || this.#stepCompleted) {
+				return time + this.#stepDuration(step);
+			}
+			return time + clamp(this.#elapsed, 0, this.#stepDuration(step));
+		}
+
+		let time = 0;
+		const index = clamp(this.#stepIndex, 0, steps.length - 1);
+		for (let i = 0; i < index; i++) {
+			const prev = steps[i];
+			if (!prev) continue;
+			time +=
+				(i === 0 ? this.#holdBeforeFirstStep : 0) + this.#stepDuration(prev) + (prev.wait ?? 0);
+		}
+		const step = steps[index];
+		if (!step) return time;
+		const segment =
+			(index === 0 ? this.#holdBeforeFirstStep : 0) + this.#stepDuration(step) + (step.wait ?? 0);
+		if (this.#phase === 'finished' || this.#stepCompleted) {
+			return time + segment;
+		}
+		return time + clamp(this.#elapsed, 0, segment);
+	}
+
+	#liveDuration() {
+		if (this.#tracks.length > 0) return this.timeline.totalDuration;
+		let duration = this.#enterDuration();
+		for (const step of this.#steps) duration += this.#stepDuration(step);
+		return duration;
+	}
+
+	#stepDuration(step: Step | undefined) {
+		if (!step || !Number.isFinite(step.duration)) return 0;
+		return Math.max(0, step.duration);
+	}
+
+	#renderTime() {
+		const timeline = this.timeline;
+		if (this.#activeTransition === 'enter') {
+			return clamp(this.#transitionElapsed, 0, timeline.enterDuration);
+		}
+		if (timeline.totalDuration <= 0) return 0;
+		if (this.#phase === 'finished') return timeline.totalDuration;
+
+		const segments = timelineSegments(timeline).filter((segment) => !segment.enter);
+		if (segments.length === 0) return timeline.enterDuration;
+		const index = clamp(this.#stepIndex, 0, segments.length - 1);
+		const segment = segments[index];
+		if (!segment) return timeline.enterDuration;
+		if (this.#stepCompleted) {
+			return segment.start + segment.hold + segment.duration + segment.wait;
+		}
+		const local = clamp(this.#elapsed, 0, segment.hold + segment.duration + segment.wait);
+		return clamp(segment.start + local, 0, timeline.totalDuration);
 	}
 
 	/** Whether the scene is at its first step with nothing played yet. */
@@ -350,7 +480,7 @@ export class SceneManager {
 			.slice(0, count)
 			.map((step) => ({ duration: step.duration, wait: step.wait ?? 0 }));
 		const enterDuration = this.#enterDuration();
-		const introHold = steps.length > 0 ? this.#holdBeforeFirstStep : 0;
+		const introHold = steps.length > 0 || this.#tracks.length > 0 ? this.#holdBeforeFirstStep : 0;
 		const body = steps.reduce((sum, step) => sum + step.duration + step.wait, 0);
 		return {
 			enterDuration,
@@ -396,10 +526,12 @@ export class SceneManager {
 			this.#stepProgress = 1;
 			this.#emitStepChange();
 			this.#resetTransitionState();
+			this.#emitPlaybackChange();
 			return;
 		}
 
 		const time = Math.max(0, seconds);
+		this.#transitionSeekTime = null;
 		const timeline = this.timeline;
 		const { enterDuration } = timeline;
 
@@ -422,13 +554,16 @@ export class SceneManager {
 			restAtStart();
 			this.#resetTransitionState();
 			this.#emitStepChange();
+			this.#emitPlaybackChange();
 			return;
 		}
 
 		if (time < enterDuration) {
 			restAtStart();
 			this.#applyTransitionAt(time / enterDuration);
+			this.#transitionSeekTime = time;
 			this.#emitStepChange();
+			this.#emitPlaybackChange();
 			return;
 		}
 
@@ -436,6 +571,7 @@ export class SceneManager {
 		if (time >= total) {
 			this.#positionTo(steps.length, false, true);
 			this.#resetTransitionState();
+			this.#emitPlaybackChange();
 			return;
 		}
 
@@ -482,6 +618,7 @@ export class SceneManager {
 		this.#phase = 'paused';
 		this.#resetTransitionState();
 		this.#emitStepChange();
+		this.#emitPlaybackChange();
 	}
 
 	/** Freezes the enter transition at `progress` (0..1) without ending it. */
@@ -503,12 +640,14 @@ export class SceneManager {
 	 */
 	load({
 		steps,
+		tracks = [],
 		id,
 		holdBeforeFirstStep = 0,
 		enterBuild,
 		exitBuild
 	}: {
 		steps: Step[];
+		tracks?: readonly AudioTrack[];
 		id?: string;
 		/** Seconds to keep the first frame up before the first step starts. */
 		holdBeforeFirstStep?: number;
@@ -516,6 +655,7 @@ export class SceneManager {
 		exitBuild?: TransitionBuild | null;
 	}) {
 		this.#softClear();
+		this.#tracks = tracks;
 		this.#holdBeforeFirstStep = holdBeforeFirstStep;
 
 		if (enterBuild) this.#enterBuild = enterBuild;
@@ -525,6 +665,34 @@ export class SceneManager {
 
 		this.#steps = steps;
 		this.#totalSteps = steps.length;
+
+		const visualDuration = this.timeline.totalDuration;
+		for (const track of this.#tracks) {
+			if (track.duration !== null) {
+				const trackEnd = track.at + track.duration;
+				if (trackEnd - visualDuration > TIME_COMPARE_EPSILON_SECONDS) {
+					throw new RangeError(
+						`Audio ends at ${trackEnd.toFixed(2)}s, but the scene ends at ${visualDuration.toFixed(2)}s. Reduce duration or add visual time.`
+					);
+				}
+			} else if (!track.loop && track.at - visualDuration > TIME_COMPARE_EPSILON_SECONDS) {
+				throw new RangeError(
+					`Audio starts at ${track.at.toFixed(2)}s, but the scene ends at ${visualDuration.toFixed(2)}s.`
+				);
+			}
+			// open cues only know their window once the scene loads, so
+			// overlapping fades are caught here instead of at creation
+			const playLength =
+				track.duration !== null ? track.duration : Math.max(0, visualDuration - track.at);
+			if (
+				playLength > 0 &&
+				track.fadeIn + track.fadeOut - playLength > TIME_COMPARE_EPSILON_SECONDS
+			) {
+				throw new RangeError(
+					`Audio fades of ${track.fadeIn.toFixed(2)}s and ${track.fadeOut.toFixed(2)}s overlap in a ${playLength.toFixed(2)}s cue. Shorten a fade or bound the cue with duration.`
+				);
+			}
+		}
 
 		if (steps.length === 0) {
 			this.#phase = 'finished';
@@ -577,6 +745,7 @@ export class SceneManager {
 
 		this.#emitStepChange();
 		this.#loadVersion++;
+		this.#emitLoad();
 
 		/*
 		 * The enter transition plays when navigating between scenes. On the
@@ -588,7 +757,9 @@ export class SceneManager {
 		if (this.#enterBuild && (this.#renderMode || !this.#firstLoad)) {
 			this.playEnter();
 		} else {
+			this.#liveTimeOffset = this.#tracks.length > 0 ? this.#enterDuration() : 0;
 			this.#resetTransitionState();
+			this.#emitPlaybackChange();
 		}
 		this.#firstLoad = false;
 	}
@@ -598,9 +769,14 @@ export class SceneManager {
 		this.#stopTransitionLoop();
 		this.#currentStep()?.end();
 		this.#steps = [];
+		this.#tracks = [];
 		this.#enterBuild = null;
 		this.#exitBuild = null;
 		this.#exitBusy = false;
+		this.#activeTransition = null;
+		this.#transitionSeekTime = null;
+		this.#liveTimeOffset = 0;
+		this.#transitionElapsed = 0;
 		this.#phase = 'finished';
 		this.#stepIndex = 0;
 		this.#totalSteps = 0;
@@ -629,6 +805,7 @@ export class SceneManager {
 	seek(stepIndex: number, stepCompleted = false, finished = false) {
 		this.#stopLoop();
 		this.#stopTransitionLoop();
+		this.#transitionSeekTime = null;
 		this.#currentStep()?.end();
 
 		const steps = this.#steps;
@@ -639,6 +816,7 @@ export class SceneManager {
 			this.#stepProgress = 1;
 			this.#emitStepChange();
 			this.#resetTransitionState();
+			this.#emitPlaybackChange();
 			return;
 		}
 
@@ -654,6 +832,7 @@ export class SceneManager {
 
 		this.#positionTo(target, stepCompleted, finished);
 		this.#resetTransitionState();
+		this.#emitPlaybackChange();
 	}
 
 	/** Reverts every started step and flushes, so replays measure a pristine DOM. */
@@ -726,6 +905,7 @@ export class SceneManager {
 	clear() {
 		this.#softClear();
 		this.#resetTransitionState();
+		this.#emitPlaybackChange();
 	}
 
 	/**
@@ -734,7 +914,7 @@ export class SceneManager {
 	 * matching a scrubbed playhead inside the enter segment.
 	 */
 	playEnter(fromProgress = 0) {
-		return this.#playTransition(this.#enterBuild, fromProgress);
+		return this.#playTransition(this.#enterBuild, fromProgress, 'enter');
 	}
 
 	/**
@@ -745,7 +925,7 @@ export class SceneManager {
 	 * `playExit`.
 	 */
 	playExit() {
-		const promise = this.#playTransition(this.#exitBuild);
+		const promise = this.#playTransition(this.#exitBuild, 0, 'exit');
 		this.#exitBusy = true;
 		promise.then(() => {
 			this.#exitBusy = false;
@@ -755,16 +935,18 @@ export class SceneManager {
 
 	#resetTransitionState() {
 		this.#stopTransitionLoop();
+		this.#transitionSeekTime = null;
 		this.#transitionState.opacity = 1;
 		this.#transitionState.x = 0;
 		this.#transitionState.y = 0;
 		this.#transitionState.scale = 1;
 	}
 
-	#playTransition(buildFn: TransitionBuild | null, startProgress = 0) {
+	#playTransition(buildFn: TransitionBuild | null, startProgress = 0, kind: 'enter' | 'exit') {
 		return new Promise<void>((resolve) => {
 			if (!buildFn) {
 				this.#resetTransitionState();
+				this.#emitPlaybackChange();
 				resolve();
 				return;
 			}
@@ -776,12 +958,23 @@ export class SceneManager {
 			const steps = builder.getSteps();
 
 			if (steps.length === 0) {
+				this.#emitPlaybackChange();
 				resolve();
 				return;
 			}
 
-			const composite = steps.length === 1 ? steps[0] : new ParallelStep(steps);
-			this.#playStep(composite, resolve, startProgress * composite.duration);
+			const composite = steps.length === 1 ? steps[0]! : new ParallelStep(steps);
+			const complete = () => {
+				this.#activeTransition = null;
+				this.#transitionSeekTime = null;
+				if (kind === 'enter') this.#liveTimeOffset = composite.duration;
+				resolve();
+				this.#emitPlaybackChange();
+			};
+			this.#playStep(composite, complete, startProgress * composite.duration);
+			this.#activeTransition = kind;
+			if (kind === 'enter') this.#liveTimeOffset = 0;
+			this.#emitPlaybackChange();
 		});
 	}
 
@@ -790,7 +983,9 @@ export class SceneManager {
 		step.start();
 		this.#transitionElapsed = startElapsed;
 		this.#transitionLastFrame = this.#scheduler.now();
-		if (startElapsed > 0) step.setProgress(Math.min(startElapsed / step.duration, 1));
+		if (startElapsed > 0 && step.duration > 0) {
+			step.setProgress(Math.min(startElapsed / step.duration, 1));
+		}
 
 		let done = false;
 		const complete = () => {
@@ -813,9 +1008,10 @@ export class SceneManager {
 			this.#transitionLastFrame = now;
 
 			this.#transitionElapsed += delta;
-			const progress = this.#transitionElapsed / step.duration;
+			const progress = step.duration > 0 ? this.#transitionElapsed / step.duration : 1;
 			step.setProgress(progress);
 			if (this.#renderMode) flushSync();
+			this.#emitPlaybackChange();
 
 			if (progress >= 1) {
 				complete();
@@ -871,6 +1067,8 @@ export class SceneManager {
 			this.#scheduler.cancel(this.#transitionRafId);
 			this.#transitionRafId = null;
 		}
+		this.#activeTransition = null;
+		this.#transitionSeekTime = null;
 	}
 
 	/**
@@ -879,16 +1077,19 @@ export class SceneManager {
 	 * a step change so the playing state propagates.
 	 */
 	play() {
+		this.#transitionSeekTime = null;
 		if (this.#needsStart) {
 			this.#needsStart = false;
 			this.#enterStep(this.#stepIndex);
 		}
 		this.#playCurrent();
+		this.#emitPlaybackChange();
 	}
 
 	/** Advances to the next step, or fast-forwards the current tween. */
 	next() {
 		if (this.#phase === 'finished') return;
+		this.#transitionSeekTime = null;
 
 		if (this.#phase === 'tweening') {
 			this.#stopLoop();
@@ -897,10 +1098,7 @@ export class SceneManager {
 			this.#stepCompleted = false;
 			this.#advance();
 			this.#playCurrent();
-			return;
-		}
-
-		if (this.#stepCompleted) {
+		} else if (this.#stepCompleted) {
 			this.#stepCompleted = false;
 			this.#advance();
 			this.#playCurrent();
@@ -911,11 +1109,13 @@ export class SceneManager {
 			}
 			this.#playCurrent();
 		}
+		this.#emitPlaybackChange();
 	}
 
 	/** Returns to the previous step, or rewinds the current one. */
 	prev() {
 		this.#stopLoop();
+		this.#transitionSeekTime = null;
 		this.#needsStart = true;
 
 		if (this.#stepIndex >= this.#steps.length) {
@@ -925,6 +1125,7 @@ export class SceneManager {
 			this.#stepProgress = 1;
 			this.#phase = 'paused';
 			this.#emitStepChange();
+			this.#emitPlaybackChange();
 			return;
 		}
 
@@ -935,6 +1136,7 @@ export class SceneManager {
 			this.#stepProgress = 0;
 			this.#phase = 'paused';
 			this.#emitStepChange();
+			this.#emitPlaybackChange();
 			return;
 		}
 
@@ -943,18 +1145,23 @@ export class SceneManager {
 		this.#stepProgress = 1;
 		this.#phase = 'paused';
 		this.#emitStepChange();
+		this.#emitPlaybackChange();
 	}
 
 	#currentStep() {
 		return this.#steps[this.#stepIndex];
 	}
 	/**
-	 * Total seconds spent on `step`: its animation plus any waits after it.
-	 * Live playback only spends the animation duration on each step.
+	 * Total seconds spent on `step`, its animation plus any waits after it.
+	 * Live playback only spends the animation duration on each step, unless
+	 * the scene has sounds. Then waits and the start hold play out so
+	 * sounds stay aligned with the render.
 	 */
 	#totalFor(step: Step) {
-		const before = this.#renderMode && this.#stepIndex === 0 ? this.#holdBeforeFirstStep : 0;
-		const after = this.#renderMode ? (step.wait ?? 0) : 0;
+		const audio = this.#tracks.length > 0;
+		const before =
+			(this.#renderMode || audio) && this.#stepIndex === 0 ? this.#holdBeforeFirstStep : 0;
+		const after = this.#renderMode || audio ? (step.wait ?? 0) : 0;
 		return step.duration + before + after;
 	}
 
@@ -1011,8 +1218,12 @@ export class SceneManager {
 		this.#phase = 'tweening';
 		this.#lastFrame = this.#scheduler.now();
 		this.#emitStepChange();
+		this.#emitPlaybackChange();
 
-		const before = this.#renderMode && this.#stepIndex === 0 ? this.#holdBeforeFirstStep : 0;
+		const before =
+			(this.#renderMode || this.#tracks.length > 0) && this.#stepIndex === 0
+				? this.#holdBeforeFirstStep
+				: 0;
 		const total = this.#totalFor(step);
 
 		const frame = (now: number) => {
@@ -1025,6 +1236,7 @@ export class SceneManager {
 			this.#stepProgress = progress;
 			step.setProgress(progress);
 			if (this.#renderMode) flushSync();
+			this.#emitPlaybackChange();
 
 			if (this.#elapsed >= total) {
 				this.#completeStepTween(step);
@@ -1072,6 +1284,7 @@ export class SceneManager {
 			this.#phase = 'paused';
 		}
 		this.#emitStepChange();
+		this.#emitPlaybackChange();
 	}
 
 	#clearStepStall() {

@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { SceneManager, type TransitionBuild } from './runtime.svelte';
 import { ParallelStep, TickStep, TweenStep, type Step, type TickFrame } from './steps';
+import { createAudioTrack } from '../audio/tracks.js';
 
 class SpyStep implements Step {
 	starts = 0;
@@ -118,6 +119,70 @@ describe('SceneManager + waits', () => {
 
 		manager.advanceFrame(0.5);
 		expect(manager.finished).toBe(true);
+	});
+});
+
+describe('SceneManager audio clock', () => {
+	it('starts at the enter length on first load when the scene has sound', () => {
+		const manager = new SceneManager();
+		const state = { x: 0 };
+		const enter: TransitionBuild = (b) => {
+			b.tween('opacity', 1, 0.5);
+		};
+		manager.load({
+			steps: [new TweenStep(state, 'x', 1, 1)],
+			tracks: [createAudioTrack('a.mp3', { at: 0.5 })],
+			enterBuild: enter
+		});
+		expect(manager.timeline.enterDuration).toBeCloseTo(0.5);
+		expect(manager.liveTime).toBeCloseTo(0.5);
+	});
+
+	it('stays at zero on first load without sound', () => {
+		const manager = new SceneManager();
+		const state = { x: 0 };
+		const enter: TransitionBuild = (b) => {
+			b.tween('opacity', 1, 0.5);
+		};
+		manager.load({ steps: [new TweenStep(state, 'x', 1, 1)], enterBuild: enter });
+		expect(manager.liveTime).toBe(0);
+	});
+
+	it('plays waits live when the scene has sound', () => {
+		vi.stubGlobal(
+			'requestAnimationFrame',
+			vi.fn(() => 1)
+		);
+		vi.stubGlobal('cancelAnimationFrame', vi.fn());
+		try {
+			const withAudio = new SceneManager();
+			const sounding: Step = new TickStep(() => {}, 0);
+			sounding.wait = 10;
+			withAudio.load({ steps: [sounding], tracks: [createAudioTrack('a.mp3', { at: 0 })] });
+			withAudio.next();
+			expect(withAudio.finished).toBe(false);
+			withAudio.clear();
+
+			const silent = new SceneManager();
+			const beat: Step = new TickStep(() => {}, 0);
+			beat.wait = 10;
+			silent.load({ steps: [beat] });
+			silent.next();
+			expect(silent.finished).toBe(true);
+		} finally {
+			vi.unstubAllGlobals();
+		}
+	});
+
+	it('rejects overlapping fades on open cues', () => {
+		const manager = new SceneManager();
+		const state = { x: 0 };
+		expect(() =>
+			manager.load({
+				steps: [new TweenStep(state, 'x', 1, 2)],
+				tracks: [createAudioTrack('a.mp3', { fadeIn: 1.5, fadeOut: 1 })]
+			})
+		).toThrow(RangeError);
 	});
 });
 

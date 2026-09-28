@@ -32,7 +32,7 @@ A presentation is an ordered `sequence` of scenes. Each scene is a component tha
 </div>
 ```
 
-The library provides the player shell (`Scene`), the animation engine (`createScene`, `SceneManager`, step types), a code component (`Code`) that morphs between source states, a camera component (`Camera`) for flying across an oversized canvas, and a plugin system (`PluginManager`, `fullscreenPlugin`).
+The library provides the player shell (`Scene`), the animation engine (`createScene`, `SceneManager`, step types), sound playback from user files, a code component (`Code`) that morphs between source states, a camera component (`Camera`) for flying across an oversized canvas, and a plugin system (`PluginManager`, `fullscreenPlugin`).
 
 Scenes live in `src/projects/<slug>/scenes/`, the bundled example in `src/projects/example/scenes/`. A scene is either a file (`04-code.svelte`) or a folder containing a `scene.svelte` component (`04-code/scene.svelte`), so you can colocate assets and helper components with the scene. Each scene must be prefixed with a number that sets its order in the sequence: `01-intro.svelte` plays before `02-about.svelte`. The rest of the name becomes the scene id (`intro`). The sequence is built automatically by `src/lib/config/scenes.ts`.
 
@@ -225,7 +225,7 @@ The `<Code />` component accepts a few props:
 
 ## Other steps
 
-- `wait(seconds = 1)`: keeps the previous step's finished frame on screen for `seconds` longer, so the viewer has time to read. Waits aren't steps: they don't count toward `scene.step` or `totalSteps`, and the live player skips them. They only show up in rendered video. A wait before anything else keeps the first frame up until the first step starts.
+- `wait(seconds = 1)`: holds the previous step's finished frame up longer, so the viewer has time to read. Waits aren't steps and don't count toward `scene.step` or `totalSteps`. The live player skips them unless the scene has sound. Then they play out so the preview matches the render. A wait before anything else holds the first frame.
 
 ```svelte
 <script lang="ts">
@@ -280,6 +280,39 @@ The `<Code />` component accepts a few props:
 	});
 </script>
 ```
+
+## Audio
+
+Scenes play user files through `.sound(src)`. Import audio with `?url` and pass the URL:
+
+```svelte
+<script lang="ts">
+	import { createScene } from '#lib/scene';
+	import soundUrl from './sound.mp3?url';
+
+	const scene = createScene({ opacity: 0 }).all((s) => {
+		s.sound(soundUrl, { duration: 1.5 });
+		s.tween('opacity', 1, 0.6);
+	});
+</script>
+```
+
+The sound plays while the fade runs.
+
+Outside `.all()`, calls take turns: a sound with a `duration` makes the scene wait until it finishes. One without takes no time, so the scene moves straight on.
+
+Layer music under everything with `at`, which starts a sound at absolute seconds without moving the cursor:
+
+```svelte
+const scene = createScene({ opacity: 0 })
+	.sound(musicUrl, { at: 0, loop: true, volume: 0.3 })
+	.sound(soundUrl, { duration: 1.5 })
+	.tween('opacity', 1, 0.6);
+```
+
+`sound(src)` accepts `delay`, `at`, `volume`, `rate`, `loop`, `trimStart`, `duration`, `fadeIn` and `fadeOut`. `delay` and `at` cannot be combined.
+
+A sound without a `duration` has to start before the scene ends.
 
 ## Reading timeline progress
 
