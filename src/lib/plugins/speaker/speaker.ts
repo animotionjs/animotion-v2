@@ -1,5 +1,4 @@
 import { getOptions } from '../../scene/options.js';
-import { getSceneManager } from '../../scene/runtime/context.svelte.js';
 import {
 	SPEAKER_SESSION,
 	SpeakerSession,
@@ -50,7 +49,6 @@ export function speakerPlugin(options: SpeakerPluginOptions = {}): Plugin {
 	let lastPayload = '';
 	let pendingSceneId = '';
 	let notesRefresh: ReturnType<typeof setTimeout> | undefined = undefined;
-	let manager: ReturnType<typeof getSceneManager> | null = null;
 
 	function buildState(): SpeakerState {
 		const { aspectRatio } = getOptions();
@@ -65,10 +63,13 @@ export function speakerPlugin(options: SpeakerPluginOptions = {}): Plugin {
 			finished: ctx?.state.finished ?? false,
 			aspectRatio: { width: aspectRatio.width, height: aspectRatio.height },
 			scenes,
-			// the presentation window renders the active scene, so its hidden `[data-notes]` box holds the notes
+			/*
+				The active stage marks itself, since a scene on its way out is
+				still mounted and its notes must not win the lookup.
+			*/
 			notes:
 				typeof document !== 'undefined'
-					? (document.querySelector('[data-notes]')?.innerHTML ?? '')
+					? (document.querySelector('[data-active] [data-notes]')?.innerHTML ?? '')
 					: ''
 		};
 	}
@@ -84,10 +85,10 @@ export function speakerPlugin(options: SpeakerPluginOptions = {}): Plugin {
 	}
 
 	/**
-	 * Re-broadcasts shortly after a scene change. The change fires before the
-	 * new scene's `[data-notes]` box mounts, so a synchronous broadcast would
-	 * forward the previous scene's notes. Waiting lets the mounted scene's
-	 * notes win out.
+	 * Re-broadcasts shortly after a scene change. The change is announced
+	 * once the new scene has loaded, so its notes box is normally mounted
+	 * already. The short wait stays as a safety net for notes that render
+	 * or flush slightly later.
 	 */
 	function scheduleNotesRefresh() {
 		if (typeof window === 'undefined') return;
@@ -143,8 +144,7 @@ export function speakerPlugin(options: SpeakerPluginOptions = {}): Plugin {
 			*/
 			if (state.sceneId !== pendingSceneId) {
 				pendingSceneId = state.sceneId;
-				manager?.setStepState(state.sceneId, stepIndex, state.stepCompleted);
-				ctx.navigateTo(state.sceneId);
+				ctx.navigateTo(state.sceneId, { index: stepIndex, completed: state.stepCompleted });
 			}
 		} else {
 			pendingSceneId = '';
@@ -153,12 +153,12 @@ export function speakerPlugin(options: SpeakerPluginOptions = {}): Plugin {
 				state.stepCompleted === ctx.state.stepCompleted &&
 				state.finished === ctx.state.finished;
 			if (!position) {
-				manager?.seek(stepIndex, state.stepCompleted, state.finished);
+				ctx.manager.seek(stepIndex, state.stepCompleted, state.finished);
 				// play in place, both run the same presentation so both finish at about the same time
-				if (state.playing) manager?.play();
+				if (state.playing) ctx.manager.play();
 			} else if (state.playing && !ctx.state.playing) {
 				// play in place without seeking, re-seeking would rebuild DOM-driven steps and lose their animation
-				manager?.play();
+				ctx.manager.play();
 			}
 		}
 	}
@@ -170,7 +170,6 @@ export function speakerPlugin(options: SpeakerPluginOptions = {}): Plugin {
 			channel?.close();
 			ctx = pluginCtx;
 			scenes = pluginCtx.sequence.map(({ id }) => ({ id }));
-			if (embed) manager = getSceneManager();
 			if (typeof BroadcastChannel !== 'undefined') {
 				channel = new SpeakerSession(sessionName);
 				channel.onmessage = handleMessage;

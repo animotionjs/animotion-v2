@@ -3,11 +3,11 @@ import { speakerPlugin } from './speaker';
 import type { SpeakerMessage, SpeakerState } from './session';
 import type { PluginContext } from '../types';
 
-vi.mock('../../scene/runtime/context.svelte.js', () => ({
-	getSceneManager: vi.fn()
-}));
-
-import { getSceneManager } from '../../scene/runtime/context.svelte.js';
+class FakeManager {
+	setStepState = vi.fn();
+	seek = vi.fn();
+	play = vi.fn();
+}
 
 class FakeBroadcastChannel {
 	static instances: FakeBroadcastChannel[] = [];
@@ -40,7 +40,7 @@ function lastState(channel: FakeBroadcastChannel): SpeakerState {
 	return (message as { type: 'state'; state: SpeakerState }).state;
 }
 
-function createContext(): PluginContext {
+function createContext(manager = new FakeManager() as never): PluginContext {
 	const sequence = [
 		{
 			id: 'intro',
@@ -69,7 +69,7 @@ function createContext(): PluginContext {
 		finished: false
 	};
 
-	return { state, sequence, navigateTo, next, prev };
+	return { state, sequence, manager, navigateTo, next, prev };
 }
 
 function channel(): FakeBroadcastChannel {
@@ -235,28 +235,17 @@ describe('speakerPlugin', () => {
 	});
 
 	describe('embed mode', () => {
-		class FakeManager {
-			setStepState = vi.fn();
-			seek = vi.fn();
-			play = vi.fn();
-		}
-
 		function setupEmbed() {
 			const manager = new FakeManager();
-			vi.mocked(getSceneManager).mockReturnValue(manager as never);
 			vi.stubGlobal('window', {
 				location: { search: '?embed&session=animotion:speaker' },
 				open: vi.fn()
 			});
-			const ctx = createContext();
+			const ctx = createContext(manager as never);
 			const plugin = speakerPlugin();
 			plugin.setup?.(ctx);
 			return { ctx, plugin, manager, channel: channel() };
 		}
-
-		beforeEach(() => {
-			vi.mocked(getSceneManager).mockReset();
-		});
 
 		it('asks the presenter for its current state instead of broadcasting', () => {
 			const { plugin, channel } = setupEmbed();
@@ -269,7 +258,7 @@ describe('speakerPlugin', () => {
 		});
 
 		it('navigates to a broadcast scene and seeds its step', () => {
-			const { ctx, manager, channel } = setupEmbed();
+			const { ctx, channel } = setupEmbed();
 
 			channel.dispatch({
 				type: 'state',
@@ -287,8 +276,7 @@ describe('speakerPlugin', () => {
 				}
 			});
 
-			expect(manager.setStepState).toHaveBeenCalledWith('about', 2, false);
-			expect(ctx.navigateTo).toHaveBeenCalledWith('about');
+			expect(ctx.navigateTo).toHaveBeenCalledWith('about', { index: 2, completed: false });
 		});
 
 		it('seeks in place when the broadcast step changes within the same scene', () => {
@@ -548,7 +536,7 @@ describe('speakerPlugin', () => {
 		});
 
 		it('navigates only once per distinct broadcast scene while in flight', () => {
-			const { ctx, manager, channel } = setupEmbed();
+			const { ctx, channel } = setupEmbed();
 
 			channel.dispatch({
 				type: 'state',
@@ -583,7 +571,7 @@ describe('speakerPlugin', () => {
 			});
 
 			expect(ctx.navigateTo).toHaveBeenCalledOnce();
-			expect(manager.setStepState).toHaveBeenCalledTimes(1);
+			expect(ctx.navigateTo).toHaveBeenCalledWith('about', { index: 2, completed: false });
 		});
 
 		it('does not open the speaker view from the shortcut', () => {

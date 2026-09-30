@@ -96,7 +96,8 @@ function reportProgress() {
 type WorkItem = {
 	id: string;
 	sceneIndex: number;
-	isLast: boolean;
+	/** Whether the clip ends with the scene's own exit, for standalone renders. */
+	tail: boolean;
 	/** Null means capture the scene's full range from frame 1. */
 	range: SliceRange | null;
 	/** 1-based slice index within the scene (null when not slicing). */
@@ -340,6 +341,18 @@ Examples:
 
 	const perScene = args.scenes.length > 0;
 	const targets = perScene ? resolveScenes(args.scenes, scenes) : scenes;
+	/*
+	 * A scene whose clip joins its predecessor's is rendered with that
+	 * predecessor mounted as a guest, so the overlapping transition is
+	 * captured in one page. Standalone scene renders stay single-scene.
+	 */
+	const joined = !perScene && !args.separate;
+	const sceneQuery = (sceneId: string) => {
+		if (!joined) return renderQs;
+		const index = targets.indexOf(sceneId);
+		if (index <= 0) return renderQs;
+		return `${renderQs}&previous=${encodeURIComponent(targets[index - 1]!)}`;
+	};
 	if (targets.length === 0) {
 		console.error(
 			args.project ? `No scenes found for project "${args.project}".` : 'No scenes found.'
@@ -365,7 +378,7 @@ Examples:
 	 * differ. So when there are fewer scenes than workers, we cut the long
 	 * ones into pieces and hand those out instead, proportional to how long
 	 * each scene is. This used to be opt in because every piece paid for a
-	 * fresh page load; now that pages report readiness directly, loads are
+	 * fresh page load. Now that pages report readiness directly, loads are
 	 * cheap enough to do it by default (see SLICE_MIN_SECONDS below).
 	 */
 	const useSlices =
@@ -398,7 +411,8 @@ Examples:
 	 * count, so play each scene once behind the scenes. Advancing without
 	 * taking screenshots costs well under a millisecond per frame.
 	 */
-	const totals = useSlices || reporting ? await measureSceneFrames(args, targets, renderQs) : null;
+	const totals =
+		useSlices || reporting ? await measureSceneFrames(args, targets, sceneQuery, joined) : null;
 	if (reporting) {
 		reportedTotal = totals ? totals.reduce((sum, total) => sum + total, 0) : 0;
 		reportProgress();
@@ -417,7 +431,6 @@ Examples:
 
 		for (let i = 0; i < targets.length; i++) {
 			const id = targets[i];
-			const isLast = i === targets.length - 1;
 			/*
 			 * Long scenes share the spare workers based on their length, short
 			 * ones stay whole. A small slice is fine because it lands on a
@@ -435,7 +448,7 @@ Examples:
 				items.push({
 					id,
 					sceneIndex: i,
-					isLast,
+					tail: !joined && i < targets.length - 1,
 					range: null,
 					sliceK: null,
 					sinkPath: sceneVideoOut(id, perScene, args),
@@ -448,7 +461,7 @@ Examples:
 				items.push({
 					id,
 					sceneIndex: i,
-					isLast,
+					tail: !joined && i < targets.length - 1,
 					range: ranges[k],
 					sliceK,
 					sinkPath: sliceSinkPath(id, sliceK),
@@ -459,9 +472,9 @@ Examples:
 	} else if (args.bench) {
 		for (let i = 0; i < targets.length; i++) {
 			items.push({
-				id: targets[i],
+				id: targets[i]!,
 				sceneIndex: i,
-				isLast: i === targets.length - 1,
+				tail: false,
 				range: null,
 				sliceK: null,
 				sinkPath: '',
@@ -474,7 +487,7 @@ Examples:
 			items.push({
 				id,
 				sceneIndex: i,
-				isLast: i === targets.length - 1,
+				tail: !joined && i < targets.length - 1,
 				range: null,
 				sliceK: null,
 				sinkPath: sceneVideoOut(id, perScene, args),
@@ -520,7 +533,7 @@ Examples:
 
 	const workers: Promise<void>[] = [];
 	for (let w = 0; w < workerCount; w++) {
-		workers.push(runWorker(browser!, args, popItem, renderQs, remaining));
+		workers.push(runWorker(browser!, args, popItem, renderQs, sceneQuery, remaining));
 	}
 	await Promise.all(workers);
 
@@ -628,7 +641,12 @@ Examples:
  * Plays every target scene without capturing frames to learn its exact
  * frame count. Used for slice planning and for percent progress reporting.
  */
-async function measureSceneFrames(args: ResolvedArgs, targets: string[], renderQs: string) {
+async function measureSceneFrames(
+	args: ResolvedArgs,
+	targets: string[],
+	sceneQuery: (sceneId: string) => string,
+	joined: boolean
+) {
 	report({ type: 'measuring' });
 	const dryPage = await browser!.newPage({ deviceScaleFactor: 1 });
 	dryPage.on('crash', () => {
@@ -639,15 +657,15 @@ async function measureSceneFrames(args: ResolvedArgs, targets: string[], renderQ
 	console.log('Measuring scene frame counts...');
 	const totals: number[] = [];
 	for (let i = 0; i < targets.length; i++) {
-		const id = targets[i];
-		const isLast = i === targets.length - 1;
+		const id = targets[i]!;
 		/*
 		 * Settle stays false here because the frame count comes from the
 		 * step math alone, so there is no need to wait for readiness or
 		 * asset loads.
 		 */
-		await loadScenePage(dryPage, id, renderQs, false);
-		const { total } = await driveScene(dryClient, id, isLast, args, i, null, null, null);
+		await loadScenePage(dryPage, id, sceneQuery(id), false);
+		const tail = !joined && i < targets.length - 1;
+		const { total } = await driveScene(dryClient, id, args, i, null, null, null, tail);
 		totals.push(total);
 		console.log(`  ${id}: ${total} frames`);
 	}
@@ -679,6 +697,7 @@ async function runWorker(
 	args: ResolvedArgs,
 	popItem: () => WorkItem | null,
 	renderQs: string,
+	sceneQuery: (sceneId: string) => string,
 	remaining: Map<string, number>
 ): Promise<void> {
 	const page = await b.newPage({
@@ -714,7 +733,7 @@ async function runWorker(
 			const reportItem = { written: 0 };
 			reportItems.push(reportItem);
 
-			await loadScenePage(page, item.id, renderQs);
+			await loadScenePage(page, item.id, sceneQuery(item.id));
 			sceneTracks.set(
 				item.id,
 				await client.evaluate<AudioTrack[]>('window.__sequenceRenderer.tracks ?? []')
@@ -734,12 +753,12 @@ async function runWorker(
 				const { written, total } = await driveScene(
 					client,
 					item.id,
-					item.isLast,
 					args,
 					item.sceneIndex,
 					item.range,
 					sink,
-					reportItem
+					reportItem,
+					item.tail
 				);
 				const capturedTotal = item.range?.end ?? total;
 				sceneTotals.set(item.id, Math.max(sceneTotals.get(item.id) ?? 0, capturedTotal));
@@ -811,31 +830,33 @@ function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
 }
 
 /**
- * Drives one scene frame by frame through the enter transition, each step
- * (advanced via `manager.next()`), then the exit transition (skipped for the
- * last scene), advancing the render scheduler `1/fps` seconds at a time until
- * it reports idle. Scenes of any length are welcome; the trade-off is that a
- * scene whose animation never ends will simply record forever.
+ * Drives one scene frame by frame through the enter transition, then each step
+ * (advanced via `manager.next()`), advancing the render scheduler `1/fps`
+ * seconds at a time until it reports idle. The page may have mounted the
+ * previous scene as a guest, and its exit runs alongside the enter. A `tail`
+ * clip ends with the scene's own exit instead, which is what a standalone
+ * render needs since no later clip can carry it. Scenes of any length are
+ * welcome, and a scene whose animation never ends will simply record forever.
  *
  * The same function powers three modes.
- * - serial capture (`sink` set, `range` null) records every frame from 1;
+ * - serial capture (`sink` set, `range` null) records every frame from 1.
  * - time-sliced capture (`sink` and `range` set) pre-rolls the manager
  *   through the frames before `range.start` without screenshots (the exact
  *   same `next()`/`advanceFrame` sequence as serial, so the state at each
- *   frame is identical), then captures frames `start..end`; and
- * - dry-run measuring (`sink` null): counts frames without screenshots.
+ *   frame is identical), then captures frames `start..end`.
+ * - dry-run measuring (`sink` null) counts frames without screenshots.
  *
  * @returns `written` frames written to `sink`, and `total` frames covered.
  */
 async function driveScene(
 	client: PageClient,
 	id: string,
-	isLast: boolean,
 	args: ResolvedArgs,
 	sceneIndex: number,
 	range: SliceRange | null,
 	sink: FrameSink | null,
-	reportItem: { written: number } | null
+	reportItem: { written: number } | null,
+	tail: boolean
 ): Promise<{ written: number; total: number }> {
 	let frameIndex = 1;
 	let written = 0;
@@ -857,7 +878,7 @@ async function driveScene(
 
 	await writeFrame();
 
-	// enter transition + initial step animation
+	// enter transition, plus the guest scene's exit when the page mounted one
 	while (true) {
 		if (isCrashed) throw new Error(`Page crashed during enter of ${id}`);
 		const { done } = await advance();
@@ -885,9 +906,12 @@ async function driveScene(
 		}
 	}
 
-	if (isLast) return { written, total: frameIndex - 1 };
+	if (!tail) return { written, total: frameIndex - 1 };
 
-	// exit transition
+	/*
+	 * A standalone clip has no next clip to carry its exit, so the exit plays
+	 * at the end here as it always has.
+	 */
 	await client.evaluate(`(() => {
 		const d = window.__sequenceRenderer;
 		d.manager.setDirection('forward');

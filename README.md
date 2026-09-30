@@ -111,6 +111,8 @@ configure({ transition: { type: 'slide', duration: 0.4 } });
 
 The enter transition plays when a scene loads; the exit transition plays before navigating to the next scene. Presets set both builds, so you can mix them with custom ones: `.slideTransition({ duration: 0.4 }).transitionOut((b) => { ... })` keeps the slide enter and overrides only the exit. Each call replaces whichever side(s) it defines.
 
+Both transitions run at the same time. When a scene change starts, the leaving scene plays its exit while the entering scene plays its enter, so a `slide` moves the old scene out while the new one moves in, and a `fade` crossfades. The handoff lasts as long as the longer of the two. Both scenes stay mounted until the exit finishes, and the next key press is only accepted after that.
+
 ## Camera
 
 Every scene carries a built-in camera: a reactive `{ x, y, zoom, deg }` state that `<Camera />` applies to its children as a single transform. Tag the elements you want to visit with a `data-frame` attribute, then chain `.frame()` steps to fly between them:
@@ -464,7 +466,7 @@ export const plugins: Plugin[] = [fullscreenPlugin(), speakerPlugin()];
 
 A plugin is an object with a `name` and optional hooks:
 
-- `setup(ctx)` runs when the presentation mounts; `ctx.state` is a read-only view of the current scene and step (`sceneId`, `sceneIndex`, `totalScenes`, `step`, `totalSteps`, `stepCompleted`, `finished`), so plugins can read where the presentation started, not just what changed. It may return a cleanup function.
+- `setup(ctx)` runs when the presentation mounts. `ctx.state` is a read-only view of the current scene and step (`sceneId`, `sceneIndex`, `totalScenes`, `step`, `totalSteps`, `stepCompleted`, `finished`), so plugins can read where the presentation started, not just what changed. `ctx.manager` is the manager of the scene on screen, which changes with every scene change, and `ctx.navigateTo(id, step?)` moves to a scene, optionally seeding the step it resumes at. It may return a cleanup function.
 - `onSceneChange({ id, index })` / `onStepChange(step, total)` — run as the presentation plays.
 - `onKeydown(event)` — runs on every keydown; returning `true` consumes the key.
 
@@ -528,6 +530,8 @@ animotion render
 The first render downloads Chromium automatically (one-time, about 150 MB), whether you render from the timeline or the terminal.
 
 The command starts a dev server, opens a headless browser, records every scene frame by frame, and feeds the frames straight into ffmpeg while recording, so nothing touches disk in between. See `animotion render --help` for every option. Settings you don't pass fall back to `configure({ render })`, then to built-in defaults (`60` fps, lossless PNG frames, and a worker count picked from your CPU cores). CLI flags always win over config.
+
+A combined render captures each transition once, at the head of the incoming scene's clip. The incoming scene's page mounts the previous scene as a guest, primes it to its last frame, and runs its exit together with the enter, so the video shows the same overlap the player does. Rendering individual scenes has no later clip to carry the exit, so those clips keep the scene's own exit at the end instead.
 
 Renders parallelize on their own. The renderer picks a worker count from your CPU cores, and whenever there are fewer scenes than workers it splits long scenes across them, then stitches the parts back together. Scenes shorter than about two seconds stay whole. Two flags tune this behavior: `--slices [count]` forces an exact number of slices per scene, and `--no-slices` keeps every scene in one piece.
 

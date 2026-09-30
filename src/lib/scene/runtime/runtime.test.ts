@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { SceneManager, type TransitionBuild } from './runtime.svelte';
 import { ParallelStep, TickStep, TweenStep, type Step, type TickFrame } from './steps';
+import { linear } from '../easing.js';
 import { createAudioTrack } from '../audio/tracks.js';
 
 class SpyStep implements Step {
@@ -413,6 +414,162 @@ describe('SceneManager enter transition', () => {
 			expect(manager.transitionActive).toBe(true);
 		} finally {
 			vi.unstubAllGlobals();
+		}
+	});
+
+	it('plays the enter on the first load when the manager expects one', () => {
+		vi.stubGlobal(
+			'requestAnimationFrame',
+			vi.fn(() => 1)
+		);
+		vi.stubGlobal('cancelAnimationFrame', vi.fn());
+		try {
+			const manager = new SceneManager();
+			const enterBuild: TransitionBuild = (builder) => builder.tween('opacity', 1, 0.5);
+
+			manager.expectEnter();
+			manager.load({ steps: [new SpyStep()], enterBuild });
+			expect(manager.transitionActive).toBe(true);
+		} finally {
+			vi.unstubAllGlobals();
+		}
+	});
+
+	it('keeps a suppressed scene at its start even in render mode', () => {
+		vi.stubGlobal(
+			'requestAnimationFrame',
+			vi.fn(() => 1)
+		);
+		vi.stubGlobal('cancelAnimationFrame', vi.fn());
+		try {
+			const manager = new SceneManager();
+			manager.enableRenderMode();
+			const enterBuild: TransitionBuild = (builder) => builder.tween('opacity', 1, 0.5);
+
+			manager.load({ steps: [new SpyStep()], enterBuild });
+			expect(manager.transitionActive).toBe(true);
+
+			const suppressed = new SceneManager();
+			suppressed.enableRenderMode();
+			suppressed.suppressEnter();
+			suppressed.load({ steps: [new SpyStep()], enterBuild });
+			expect(suppressed.transitionActive).toBe(false);
+		} finally {
+			vi.unstubAllGlobals();
+		}
+	});
+
+	it('measures the enter and exit builds without playing them', () => {
+		const manager = new SceneManager();
+		const enterBuild: TransitionBuild = (builder) => {
+			builder.tween('opacity', 1, 0.4);
+			builder.tween('x', 0, 0.7);
+		};
+		const exitBuild: TransitionBuild = (builder) => builder.tween('opacity', 0, 0.3);
+
+		manager.load({ steps: [new SpyStep()], enterBuild, exitBuild });
+
+		expect(manager.enterDuration).toBeCloseTo(0.7);
+		expect(manager.exitDuration).toBeCloseTo(0.3);
+	});
+
+	it('freezes the enter and exit transitions at a progress value', () => {
+		const manager = new SceneManager();
+		const enterBuild: TransitionBuild = (builder) => {
+			builder.set('opacity', 0);
+			builder.tween('opacity', 1, 0.5, linear);
+		};
+		const exitBuild: TransitionBuild = (builder) => {
+			builder.set('opacity', 1);
+			builder.tween('opacity', 0, 0.5, linear);
+		};
+		manager.load({ steps: [new SpyStep()], enterBuild, exitBuild });
+
+		manager.setEnterProgress(0.5);
+		expect(manager.transitionState.opacity).toBeCloseTo(0.5);
+
+		manager.setExitProgress(0.25);
+		expect(manager.transitionState.opacity).toBeCloseTo(0.75);
+		expect(manager.transitionActive).toBe(false);
+	});
+
+	it('resolves whenLoaded after a load and immediately once loaded', async () => {
+		const manager = new SceneManager();
+		const loaded = manager.whenLoaded();
+
+		manager.load({ steps: [new SpyStep()] });
+		await loaded;
+
+		await expect(manager.whenLoaded()).resolves.toBeUndefined();
+	});
+
+	it('keeps an enter transition playing across a seek and still completes', () => {
+		vi.useFakeTimers();
+		const capture: { frame: ((now: number) => void) | null } = { frame: null };
+		vi.stubGlobal(
+			'requestAnimationFrame',
+			vi.fn((callback: (now: number) => void) => {
+				capture.frame = callback;
+				return 1;
+			})
+		);
+		vi.stubGlobal('cancelAnimationFrame', vi.fn());
+		try {
+			const manager = new SceneManager();
+			const enterBuild: TransitionBuild = (builder) => {
+				builder.set('opacity', 0);
+				builder.tween('opacity', 1, 0.5, linear);
+			};
+			manager.load({ steps: [new SpyStep(), new SpyStep()], enterBuild });
+			manager.playEnter();
+			expect(manager.transitionActive).toBe(true);
+
+			/* a position correction must not cut the entrance short */
+			manager.seek(1);
+			expect(manager.transitionActive).toBe(true);
+			expect(manager.transitionState.opacity).toBe(0);
+			expect(manager.step).toBe(1);
+
+			/* the preserved loop still reaches the end of the entrance */
+			capture.frame?.(500);
+			expect(manager.transitionActive).toBe(false);
+			expect(manager.transitionState.opacity).toBe(1);
+			/* the completed entrance advances the live clock by its duration */
+			const firstStep = manager.timeline.steps[0]!;
+			expect(manager.liveTime).toBe(manager.timeline.enterDuration + firstStep.duration);
+		} finally {
+			vi.unstubAllGlobals();
+			vi.useRealTimers();
+		}
+	});
+
+	it('resets a mid-exit transition when a seek interrupts it', () => {
+		vi.useFakeTimers();
+		const capture: { frame: ((now: number) => void) | null } = { frame: null };
+		vi.stubGlobal(
+			'requestAnimationFrame',
+			vi.fn((callback: (now: number) => void) => {
+				capture.frame = callback;
+				return 1;
+			})
+		);
+		vi.stubGlobal('cancelAnimationFrame', vi.fn());
+		try {
+			const manager = new SceneManager();
+			const exitBuild: TransitionBuild = (builder) => builder.tween('opacity', 0, 0.5, linear);
+
+			manager.load({ steps: [new SpyStep()], exitBuild });
+			void manager.playExit();
+			capture.frame?.(250);
+			expect(manager.transitionState.opacity).toBe(0.5);
+
+			manager.seek(0);
+
+			expect(manager.transitionActive).toBe(false);
+			expect(manager.transitionState.opacity).toBe(1);
+		} finally {
+			vi.unstubAllGlobals();
+			vi.useRealTimers();
 		}
 	});
 });

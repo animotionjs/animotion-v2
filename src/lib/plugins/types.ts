@@ -1,6 +1,7 @@
+import type { SceneManager } from '../scene/runtime/runtime.svelte';
 import type { SceneEntry } from '../scene/runtime/sequence';
 
-/** A snapshot of where the presentation currently is. Read it anytime; the shell keeps it current. */
+/** A snapshot of where the presentation currently is. Read it anytime, since the shell keeps it current. */
 export interface PresentationState {
 	/** The active scene id. */
 	sceneId: string;
@@ -8,7 +9,7 @@ export interface PresentationState {
 	sceneIndex: number;
 	/** Total number of scenes. */
 	totalScenes: number;
-	/** The step the user is currently on (0-based); a completed step counts as the next one. */
+	/** The step the user is currently on (0-based), where a completed step counts as the next one. */
 	step: number;
 	/** Total number of steps in the active scene. */
 	totalSteps: number;
@@ -20,18 +21,27 @@ export interface PresentationState {
 	finished: boolean;
 }
 
-/** Environment handed to a plugin; provides access to the presentation shell. */
+/** Environment handed to a plugin, with access to the presentation shell. */
 export interface PluginContext {
 	/** Reactive snapshot of the current scene and step. */
 	state: Readonly<PresentationState>;
 	sequence: SceneEntry[];
-	navigateTo(id: string): Promise<void>;
+	/**
+	 * The manager of the scene on screen. Read it when it is needed, since a
+	 * scene change swaps in a different manager.
+	 */
+	readonly manager: SceneManager;
+	/**
+	 * Moves to `id`. `step` seeds where the scene resumes, for callers that
+	 * track a position the scene has not reached yet.
+	 */
+	navigateTo(id: string, step?: { index: number; completed: boolean }): Promise<void>;
 	next(): void;
 	prev(): void;
 }
 
 /**
- * A presentation plugin. All hooks are optional; `setup` runs at shell mount
+ * A presentation plugin. All hooks are optional. `setup` runs at shell mount
  * and may return cleanup logic, while the event hooks run as the presentation plays.
  * `onKeydown` returning `true` consumes the key.
  */
@@ -44,6 +54,6 @@ export interface Plugin {
 	onSceneChange?(scene: { id: string; index: number }): void;
 	/** Runs whenever the active step index changes. */
 	onStepChange?(step: number, total: number): void;
-	/** Runs on every keydown; returning `true` consumes the event. */
+	/** Runs on every keydown, and returning `true` consumes the event. */
 	onKeydown?(event: KeyboardEvent): boolean | void;
 }

@@ -18,7 +18,7 @@ type LoadListener = () => void;
 export interface TimelineStep {
 	/** Seconds the step's animation runs for. */
 	duration: number;
-	/** Extra seconds the finished frame stays up (`wait`); `0` when unset. */
+	/** Extra seconds the finished frame stays up (`wait`), or `0` when unset. */
 	wait: number;
 }
 
@@ -28,7 +28,7 @@ export interface TimelineStep {
  * `duration + wait`. This is what a scrubber draws and seeks against.
  */
 export interface SceneTimeline {
-	/** Seconds the enter transition occupies; `0` when the scene has none. */
+	/** Seconds the enter transition occupies, or `0` when the scene has none. */
 	enterDuration: number;
 	/** Seconds the first frame is held before the first step begins. */
 	introHold: number;
@@ -85,7 +85,7 @@ type SavedState = {
 
 /**
  * Builds a scene transition by setting and tweening the transition state
- * (`opacity`, `x`, `y`, `scale`); multiple tweens run in parallel.
+ * (`opacity`, `x`, `y`, `scale`), with multiple tweens running in parallel.
  */
 export type TransitionBuild = (builder: TransitionBuilder, direction: Direction) => void;
 
@@ -98,7 +98,7 @@ export class TransitionBuilder {
 		this.#state = state;
 	}
 
-	/** Sets a value immediately on the transition state; tweens added after it animate from the current value. */
+	/** Sets a value immediately on the transition state, and tweens added after it animate from the current value. */
 	set(key: string, value: number) {
 		this.#state[key] = value;
 	}
@@ -116,7 +116,7 @@ export class TransitionBuilder {
 }
 
 /**
- * Drives a scene's steps and transitions. One manager per presentation; it is
+ * Drives a scene's steps and transitions. One manager per presentation,
  * created by `<Scenes>` and exposed via {@link getSceneManager}.
  */
 export class SceneManager {
@@ -158,6 +158,8 @@ export class SceneManager {
 	#exitBuild: TransitionBuild | null = null;
 	#exitBusy = false;
 	#firstLoad = true;
+	#suppressEnter = false;
+	#loadWaiters: Array<() => void> = [];
 
 	#stepChangeListeners = new SvelteSet<(step: number, total: number) => void>();
 	#playbackListeners = new SvelteSet<PlaybackListener>();
@@ -166,19 +168,19 @@ export class SceneManager {
 	#transitionSeekTime: number | null = null;
 	#liveTimeOffset = 0;
 
-	/** Subscribes to step changes; returns an unsubscribe function. */
+	/** Subscribes to step changes and returns an unsubscribe function. */
 	onStepChange(listener: (step: number, total: number) => void) {
 		this.#stepChangeListeners.add(listener);
 		return () => this.#stepChangeListeners.delete(listener);
 	}
 
-	/** Subscribes to live playback updates; returns an unsubscribe function. */
+	/** Subscribes to live playback updates and returns an unsubscribe function. */
 	onPlaybackChange(listener: PlaybackListener) {
 		this.#playbackListeners.add(listener);
 		return () => this.#playbackListeners.delete(listener);
 	}
 
-	/** Subscribes to scene loads; returns an unsubscribe function. */
+	/** Subscribes to scene loads and returns an unsubscribe function. */
 	onLoad(listener: LoadListener) {
 		this.#loadListeners.add(listener);
 		return () => this.#loadListeners.delete(listener);
@@ -217,7 +219,7 @@ export class SceneManager {
 	}
 
 	/**
-	 * The step the user is currently on: a completed step counts as the next
+	 * The step the user is currently on, where a completed step counts as the next
 	 * one, so a scene with the first step played reports `1`.
 	 */
 	get currentStep() {
@@ -303,7 +305,7 @@ export class SceneManager {
 
 	#liveDuration() {
 		if (this.#tracks.length > 0) return this.timeline.totalDuration;
-		let duration = this.#enterDuration();
+		let duration = this.enterDuration;
 		for (const step of this.#steps) duration += this.#stepDuration(step);
 		return duration;
 	}
@@ -346,12 +348,12 @@ export class SceneManager {
 		return (this.#stepIndex + (done ? 1 : 0)) / this.totalSteps;
 	}
 
-	/** Progress 0..1 through the current step; 1 while paused on a completed step. */
+	/** Progress 0..1 through the current step, or 1 while paused on a completed step. */
 	get stepProgress() {
 		return this.#stepProgress;
 	}
 
-	/** Reactive transition state read by `<Scene>`: `opacity`, `x`, `y`, `scale`. */
+	/** Reactive transition state read by `<Scene>`, holding `opacity`, `x`, `y`, `scale`. */
 	get transitionState() {
 		return this.#transitionState;
 	}
@@ -361,7 +363,7 @@ export class SceneManager {
 		return this.#direction;
 	}
 
-	/** Current phase: `'paused'`, `'tweening'`, or `'finished'`. */
+	/** Current phase, one of `'paused'`, `'tweening'` or `'finished'`. */
 	get phase() {
 		return this.#phase;
 	}
@@ -397,8 +399,51 @@ export class SceneManager {
 	}
 
 	/**
+	 * Plays the enter transition on the next load, even when it is the
+	 * manager's first. A manager per mounted scene makes every load a first
+	 * load, so a scene reached by navigation opts back in here.
+	 */
+	expectEnter() {
+		this.#firstLoad = false;
+	}
+
+	/** Keeps every load at the scene's start, even in render mode. */
+	suppressEnter() {
+		this.#suppressEnter = true;
+	}
+
+	/**
+	 * Resolves once a scene has loaded, or immediately when one already has.
+	 * Render mode waits on this before it starts photographing.
+	 */
+	whenLoaded(): Promise<void> {
+		if (this.#loadVersion > 0) return Promise.resolve();
+		return new Promise((resolve) => this.#loadWaiters.push(resolve));
+	}
+
+	/** Seconds the enter transition runs for, or `0` when the scene has none. */
+	get enterDuration() {
+		return this.#buildDuration(this.#enterBuild);
+	}
+
+	/** Seconds the exit transition runs for, or `0` when the scene has none. */
+	get exitDuration() {
+		return this.#buildDuration(this.#exitBuild);
+	}
+
+	/** Freezes the enter transition at `progress` (0..1) without playing it. */
+	setEnterProgress(progress: number) {
+		this.#applyTransitionAt(this.#enterBuild, progress);
+	}
+
+	/** Freezes the exit transition at `progress` (0..1) without playing it. */
+	setExitProgress(progress: number) {
+		this.#applyTransitionAt(this.#exitBuild, progress);
+	}
+
+	/**
 	 * Switches to deterministic, render-driven scheduling. Only used during
-	 * video rendering; returns the scheduler to drive manually.
+	 * video rendering. Returns the scheduler to drive manually.
 	 */
 	enableRenderMode() {
 		this.#stopLoop();
@@ -421,7 +466,7 @@ export class SceneManager {
 
 	/**
 	 * Leaves deterministic render mode, returning to realtime scheduling for
-	 * live playback. Pending render-scheduler frames are dropped; position the
+	 * live playback. Pending render-scheduler frames are dropped, so position the
 	 * scene explicitly afterwards (e.g. via {@link seekToTime}).
 	 */
 	disableRenderMode() {
@@ -460,7 +505,7 @@ export class SceneManager {
 
 	/**
 	 * Seeds the saved state for `id` to land paused on `step` (0-based). Used
-	 * to resume from a URL hash before the scene loads; {@link load} fast-forwards
+	 * to resume from a URL hash before the scene loads, and {@link load} fast-forwards
 	 * to the step. Out-of-range steps are clamped by {@link load}.
 	 */
 	restoreState(id: string, step: number) {
@@ -479,7 +524,7 @@ export class SceneManager {
 		const steps = this.#steps
 			.slice(0, count)
 			.map((step) => ({ duration: step.duration, wait: step.wait ?? 0 }));
-		const enterDuration = this.#enterDuration();
+		const enterDuration = this.enterDuration;
 		const introHold = steps.length > 0 || this.#tracks.length > 0 ? this.#holdBeforeFirstStep : 0;
 		const body = steps.reduce((sum, step) => sum + step.duration + step.wait, 0);
 		return {
@@ -491,14 +536,14 @@ export class SceneManager {
 	}
 
 	/**
-	 * Measures the enter transition by dry-building it against a throwaway
-	 * state; builds are pure descriptions, so nothing is animated. Parallel
-	 * tweens overlap, so the transition lasts as long as its longest tween.
+	 * Measures a transition by dry-building it against a throwaway state, where
+	 * builds are pure descriptions, so nothing is animated. Parallel tweens
+	 * overlap, so the transition lasts as long as its longest tween.
 	 */
-	#enterDuration() {
-		if (!this.#enterBuild) return 0;
+	#buildDuration(build: TransitionBuild | null) {
+		if (!build) return 0;
 		const probe = new TransitionBuilder({});
-		this.#enterBuild(probe, this.#direction);
+		build(probe, this.#direction);
 		return Math.max(0, ...probe.getSteps().map((step) => step.duration));
 	}
 
@@ -560,7 +605,7 @@ export class SceneManager {
 
 		if (time < enterDuration) {
 			restAtStart();
-			this.#applyTransitionAt(time / enterDuration);
+			this.#applyTransitionAt(this.#enterBuild, time / enterDuration);
 			this.#transitionSeekTime = time;
 			this.#emitStepChange();
 			this.#emitPlaybackChange();
@@ -621,12 +666,12 @@ export class SceneManager {
 		this.#emitPlaybackChange();
 	}
 
-	/** Freezes the enter transition at `progress` (0..1) without ending it. */
-	#applyTransitionAt(progress: number) {
+	/** Freezes a transition at `progress` (0..1) without ending it. */
+	#applyTransitionAt(build: TransitionBuild | null, progress: number) {
 		this.#resetTransitionState();
-		if (!this.#enterBuild) return;
+		if (!build) return;
 		const builder = new TransitionBuilder(this.#transitionState);
-		this.#enterBuild(builder, this.#direction);
+		build(builder, this.#direction);
 		const built = builder.getSteps();
 		if (built.length === 0) return;
 		const composite = built.length === 1 ? built[0]! : new ParallelStep(built);
@@ -733,7 +778,7 @@ export class SceneManager {
 				this.#stepProgress = 1;
 			} else {
 				/*
-				 * A fresh scene rests at its initial state; the first step starts
+				 * A fresh scene rests at its initial state, and the first step starts
 				 * on the first `next` (or a mirror's `play`). Starting it eagerly
 				 * would show a layout step's mid-animation frame on load instead
 				 * of the scene's true start.
@@ -745,19 +790,22 @@ export class SceneManager {
 
 		this.#emitStepChange();
 		this.#loadVersion++;
+		for (const resolve of this.#loadWaiters) resolve();
+		this.#loadWaiters = [];
 		this.#emitLoad();
 
 		/*
 		 * The enter transition plays when navigating between scenes. On the
 		 * first load of a page session it is skipped, so a reload jumps
-		 * straight to the resumed step. Render mode always plays it: the
+		 * straight to the resumed step. Render mode always plays it, because the
 		 * renderer drives it explicitly and every render scene is a fresh-page
-		 * first load.
+		 * first load. A manager that mounts a scene as a guest suppresses it
+		 * outright, since that scene only shows its exit.
 		 */
-		if (this.#enterBuild && (this.#renderMode || !this.#firstLoad)) {
+		if (this.#enterBuild && !this.#suppressEnter && (this.#renderMode || !this.#firstLoad)) {
 			this.playEnter();
 		} else {
-			this.#liveTimeOffset = this.#tracks.length > 0 ? this.#enterDuration() : 0;
+			this.#liveTimeOffset = this.#tracks.length > 0 ? this.enterDuration : 0;
 			this.#resetTransitionState();
 			this.#emitPlaybackChange();
 		}
@@ -790,21 +838,28 @@ export class SceneManager {
 	/**
 	 * Positions the already-loaded scene at the given step without replaying
 	 * the enter transition. `stepCompleted` marks the current step's animation
-	 * as fully played without advancing to the next step; `finished` plays the
+	 * as fully played without advancing to the next step, while `finished` plays the
 	 * whole scene to completion. Steps above the target are reverted first, so
 	 * the scene regresses correctly. Used by the embedded speaker mirror to
 	 * track the presentation in place.
 	 *
+	 * An enter transition that is still playing keeps playing, because a
+	 * position correction is not a reason to cut an entrance short. The
+	 * mirror may still be entering after the presenter moved on, so it
+	 * finishes its own entrance instead of snapping to the presenter's
+	 * frame.
+	 *
 	 * Unlike `load()`, the target step is entered eagerly (its `start()` runs
-	 * immediately) rather than deferred: `seek` reproduces a playback position
+	 * immediately) rather than deferred, since `seek` reproduces a playback position
 	 * the presenter already reached, so the step's animation is meant to resume.
 	 * The mirror only seeks when its own position differs (see
 	 * `speaker.embedState`), so a freshly-loaded un-started scene is never
 	 * flashed by entering step 0 here.
 	 */
 	seek(stepIndex: number, stepCompleted = false, finished = false) {
+		const entering = this.#activeTransition === 'enter';
 		this.#stopLoop();
-		this.#stopTransitionLoop();
+		if (!entering) this.#stopTransitionLoop();
 		this.#transitionSeekTime = null;
 		this.#currentStep()?.end();
 
@@ -815,7 +870,7 @@ export class SceneManager {
 			this.#phase = 'finished';
 			this.#stepProgress = 1;
 			this.#emitStepChange();
-			this.#resetTransitionState();
+			if (!entering) this.#resetTransitionState();
 			this.#emitPlaybackChange();
 			return;
 		}
@@ -831,7 +886,7 @@ export class SceneManager {
 		this.#revertAll();
 
 		this.#positionTo(target, stepCompleted, finished);
-		this.#resetTransitionState();
+		if (!entering) this.#resetTransitionState();
 		this.#emitPlaybackChange();
 	}
 
@@ -849,13 +904,13 @@ export class SceneManager {
 	}
 
 	/**
-	 * Reproduces a playback position in place: runs steps `0..target-1` to
+	 * Reproduces a playback position in place, running steps `0..target-1` to
 	 * completion, then either enters the target step (started, not progressed),
 	 * marks the previous step completed, or finishes the scene. Emits a step
 	 * change afterwards. Used by {@link seek}.
 	 *
 	 * Entering the target step eagerly (`#enterStep`) is intentional and
-	 * mirrors the contract `load()` deliberately breaks: `load` rests a fresh
+	 * mirrors the contract `load()` deliberately breaks, where `load` rests a fresh
 	 * scene at its initial state, while a `seek`'d scene is being resumed, so
 	 * its current step is started at once.
 	 */
@@ -1026,7 +1081,7 @@ export class SceneManager {
 		/*
 		 * Hidden windows never receive animation frames, so the tween could
 		 * stall forever and block whoever awaits this promise. Two timers
-		 * guard against that: a stall timer fires when no frame arrives at
+		 * guard against that. A stall timer fires when no frame arrives at
 		 * all, and a deadline fires when frames stop mid-transition. A visible
 		 * window finishes the tween first and clears both. Render mode skips
 		 * the timers because it drives frames itself.
@@ -1251,7 +1306,7 @@ export class SceneManager {
 		this.#rafId = this.#scheduler.request(frame);
 
 		/*
-		 * Same protection as in `#playStep`: hidden windows get no frames, so
+		 * Same protection as in `#playStep`. Hidden windows get no frames, so
 		 * a timer armed for slightly longer than the step completes it on its
 		 * own, staying in sync with a visible mirror instead of waiting for an
 		 * extra press to fast-forward. Render mode skips the timer.
