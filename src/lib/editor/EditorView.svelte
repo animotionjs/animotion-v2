@@ -2,9 +2,11 @@
 	import { onDestroy, untrack } from 'svelte';
 	import { getOptions, ASPECT_RATIOS } from '../scene/options.js';
 	import EditorScene from './EditorScene.svelte';
+	import CanvasEditorScene from '../canvas/CanvasEditorScene.svelte';
 	import EditorTimeline from './EditorTimeline.svelte';
 	import EditorTransport from './EditorTransport.svelte';
 	import EditorMeasureStage from './EditorMeasureStage.svelte';
+	import CanvasMeasureStage from '../canvas/CanvasMeasureStage.svelte';
 	import EditorSettingsMenu from './EditorSettingsMenu.svelte';
 	import RenderButton from '../timeline/RenderButton.svelte';
 	import {
@@ -20,7 +22,7 @@
 	import { warmComponents, componentsGeneration } from './components.svelte.js';
 	import type { EditorSettings } from './settings.js';
 	import type { SceneEntry, Sequence } from '../scene/runtime/sequence.js';
-	import type { SceneTimeline } from '../scene/runtime/runtime.svelte.js';
+	import type { UiTimeline } from '../canvas/ui.js';
 
 	interface Props {
 		/** Ordered scenes laid out on the timeline. */
@@ -144,7 +146,7 @@
 	 * ones are ignored. Writing on every report would redraw the editor, which
 	 * would remount the scene that reported and report again.
 	 */
-	function report(id: string, timeline: SceneTimeline, chapter: string) {
+	function report(id: string, timeline: UiTimeline, chapter: string) {
 		if (!getMeasured(id, settings.fps)) setMeasured(id, settings.fps, timeline, chapter);
 		if (queue.some((item) => item.id === id)) {
 			queue = queue.filter((item) => item.id !== id);
@@ -352,13 +354,23 @@
 					style:height="{stageHeight}px"
 				>
 					{#each mounted as item (item.id)}
-						<EditorScene
-							entry={item.entry}
-							{ratio}
-							{controller}
-							active={item.active}
-							onmeasured={report}
-						/>
+						{#if item.entry.definition}
+							<CanvasEditorScene
+								entry={item.entry}
+								{ratio}
+								{controller}
+								active={item.active}
+								onmeasured={report}
+							/>
+						{:else}
+							<EditorScene
+								entry={item.entry}
+								{ratio}
+								{controller}
+								active={item.active}
+								onmeasured={report}
+							/>
+						{/if}
 					{/each}
 				</div>
 
@@ -384,7 +396,11 @@
 	-->
 	{#if next}
 		{#key next.id}
-			<EditorMeasureStage entry={next} onmeasured={report} />
+			{#if next.definition}
+				<CanvasMeasureStage entry={next} onmeasured={report} />
+			{:else}
+				<EditorMeasureStage entry={next} onmeasured={report} />
+			{/if}
 		{/key}
 	{/if}
 </div>

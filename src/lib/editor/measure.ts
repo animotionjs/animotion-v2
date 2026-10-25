@@ -1,10 +1,10 @@
 import { SvelteMap } from 'svelte/reactivity';
 import { onScenesChanged } from '../config/scenes.js';
-import type { SceneTimeline } from '../scene/runtime/runtime.svelte.js';
+import type { UiTimeline } from '../canvas/ui.js';
 
 /** What measuring one scene at one frame rate produced. */
 export interface SceneMeasurement {
-	timeline: SceneTimeline;
+	timeline: UiTimeline;
 	/** The scene's `[data-chapter]` label, or an empty string when it has none. */
 	chapter: string;
 }
@@ -24,7 +24,7 @@ function keyOf(id: string, fps: number) {
  * editor navigations. A scene edit drops them, because the timing it measured
  * no longer matches the code on screen.
  */
-const measured = new SvelteMap<string, SceneTimeline>();
+const measured = new SvelteMap<string, UiTimeline>();
 
 /** The shared measurement cache, read reactively when laying out the lanes. */
 export const measuredScenes = measured;
@@ -50,7 +50,7 @@ export function getChapter(id: string, fps: number): string {
 }
 
 /** Stores `timeline` and its chapter title for `id` at `fps`. */
-export function setMeasured(id: string, fps: number, timeline: SceneTimeline, chapter = '') {
+export function setMeasured(id: string, fps: number, timeline: UiTimeline, chapter = '') {
 	const key = keyOf(id, fps);
 	measured.set(key, timeline);
 	chapters.set(key, chapter);

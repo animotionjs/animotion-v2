@@ -1,5 +1,5 @@
 import type { SceneEntry, Sequence } from '../scene/runtime/sequence.js';
-import type { SceneTimeline } from '../scene/runtime/runtime.svelte.js';
+import type { UiTimeline } from '../canvas/ui.js';
 
 /** One scene block on the editor timeline, placed at an absolute offset. */
 export interface EditorLane {
@@ -8,7 +8,7 @@ export interface EditorLane {
 	/** The scene this block draws. */
 	entry: SceneEntry;
 	/** Measured timing, or `null` while the scene has not been measured. */
-	timeline: SceneTimeline | null;
+	timeline: UiTimeline | null;
 	/** The scene's chapter label, or an empty string when it has none. */
 	chapter: string;
 	/** Seconds from the presentation start where this scene begins. */
@@ -46,7 +46,7 @@ export interface SceneRegion {
  */
 export function layoutLanes(
 	sequence: Sequence,
-	measured: Map<string, SceneTimeline>,
+	measured: Map<string, UiTimeline>,
 	fps: number,
 	chapters: ReadonlyMap<string, string> = new Map()
 ): EditorLane[] {

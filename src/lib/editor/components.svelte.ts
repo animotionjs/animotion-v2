@@ -30,7 +30,7 @@ onScenesChanged(() => {
 /** Starts loading every scene component once. Safe to call more than once. */
 export function warmComponents(sequence: Sequence) {
 	for (const entry of sequence) {
-		if (components.has(entry.id)) continue;
+		if (components.has(entry.id) || !entry.component) continue;
 		void entry.component().then((module) => components.set(entry.id, module.default));
 	}
 }

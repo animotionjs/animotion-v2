@@ -1,4 +1,5 @@
 import type { Component } from 'svelte';
+import type { SceneDefinition } from '../../canvas/scene.js';
 
 /** One scene in the presentation: its `id` and position in the `sequence`. */
 export interface SceneEntry {
@@ -7,7 +8,14 @@ export interface SceneEntry {
 	/** Sort position, from the numeric prefix of the scene name. */
 	order: number;
 	/** Lazily imports the scene component on first visit. */
-	component: () => Promise<{ default: Component }>;
+	component?: () => Promise<{ default: Component }>;
+	/** Canvas scene for projects that use the canvas engine. */
+	definition?: SceneDefinition;
+	chapter?: string;
+	notes?: string;
+	width?: number;
+	height?: number;
+	background?: string;
 }
 
 /** A scene module as resolved by {@link createSequence}. */

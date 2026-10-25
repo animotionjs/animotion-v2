@@ -59,7 +59,9 @@
 	aria-hidden="true"
 	class="pointer-events-none fixed top-0 left-[-10000px] h-px w-px overflow-hidden"
 >
-	{#await entry.component() then { default: Content }}
-		<Scene ratio={1} fit="contain"><Content /></Scene>
-	{/await}
+	{#if entry.component}
+		{#await entry.component() then { default: Content }}
+			<Scene ratio={1} fit="contain"><Content /></Scene>
+		{/await}
+	{/if}
 </div>

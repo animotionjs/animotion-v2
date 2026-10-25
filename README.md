@@ -1,612 +1,144 @@
 # Animotion
 
-A Svelte engine for animated presentations. Every scene is a component that animates itself with tweens, layout changes, morphing code, and camera flights.
+A canvas engine for animated presentations. Scenes are plain TypeScript. The existing Svelte editor, timeline, transport, settings, voiceover, and presentation UI stay in place.
 
-## Getting started
-
-```sh
-npm create @animotion@next
-```
-
-The CLI scaffolds a project with the presentation template. Edit the scenes in `src/projects/example/scenes/` to build your own.
-
-## Usage
-
-A presentation is an ordered `sequence` of scenes. Each scene is a component that uses `createScene` to build its animation steps:
-
-```svelte
-<script lang="ts">
-	import { createScene, easeInOut } from '#lib/scene';
-
-	const scene = createScene({ opacity: 0, view: 'title' })
-		.tween('opacity', 1, 0.6)
-		.layout(() => (scene.view = 'circle'), 0.6, { ease: easeInOut, enter: 'scale' });
-</script>
-
-<div class="grid place-items-center gap-16">
-	<p data-layout="title" class="text-6xl font-bold" style:opacity={scene.opacity}>🪄 Animotion</p>
-
-	{#if scene.view === 'circle'}
-		<div data-layout="circle" class="h-48 w-48 rounded-full bg-amber-400"></div>
-	{/if}
-</div>
-```
-
-The library provides the player shell (`Scene`), the animation engine (`createScene`, `SceneManager`, step types), sound playback from user files, a code component (`Code`) that morphs between source states, a camera component (`Camera`) for flying across an oversized canvas, and a plugin system (`PluginManager`, `fullscreenPlugin`).
-
-Scenes live in `src/projects/<slug>/scenes/`, the bundled example in `src/projects/example/scenes/`. A scene is either a file (`04-code.svelte`) or a folder containing a `scene.svelte` component (`04-code/scene.svelte`), so you can colocate assets and helper components with the scene. Each scene must be prefixed with a number that sets its order in the sequence: `01-intro.svelte` plays before `02-about.svelte`. The rest of the name becomes the scene id (`intro`). The sequence is built automatically by `src/lib/config/scenes.ts`.
-
-## Layout animations
-
-`layout()` animates the DOM between two states with a FLIP animation. It snapshots the position and size of every element tagged with a `data-layout` attribute, calls the `change` function (which mutates scene state), and then animates the differences:
-
-```ts
-layout(change, (duration = 0.5), { scale, ease, enter, exit, enterEnd, exitEnd });
-```
-
-For each element it decides what happened:
-
-- **Retained**: present in both states (like the title in the intro), glide from their old position and size to the new one — position via a translate tween, size via a real `width`/`height` tween. The browser lays the box out every frame, so nested text and images stay crisp, and text whose own `font-size` changed tweens the font per frame, re-wrapping live instead of riding a scaled snapshot. If `border-radius`, `background-color`, `color`, `border-color`, or `opacity` changed, those morph along too. Set `scale: true` to opt out of the per-frame layout: the final box is pinned and stretched on the GPU instead, which keeps heavy scenes smooth on weak hardware at the cost of warping whatever sits inside while it moves (children counter-scale so they end pixel-perfect).
-- **New**: added by the change (including `{#if}` and `{#each}` items), animate in with the `enter` transition.
-- **Removed**: dropped from the DOM by the change, cloned into a fixed-position "ghost" at their old spot, animated out with the `exit` transition, then removed.
-
-Every animated element must carry a unique `data-layout` key so the step can match elements across the two states. For `{#each}` lists, use the item id:
-
-```svelte
-<ul>
-	{#each scene.items as item (item)}
-		<li data-layout={item}>{item}</li>
-	{/each}
-</ul>
-```
-
-FLIP motion and the `scale`/`slide` transitions are driven by `transform`, which browsers ignore on `display: inline` elements. The theme stylesheet automatically makes `span[data-layout]` `inline-block`, so animated spans work out of the box; other inline elements (`a`, `em`, `code`, …) need the same rule or a block-level element. `fade`, `clip`, and `wipe` work on plain inline elements since they only rely on `opacity`/`clip-path`.
-
-`enter` and `exit` accept `fade` (default), `scale`, `clip` (circle reveal), `wipe` (left-to-right), `slide` (vertical: entering elements slide up in, exiting ones slide down out), or `none`. `ease` defaults to `easeInOut`. `enterEnd` and `exitEnd` set the fraction of the step at which the enter/exit transition completes (defaults `1` and `0.1`): the exit finishes quickly so removed elements are gone while the retained layout keeps settling, while entering elements animate in for the whole step.
-
-## Scene transitions
-
-Scenes animate in and out of the player via a transition applied to the scene container, which reads four numeric values: `opacity`, `x` and `y` (in `cqi`), and `scale`.
-
-The built-in presets, each accepting `{ duration, ease }`:
-
-- `slideTransition({ distance = 100 })`: horizontal slide. Direction-aware: when navigating forward the scene enters from the right and exits to the left; backward reverses this.
-- `fadeTransition()`: crossfade.
-- `zoomTransition({ scale = 0.5 })`: scales in/out while fading.
-
-### Default transition
-
-Scenes that don't declare a transition use the default configured in `configure({ transition })` — so you only set a transition on the scenes that differ from the default:
-
-```ts
-configure({ transition: { type: 'slide', duration: 0.4 } });
-```
-
-`transition` takes a preset name or `{ type: 'slide' | 'fade' | 'zoom', duration, ease, distance, scale }`; set it to `null` to disable the default entirely. The default fills in whichever side a scene doesn't define — a scene with only a custom `transitionIn` still gets the default exit, and vice versa. Call `.noTransition()` in a scene to opt out completely.
-
-### Custom transitions
-
-`transitionIn(fn)` and `transitionOut(fn)` accept a callback `(builder, direction)` (where `direction` is `'forward'` or `'backward'`) that describes the enter and exit:
-
-- `builder.set(key, value)`: set a value immediately, defining the start state.
-- `builder.tween(key, to, duration, ease)`: tween a value to its end state; multiple tweens in one build run in parallel.
-
-```svelte
-<script lang="ts">
-	import { createScene } from '#lib/scene';
-
-	const scene = createScene()
-		.transitionIn((b) => {
-			b.set('opacity', 0);
-			b.set('y', 20);
-			b.tween('opacity', 1, 0.6);
-			b.tween('y', 0, 0.6);
-		})
-		.transitionOut((b) => {
-			b.tween('y', 20, 0.4);
-			b.tween('opacity', 0, 0.4);
-		});
-</script>
-```
-
-The enter transition plays when a scene loads; the exit transition plays before navigating to the next scene. Presets set both builds, so you can mix them with custom ones: `.slideTransition({ duration: 0.4 }).transitionOut((b) => { ... })` keeps the slide enter and overrides only the exit. Each call replaces whichever side(s) it defines.
-
-Both transitions run at the same time. When a scene change starts, the leaving scene plays its exit while the entering scene plays its enter, so a `slide` moves the old scene out while the new one moves in, and a `fade` crossfades. The handoff lasts as long as the longer of the two. Both scenes stay mounted until the exit finishes, and the next key press is only accepted after that.
-
-## Camera
-
-Every scene carries a built-in camera: a reactive `{ x, y, zoom, deg }` state that `<Camera />` applies to its children as a single transform. Tag the elements you want to visit with a `data-frame` attribute, then chain `.frame()` steps to fly between them:
-
-```svelte
-<script lang="ts">
-	import { Camera, createScene } from '#lib/scene';
-
-	const scene = createScene({ camera: { zoom: 1.4 } })
-		.noTransition()
-		.frame('title')
-		.wait(1)
-		.frame('detail', { zoom: 1.8 })
-		.wait(1);
-</script>
-
-<Camera {scene}>
-	<div data-frame="title">...</div>
-	<div data-frame="detail" style:left="900px">...</div>
-</Camera>
-```
-
-- The target is a framed element's id or raw canvas coordinates: `.frame({ x: -500, y: 500 })`.
-- Options are optional: `{ zoom, deg, duration = 1.4, ease = easeInOut }`. Anything left out keeps its current value, so `.frame('detail')` pans there without changing the framing.
-- Initial values come from `createScene({ camera: { zoom: 1.4 } })`; scenes that never mention the camera start centered at zoom 1.
-- The camera is ordinary state, so you can read it anywhere reactive (`scene.camera.zoom`) or move it by hand (`scene.camera.deg += 15`).
-- Rotation always turns the short way around.
-- Framed elements are measured when their flight starts, not when it is declared, so layout changes earlier in the timeline are picked up automatically.
-
-## Code animations
-
-Scenes can morph source code between states. Pass initial `code` (and optional `language`) to `createScene`, render `<Code />`, then chain `code*` steps. `code` accepts a single source string or an object map of block name to source for multiple independent blocks:
-
-```svelte
-<script lang="ts">
-	import { createScene, Code, code } from '#lib/scene';
-
-	createScene({
-		code: `function example() {
-			console.log('Hello!');
-		}`
-	})
-		.codeTo(
-			`function greet() {
-				console.log('Hi!');
-			}`,
-			0.6
-		)
-		.codeInsert(code.position(3, 0), 'return 7;\n', 0.6)
-		.codeReplace(code.word(2, 15, 3), 'Goodbye!', 0.6)
-		.codeRemove(code.lines(3), 0.6)
-		.codeReplace('greet', 'sayHi', 0.6)
-		.codePrepend('// example\n', 0.4)
-		.codeSelection(code.word(3, 15, 6), 0.6)
-		.codeSelection();
-</script>
-
-<Code class="text-2xl" />
-```
-
-Multiple blocks each morph and highlight independently. `codeBlock(name)` selects the target for the `code*` steps after it:
-
-```svelte
-<script lang="ts">
-	import { createScene, Code } from '#lib/scene';
-
-	createScene({
-		code: {
-			left: `let x = 1;`,
-			right: `let y = 2;`
-		}
-	})
-		.codeBlock('left')
-		.codeTo(`let x = 2;`)
-		.codeBlock('right')
-		.codeTo(`let y = 3;`);
-</script>
-
-<div class="flex gap-8">
-	<Code name="left" class="text-2xl" />
-	<Code name="right" class="text-2xl" />
-</div>
-```
-
-- `codeBlock(name?)`: selects the named block for the following `code*` steps and returns the scene, so chains can switch blocks without storing handles. Defaults to `default`.
-- Map values accept a string or `{ code, language }`; the top-level `language` is the fallback for plain-string entries.
-- `<Code name>` selects which block to render (default `default`). Unknown block names throw and list the available blocks.
-
-- `codeTo(code, duration)`: morph the whole snippet to new source.
-- `codeAppend(code)` / `codePrepend(code)`: add to the start or end.
-- `codeInsert(range, code)`: insert at a position.
-- `codeReplace(range | text, code)`: replace a range; a plain string matches its first occurrence.
-- `codeRemove(range)`: delete a range.
-- `codeEdit(duration)`: a tagged template where edits are marked inline with `code.insert(...)` and `code.remove(...)`.
-- `codeSelection(range?)`: dim everything except a range; with no argument, selects everything.
-
-Ranges target `[line, col]` positions with **1-indexed lines and 0-indexed columns**: `code.position(line, col)`, `code.word(line, col, length)`, `code.lines(from, to)`, `code.range(sl, sc, el, ec)`. Text resolvers find occurrences by string or regex: `code.FIRST(pattern)`, `code.ALL(pattern)`, `code.LAST(pattern)`.
-
-### Code options
-
-The `<Code />` component accepts a few props:
-
-- `class`: size and typography classes (default `text-2xl`).
-- `name`: which named code block to render (default `default`).
-- `lineHeight`: line height in `em` (default `1.5`).
-- `unselectedOpacity`: opacity of code outside the current `codeSelection` (default `0.32`).
-- `lineNumbers`: show a line-number gutter on the left (default `false`).
-
-```svelte
-<Code class="text-2xl" lineNumbers />
-```
-
-## Other steps
-
-- `wait(seconds = 1)`: holds the previous step's finished frame up longer, so the viewer has time to read. Waits aren't steps and don't count toward `scene.step` or `totalSteps`. The live player skips them unless the scene has sound. Then they play out so the preview matches the render. A wait before anything else holds the first frame.
-
-```svelte
-<script lang="ts">
-	import { createScene } from '#lib/scene';
-
-	const scene = createScene({ opacity: 0 })
-		.tween('opacity', 1, 0.6)
-		.wait(1.5)
-		.tween('opacity', 0, 0.6);
-</script>
-
-<div style:opacity={scene.opacity}>Readable for a moment</div>
-```
-
-- `tick(onTick, duration, ease)`: runs `onTick` every frame while the step plays, so you can drive arbitrary state from the step's progress (e.g. a progress bar, a counter, a canvas or third-party animation). The callback receives `{ progress, time, deltaTime, frame }`, where `progress` is the eased 0..1 progress and `time` the elapsed seconds:
-
-```svelte
-<script lang="ts">
-	import { createScene } from '#lib/scene';
-
-	let fill = $state(0);
-
-	createScene().tick(({ progress }) => {
-		fill = progress * 100;
-	}, 2.4);
-</script>
-
-<div class="h-4 rounded-full bg-amber-400" style:width="{fill}%"></div>
-```
-
-- `all((s) => ...)`: runs every step added inside the callback in parallel:
-
-```svelte
-<script lang="ts">
-	import { createScene } from '#lib/scene';
-
-	const scene = createScene({ scale: 0 }).all((s) => {
-		s.tween('opacity', 1, 0.6);
-		s.tween('scale', 1, 0.6);
-	});
-</script>
-```
-
-- `repeat(count, (s, i) => ...)`: runs the callback `count` times while building the timeline, so a block of steps can be repeated without repeating the builder calls by hand. The callback receives the builder and the current repetition index:
-
-```svelte
-<script lang="ts">
-	import { createScene } from '#lib/scene';
-
-	const scene = createScene().repeat(4, (s) => {
-		s.tick(() => {}, 1);
-	});
-</script>
-```
-
-## Audio
-
-Scenes play user files through `.sound(src)`. Import audio with `?url` and pass the URL:
-
-```svelte
-<script lang="ts">
-	import { createScene } from '#lib/scene';
-	import soundUrl from './sound.mp3?url';
-
-	const scene = createScene({ opacity: 0 }).all((s) => {
-		s.sound(soundUrl, { duration: 1.5 });
-		s.tween('opacity', 1, 0.6);
-	});
-</script>
-```
-
-The sound plays while the fade runs.
-
-Outside `.all()`, calls take turns: a sound with a `duration` makes the scene wait until it finishes. One without takes no time, so the scene moves straight on.
-
-Layer music under everything with `at`, which starts a sound at absolute seconds without moving the cursor:
-
-```svelte
-const scene = createScene({ opacity: 0 })
-	.sound(musicUrl, { at: 0, loop: true, volume: 0.3 })
-	.sound(soundUrl, { duration: 1.5 })
-	.tween('opacity', 1, 0.6);
-```
-
-`sound(src)` accepts `delay`, `at`, `volume`, `rate`, `loop`, `trimStart`, `duration`, `fadeIn` and `fadeOut`. `delay` and `at` cannot be combined.
-
-A sound without a `duration` has to start before the scene ends.
-
-## Reading timeline progress
-
-`createScene` exposes two read-only reactive timeline fields that let scenes react to the timeline declaratively, without animating a counter:
-
-- `scene.step`: the 0-based index of the step currently being animated. It stays put when that step finishes and advances only when the next step starts. Waits never occupy a slot, so `step` counts only steps that do something.
-- `scene.progress`: linear progress `0..1` through that step. It is `0` when a step starts and `1` when the step completes (and stays `1` while paused on a completed step). While a wait plays, it stays at `1`.
-
-```svelte
-<script lang="ts">
-	import { createScene, easeOut } from '#lib/scene';
-
-	const scene = createScene({ x: 0 }).tween('x', 200, 1).wait(1);
-
-	const opacity = $derived(easeOut(scene.progress));
-</script>
-
-<p style:opacity>Current step: {scene.step}</p>
-```
-
-`step` and `progress` are reserved scene fields: they cannot be provided in the initial state. Because progress through a step is linear, apply an easing function (`easeOut`, `easeInOut`, ...) when visualizing it.
-
-### Revealing a list
-
-`scene.reveal(lead)` returns a function giving each item's opacity in a sequential reveal: item `i` fades in while step `i` plays, and earlier items stay fully visible. With `lead` left at its default `0`, item 0 is hidden until step 0 plays; `scene.reveal(1)` shows it from the start. Give the scene one step per item — a timed `tick` works when there is nothing to animate:
-
-```svelte
-<script lang="ts">
-	import { createScene } from '#lib/scene';
-
-	const scene = createScene().repeat(4, (s) => s.tick(() => {}, 1));
-
-	const opacity = scene.reveal();
-</script>
-
-<ul class="text-8xl">
-	<li style:opacity={opacity(0)}>1</li>
-	<li style:opacity={opacity(1)}>2</li>
-	<li style:opacity={opacity(2)}>3</li>
-	<li style:opacity={opacity(3)}>4</li>
-</ul>
-```
-
-### Crossfading between items
-
-`scene.crossfade(items)` swaps between items, one per step: the current item fades out, the next one swaps in at the step's midpoint (while it is invisible), and fades in. It returns reactive `{ index, item, opacity }`. Use `repeat(items.length - 1)` steps so the last item ends the scene, and drive extra per-step effects from `scene.progress`:
-
-```svelte
-<script lang="ts">
-	import { createScene } from '#lib/scene';
-
-	const items = ['🔥', '😎', '❤️', '🪄'];
-
-	const scene = createScene().repeat(items.length - 1, (s) => s.tick(() => {}, 0.4));
-
-	const fade = scene.crossfade(items);
-</script>
-
-<div class="text-8xl" style:opacity={fade.opacity} style:rotate="{scene.progress}turn">
-	{fade.item}
-</div>
-```
-
-## Previewing a scene
-
-The `/timeline/[slug]/[[scene]]` route is a scrubbable editor for one scene at a time. Visit `/timeline/example` to open the first scene of the example, or `/timeline/example/about` to jump straight to a scene. The URL stays in sync as you move between scenes, so a link deep-links to the exact scene.
-
-The track shows the scene as four kinds of segment laid out left to right:
-
-- **Enter** (shaded): the scene's enter transition, measured by dry-building it. An enter-only scene (no steps) is still the length of this segment.
-- **Hold** (plain): `holdBeforeFirstStep` — the first frame held before step 0 starts.
-- **Steps** (numbered): one segment per `.tween`, `.layout`, `.tick`, `.frame`, `.code` step, labelled with its index.
-- **Wait** (hatched): the `wait()` that follows a step, where the scene rests without animating.
-
-Drag anywhere on the track to scrub the playhead, or use the transport controls:
-
-| Key            | Action                                        |
-| -------------- | --------------------------------------------- |
-| `space`        | Play / pause                                  |
-| `←` / `→`      | Jump to the previous / next segment           |
-| `,` / `.`      | Nudge one frame back / forward                |
-| `Home` / `End` | Restart / jump to the end                     |
-| `l`            | Toggle loop (ignored with `cmd`/`ctrl`/`alt`) |
-
-Every frame is driven by the same engine and FPS used to render, so what you scrub is what the renderer produces.
-
-### Rendering from the timeline
-
-`Preview` renders a 30 fps draft with lower-quality JPEG written to a separate `*.preview.mp4` file; `Full` captures lossless PNG frames and `Balanced` full-resolution JPEG. Every tier renders at the same size, so the layout always matches the final render.
-
-The render attaches to the dev server you are already running, so the page never reloads, and one render runs at a time. Video renders land in `rendered/<slug>/<id>.mp4` (previews in `rendered/<slug>/<id>.preview.mp4`), full presentations in `rendered/<slug>/video.mp4` or whatever `configure({ render: { out } })` names, and image sequences in `rendered/<slug>/frames/<id>/` as `frame_000001.png` files.
-
-A full presentation render also mixes in the project's voiceover, if it has one. Narration is laid over the joined video in a single pass, so a clip that crosses a scene boundary needs nothing special, and a clip that ends past the last frame is cut off there.
-
-## Editing the whole presentation
-
-The `/editor/[slug]/[[scene]]` route lays the presentation out as one timeline. Visit `/editor/example` to open it, or `/editor/example/about` to open on a scene.
-
-The editor shows the scene on screen at the top and the timeline at the bottom:
-
-- **Scenes track**: one block per scene laid end to end, each as long as the scene's own timing. Inside a block, the enter transition is shaded, each step is divided, and holds and waits are hatched, so you can see where the scene rests and where it moves.
-- **Voiceover track**: always drawn under the scenes track, so its purpose is clear before anything is recorded. It spans the whole presentation, never one scene.
-- **Playhead**: one line across the whole presentation. Playback runs from the first scene to the last without pausing at a boundary, and it shows the real transition, where the leaving scene plays its exit under the entering scene's enter.
-- **Transport**: play and pause, one frame at a time, jump to the previous or next scene. Playback stops on the last frame.
-
-Pan the timeline by scrolling and zoom with `ctrl` or `cmd` and the wheel, the zoom buttons, or the keys below. The viewport follows the playhead while the clock runs. The timeline opens fitted to the whole presentation and keeps fitting as scenes are measured, until you zoom by hand. Zooming out goes below a fit, so the whole show can be pulled back with margin.
-
-| Key               | Action                            |
-| ----------------- | --------------------------------- |
-| `space`           | Play / pause                      |
-| `←` / `→`         | Nudge one frame                   |
-| `shift` + `←` `→` | Jump to the previous / next scene |
-| `Home` / `End`    | Go to the start / the end         |
-| `+` / `-`         | Zoom in / out                     |
-| `f`               | Fit the whole presentation        |
-| `r`               | Record a voiceover                |
-
-Scene lengths come from a measuring pass, because a scene only reports its timing once its component has mounted. The editor mounts each scene once, off screen, reads its timing, then unmounts it. Measured lengths are cached for the session and keyed by scene and frame rate, so a rate change measures at the new rate, changing back reuses what was already measured, and navigating between scenes never measures twice. Only the scene under the playhead stays alive.
-
-### Settings and rendering
-
-The `settings` menu in the editor header owns `aspect`, `resolution`, `fps`, `quality` and `output`. It opens seeded from config, and the preview and the render both read it, so what you see is what gets written. Changing the aspect or the resolution reshapes the preview stage, and changing the frame rate moves the frame grid, the snapping and every measured block to the new rate together. Render quality and output are render only choices that do not touch the timeline.
-
-The `render` button renders the whole presentation with the current settings. It attaches to the dev server you are already running, just like the timeline render, and one render runs at a time.
-
-### Voiceover
-
-A presentation can carry narration recorded in the editor. The voiceover track sits under the scenes track and spans the whole presentation rather than any one scene, so a clip may begin and end anywhere, including across a scene boundary.
-
-Move the playhead where you want to speak and press `r`, or use the record button in the transport. The clock freezes while recording, so a take keeps the place you started it. The take is drawn on the track as it is captured, with its waveform growing, and it settles into a saved clip when you stop. Press `r` again or the `stop` button to keep it. The `voiceover` button in the transport toggles whether narration is audible in the preview, next to a speaker icon.
-
-Clips drag along the track with the pointer, land on frame boundaries, and can be nudged with `←` and `→` or deleted with `Delete`. Clips cannot overlap, and a recording that runs into the next clip stops itself and keeps what fits. Narration plays through the preview continuously, across every scene boundary.
-
-Recordings are written to `src/projects/<slug>/voiceover/` as 48 kHz mono 16 bit WAV, next to the scenes, so they belong to the project and are committed with it. The format is uncompressed on purpose: nothing is lost before the export encodes it, and there is room to work on the audio later.
-
-A clip may run past the end of the last scene, and dragging it back is how that is fixed. When the video renders, narration is mixed over the whole presentation in one pass, and anything past the last frame is cut off. The stored clip keeps its full length either way.
-
-## Configuration
-
-The `src/lib/config/` directory holds the presentation settings.
-
-### Highlighter
-
-`src/lib/config/configure.ts` configures the code highlighter:
-
-```ts
-import { configure } from '#lib/scene';
-
-configure({
-	theme: 'animotion-dark',
-	aspectRatio: 'video',
-	transition: { type: 'slide', duration: 0.4 },
-	render: {
-		fps: 60,
-		resolution: '1080p'
-	}
-});
-```
-
-- `theme` is a [twinkleplop](https://twinkleplop.pngwn.at) theme.
-- `aspectRatio` is a preset that sets the on-screen slide shape and the default render resolution:
-  - `'video'` — 16:9, 1920×1080 (YouTube, X, presentations; default)
-  - `'vertical'` — 9:16, 1080×1920 (Reels, TikTok, Shorts)
-  - `'square'` — 1:1, 1080×1080 (Instagram feed)
-- `render` sets the default options used by `animotion render`. `resolution` picks a size tier — `'720p'`, `'1080p'`, `'2k'`, `'4k'` — scaling the shape so its smaller side matches (e.g. `'2k'` gives 2560×1440 landscape, `'4k'` gives 3840×2160 landscape, 2160×3840 vertical, 2160×2160 square). Explicit `width`/`height` override the tier; the remaining options fall back to their defaults. `gpu` toggles hardware acceleration for the headless browser (default `true`, with an automatic software fallback when the GPU looks unavailable).
-- `transition` sets the default scene transition: `{ type: 'slide' | 'fade' | 'zoom', duration?, ease?, distance?, scale? }` or `null` to disable. See [Default transition](#default-transition).
-
-The theme option is typed, so editor autocomplete suggests the valid names.
-
-To use a language, install the corresponding twinkleplop package, and pass it to the config:
-
-```ts
-import { configure } from '#lib/scene';
-import { tokenize as svelte } from '@twinkleplop/svelte';
-import { tokenize as rust } from '@twinkleplop/rust';
-
-configure({
-	languages: {
-		svelte,
-		rust
-	}
-});
-```
-
-### Plugins
-
-`src/lib/config/plugins.ts` registers plugins that hook into the presentation shell:
-
-```ts
-import { fullscreenPlugin, speakerPlugin, type Plugin } from '@animotion/core';
-
-export const plugins: Plugin[] = [fullscreenPlugin(), speakerPlugin()];
-```
-
-A plugin is an object with a `name` and optional hooks:
-
-- `setup(ctx)` runs when the presentation mounts. `ctx.state` is a read-only view of the current scene and step (`sceneId`, `sceneIndex`, `totalScenes`, `step`, `totalSteps`, `stepCompleted`, `finished`), so plugins can read where the presentation started, not just what changed. `ctx.manager` is the manager of the scene on screen, which changes with every scene change, and `ctx.navigateTo(id, step?)` moves to a scene, optionally seeding the step it resumes at. It may return a cleanup function.
-- `onSceneChange({ id, index })` / `onStepChange(step, total)` — run as the presentation plays.
-- `onKeydown(event)` — runs on every keydown; returning `true` consumes the key.
-
-For example, a plugin that installs a listener can keep setup and cleanup together:
-
-```ts
-export const plugin: Plugin = {
-	name: 'analytics',
-	setup(ctx) {
-		const onKeydown = (event: KeyboardEvent) => {
-			console.log(ctx.state.sceneId, event.key);
-		};
-		window.addEventListener('keydown', onKeydown);
-		return () => window.removeEventListener('keydown', onKeydown);
-	}
-};
-```
-
-`fullscreenPlugin()` toggles fullscreen with the `f` key.
-
-`speakerPlugin()` opens a speaker view. Press `s` (or call `openSpeakerView()`) to pop out a window showing a live copy of the presentation, the current scene's notes, a timer, a clickable scene outline, and next/prev controls that drive the presentation. Because the copy runs the real presentation and follows it, stepping through a scene advances without replaying the entrance transition.
-
-Notes are authored in each scene in a hidden `[data-notes]` box, which the presenter forwards to the speaker view along with the presentation state (so notes can contain styled markup):
-
-```svelte
-<div data-notes>What I say when this slide is on screen.</div>
-```
-
-The speaker view opens at `/presentation?speaker`, which the presentation route renders as `<SpeakerView>` instead of the presentation:
-
-```svelte
-<script lang="ts">
-	import { page } from '$app/state';
-	import { Scenes, SpeakerView } from '#lib';
-	import { plugins } from '#lib/config/plugins';
-	import { sequence } from '#lib/config/scenes';
-
-	const isSpeaker = $derived(page.url.searchParams.has('speaker'));
-	const session = $derived(page.url.searchParams.get('session') ?? undefined);
-</script>
-
-{#if isSpeaker}
-	<SpeakerView {session} />
-{:else}
-	<Scenes {sequence} {plugins} />
-{/if}
-```
-
-For example, `?speaker&session=demo` on the current presentation path connects the speaker view to the `demo` session.
-
-## Projects
-
-`/` lists projects. The example lives in `src/projects/example/scenes/` like any other project. Each presentation plays at `/presentation/<slug>` and its editor lives at `/timeline/<slug>`. Bare `/presentation` and `/timeline` redirect to the default project, which is `example` when present and the first project otherwise.
-
-## Rendering a video
-
-```sh
-animotion render
-```
-
-The first render downloads Chromium automatically (one-time, about 150 MB), whether you render from the timeline or the terminal.
-
-The command starts a dev server, opens a headless browser, records every scene frame by frame, and feeds the frames straight into ffmpeg while recording, so nothing touches disk in between. See `animotion render --help` for every option. Settings you don't pass fall back to `configure({ render })`, then to built-in defaults (`60` fps, lossless PNG frames, and a worker count picked from your CPU cores). CLI flags always win over config.
-
-A combined render captures each transition once, at the head of the incoming scene's clip. The incoming scene's page mounts the previous scene as a guest, primes it to its last frame, and runs its exit together with the enter, so the video shows the same overlap the player does. Rendering individual scenes has no later clip to carry the exit, so those clips keep the scene's own exit at the end instead.
-
-Renders parallelize on their own. The renderer picks a worker count from your CPU cores, and whenever there are fewer scenes than workers it splits long scenes across them, then stitches the parts back together. Scenes shorter than about two seconds stay whole. Two flags tune this behavior: `--slices [count]` forces an exact number of slices per scene, and `--no-slices` keeps every scene in one piece.
-
-Because every slice runs in its own tab, a split scene must drive its state purely from time or frame. Anything like `Math.random()`, `Date.now()`, or a counter that accumulates would disagree between slices. Scenes that cannot promise that should use `--no-slices`.
-
-For quick drafts use `--preview`. It drops to 30 fps and captures lower-quality JPEG frames while keeping the full size, so the layout matches the final render. `--jpeg [quality]` does the quality swap on its own. Chromium uses hardware acceleration by default, verified with a health check that falls back to software automatically; `--no-gpu` forces software rendering, as does `gpu: false` in config. `--bench` prints what each frame costs to advance and capture, which is handy for comparing settings without rendering anything.
-
-By default nothing is written to disk. Pass `--frames-only` to save raw frames to `rendered/frames/` without encoding, or `--keep-frames` to keep them on disk after encoding.
-
-### Rendering individual scenes
-
-Pass one or more scene ids to render only those scenes, each written to its own video (`rendered/<id>.mp4`):
-
-```sh
-animotion render first # renders the first scene
-animotion render 01-first 02-second # renders individual scenes
-```
-
-Scenes are matched by their id (the filename without the number prefix and `.svelte`), so `01-intro` and `intro` are equivalent. Use `--out` to name the output when rendering a single scene, e.g. `animotion render intro --out rendered/intro.mp4`. To write the whole presentation as one video per scene instead of a single combined video, pass `--separate` — each scene is written to `rendered/<id>.mp4`.
-
-## Styling
-
-Global styles are defined with Tailwind CSS v4 `@theme` tokens in `src/styles/theme.css`, imported in `src/routes/+layout.svelte`. The default theme provides semantic color tokens (`--color-background`, `--color-foreground`, `--color-surface`, and `--color-accent`) used by scenes as `bg-background`, `text-foreground`, and so on. Spacing, radii, and typography scale with `cqi` so the layout resizes with the slide container.
-
-## Developing
+## Development
 
 ```sh
 pnpm install
-pnpm dev        # example sequence
-pnpm check      # type-check
-pnpm test:unit  # unit tests
-pnpm package    # build the library into dist/
+pnpm dev
 ```
+
+Routes:
+
+```text
+/                         project dashboard
+/editor/<slug>            existing editor UI
+/presentation/<slug>      presentation player
+```
+
+The standalone `/timeline` route is removed.
+
+## Project
+
+```text
+src/projects/example/
+  project.ts
+  scenes/
+    01-intro.ts
+    02-about.ts
+    03-layout.ts
+    04-tick.ts
+```
+
+`project.ts` declares the canvas size, background, and scene order:
+
+```ts
+import { defineProject } from '#lib/canvas/index.js';
+import intro from './scenes/01-intro.js';
+import about from './scenes/02-about.js';
+
+export default defineProject({
+	id: 'example',
+	size: { width: 1920, height: 1080 },
+	background: '#060608',
+	scenes: [intro, about]
+});
+```
+
+## Scene
+
+```ts
+import { defineScene, easeInOut } from '#lib/canvas/index.js';
+
+export default defineScene('intro', function* (s) {
+	const title = s.text('Animotion', {
+		layoutKey: 'title',
+		fontSize: 86,
+		fontWeight: 700,
+		fill: '#ffffff',
+		opacity: 0
+	});
+
+	yield* title.opacity.to(1, 0.6, easeInOut);
+
+	yield* s.layout(
+		() => {
+			title.x(70);
+			s.text('🪄', { layoutKey: 'logo', x: -230, fontSize: 86 });
+		},
+		{ duration: 0.6, enter: 'scale', ease: easeInOut }
+	);
+});
+```
+
+The generator runs once when the scene is created and records a step timeline. Playback and seeking use the recorded steps, not generator replay.
+
+## Nodes
+
+- `s.text(content, props)`
+- `s.h1`, `s.h2`, `s.h3`, `s.body`
+- `s.rect(props)`
+- `s.card(props, ...children)`
+- `s.group(props, ...children)`
+- `s.code(props)`
+
+Node properties are signals:
+
+```ts
+title.opacity(); // read
+title.opacity(0.5); // set
+title.opacity.to(1, 0.6); // animate
+```
+
+## Steps
+
+- `yield* signal.to(value, duration, ease)`
+- `yield* wait(seconds)`
+- `yield* all(...animations)`
+- `yield* tick(callback, duration, ease)`
+- `yield* s.layout(change, options)`
+- `yield* s.frame(target, options)`
+- `yield* code.morphTo(source, duration)`
+
+Layout steps use `layoutKey` nodes. Added nodes enter, removed nodes exit, retained nodes glide between measured bounds.
+
+Camera steps target a node or explicit coordinates. Code steps crossfade a canvas code block.
+
+## Editor UI
+
+`/editor/<slug>` keeps the existing editor:
+
+- scene blocks and frame grid
+- transport and keyboard controls
+- settings menu
+- chapters
+- voiceover track and recording controls
+- render controls
+- scene preview backed by the canvas engine
+
+The scene preview, measurement, and timing use `src/lib/canvas`. The editor chrome is unchanged.
+
+## Presentation UI
+
+`/presentation/<slug>` keeps the full-screen player and progress bar. Arrow keys move between steps, space plays or pauses, and `f` toggles fullscreen.
+
+## Commands
+
+```sh
+pnpm dev
+pnpm build
+pnpm check
+pnpm test:unit
+pnpm lint
+pnpm format
+```
+
+## Current limits
+
+- No video encoding from the canvas engine yet.
+- No GPU or WebGL backend.
+- No flexbox or grid layout engine.
+- No rich text wrapping.
+- No HTML nodes.
+- No visual property editing.

@@ -10,10 +10,10 @@ export interface ProjectInfo {
 	scenes: number;
 }
 
-const SCENE_PATTERN = /^\d+-.+\.svelte$/;
-/* Directory form of a scene, e.g. `01-intro/scene.svelte`, counted like flat files. */
+const SCENE_PATTERN = /^\d+-.+\.ts$/;
+/* Directory form of a scene, e.g. `01-intro/scene.ts`, counted like flat files. */
 const NESTED_SCENE_DIR = /^\d+-.+$/;
-const NESTED_SCENE_FILE = 'scene.svelte';
+const NESTED_SCENE_FILE = 'scene.ts';
 const META_FILE = 'project.json';
 /* Well under filesystem and URL limits, while keeping paths readable. */
 const MAX_SLUG_LENGTH = 64;
@@ -58,23 +58,27 @@ async function readName(directory: string, slug: string): Promise<string> {
 	return displayName(slug);
 }
 
-const STARTER_SCENE = `<script lang="ts">
-	import { createScene, easeInOut } from '#lib/scene';
+const STARTER_SCENE = `import { all, defineScene, easeOut, wait } from '#lib/canvas/index.js';
 
-	const scene = createScene({ opacity: 0, view: 'title' })
-		.tween('opacity', 1, 0.6)
-		.layout(() => (scene.view = 'logo'), 0.6, { ease: easeInOut, enter: 'scale' });
-</script>
+export default defineScene('intro', function* (s) {
+	const title = s.h1('New project', { layoutKey: 'title', opacity: 0, y: 20 });
+	const subtitle = s.body('Built with the canvas engine', { layoutKey: 'subtitle', opacity: 0, y: 100 });
 
-<div data-notes>What I say when this slide is on screen.</div>
-<div data-chapter>Opening title</div>
+	yield* all(title.opacity.to(1, 0.6), title.y.to(0, 0.6, easeOut));
+	yield* subtitle.opacity.to(1, 0.5);
+	yield* wait(1);
+});
+`;
 
-<div class="text-6xl font-bold">
-	{#if scene.view === 'logo'}
-		<span data-layout="logo">🪄</span>
-	{/if}
-	<span data-layout="title" style:opacity={scene.opacity}>New project</span>
-</div>
+const STARTER_PROJECT = `import { defineProject } from '#lib/canvas/index.js';
+import intro from './scenes/01-intro.js';
+
+export default defineProject({
+	id: '__SLUG__',
+	size: { width: 1920, height: 1080 },
+	background: '#060608',
+	scenes: [intro]
+});
 `;
 
 /** Lists user projects, each a folder with a `scenes` directory. Missing folder means no projects yet. */
@@ -144,7 +148,8 @@ export async function createProject(
 		if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
 	}
 	await mkdir(scenes, { recursive: true });
-	await writeFile(join(scenes, '01-intro.svelte'), STARTER_SCENE);
+	await writeFile(join(scenes, '01-intro.ts'), STARTER_SCENE);
+	await writeFile(join(directory, slug, 'project.ts'), STARTER_PROJECT.replace('__SLUG__', slug));
 	await writeFile(join(directory, slug, META_FILE), `${JSON.stringify({ name: name.trim() })}\n`);
 	return slug;
 }

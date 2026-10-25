@@ -177,13 +177,15 @@
 			its controller instead of leaving the preview stepping on the old grid.
 		-->
 		{#key `${sceneId}:${fps}`}
-			{#await entry.component() then { default: Content }}
-				<TimelineStage {sceneId} {fps} {ratio}>
-					<Content />
-				</TimelineStage>
-			{:catch error}
-				{@render loadError(error instanceof Error ? error.message : String(error))}
-			{/await}
+			{#if entry.component}
+				{#await entry.component() then { default: Content }}
+					<TimelineStage {sceneId} {fps} {ratio}>
+						<Content />
+					</TimelineStage>
+				{:catch error}
+					{@render loadError(error instanceof Error ? error.message : String(error))}
+				{/await}
+			{/if}
 		{/key}
 
 		{#snippet failed(renderError: unknown)}

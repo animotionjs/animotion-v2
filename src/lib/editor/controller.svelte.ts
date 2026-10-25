@@ -3,7 +3,7 @@ import { clamp } from '../scene/easing.js';
 import { laneAt, layoutLanes, totalDuration, type EditorLane } from './layout.js';
 import { measuredChapters, measuredScenes } from './measure.js';
 import { clipStartAt } from './move.js';
-import type { SceneManager } from '../scene/runtime/runtime.svelte.js';
+import type { UiScenePlayback } from '../canvas/ui.js';
 import type { Sequence } from '../scene/runtime/sequence.js';
 
 /** How much a zoom step changes the pixels per second. */
@@ -65,7 +65,7 @@ export class EditorController {
 	 */
 	#autoFit = true;
 	#sequence: Sequence;
-	#managers = new SvelteMap<string, SceneManager>();
+	#managers = new SvelteMap<string, UiScenePlayback>();
 	#rafId: number | null = null;
 	#lastNow = 0;
 	#accumulator = 0;
@@ -222,7 +222,7 @@ export class EditorController {
 	}
 
 	/** Mounts a scene's manager and positions it if it is on screen. */
-	attach(id: string, manager: SceneManager) {
+	attach(id: string, manager: UiScenePlayback) {
 		this.#managers.set(id, manager);
 		const index = this.lanes.findIndex((lane) => lane.id === id);
 		if (index === this.activeIndex) this.#positionActive();

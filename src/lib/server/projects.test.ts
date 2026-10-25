@@ -66,7 +66,7 @@ describe('projects', () => {
 			await createProject('Demo', root);
 			const nested = join(root, 'demo', 'scenes', '02-deep');
 			await mkdir(nested, { recursive: true });
-			await writeFile(join(nested, 'scene.svelte'), '<p>deep</p>');
+			await writeFile(join(nested, 'scene.ts'), 'export default null;');
 			expect(await listProjects(root)).toEqual([{ slug: 'demo', name: 'Demo', scenes: 2 }]);
 		} finally {
 			await rm(root, { recursive: true, force: true });

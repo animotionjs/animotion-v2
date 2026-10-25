@@ -371,6 +371,7 @@
 		});
 
 		try {
+			if (!entry.component) throw new Error(`Scene "${entry.id}" has no component.`);
 			await entry.component();
 		} catch (error) {
 			// a scene that never loads must not leave navigation stuck

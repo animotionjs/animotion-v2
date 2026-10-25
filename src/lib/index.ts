@@ -20,6 +20,7 @@ export {
 export { TickStep } from './scene/runtime/steps.js';
 export { default as Scene } from './components/Scene.svelte';
 export { default as Scenes } from './components/Scenes.svelte';
+export { default as CanvasScenes } from './components/CanvasScenes.svelte';
 export { default as Player } from './components/Player.svelte';
 export * from './timeline/index.js';
 export * from './editor/index.js';
@@ -122,3 +123,10 @@ export type {
 	RenderOptionsInput
 } from './scene/options.js';
 export type { Easing } from './scene/easing.js';
+export { all, defineProject, defineScene, tick, wait } from './canvas/index.js';
+export type {
+	ProjectDefinition,
+	SceneDefinition,
+	SceneInstance,
+	SceneTimeline as CanvasSceneTimeline
+} from './canvas/index.js';

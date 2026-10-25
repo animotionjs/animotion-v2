@@ -34,9 +34,11 @@
 	data-scene-stage
 	data-active={active ? '' : undefined}
 >
-	{#await entry.component() then { default: Content }}
-		<Scene {ratio}>
-			<Content />
-		</Scene>
-	{/await}
+	{#if entry.component}
+		{#await entry.component() then { default: Content }}
+			<Scene {ratio}>
+				<Content />
+			</Scene>
+		{/await}
+	{/if}
 </div>
