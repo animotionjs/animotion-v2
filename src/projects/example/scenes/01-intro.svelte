@@ -6,6 +6,8 @@
 		.layout((s) => (s.view = 'logo'), 0.6, { ease: easeInOut, enter: 'scale' });
 </script>
 
+<div data-chapter>Introduction</div>
+
 <div data-notes>
 	Welcome to Animotion, a Svelte engine for building animated presentations. Press the right arrow
 	to move through the steps.

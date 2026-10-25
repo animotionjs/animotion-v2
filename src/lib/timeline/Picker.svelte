@@ -15,7 +15,7 @@
 
 <label class="contents text-xs text-foreground/60">
 	{label}:
-	<select class="rounded bg-surface px-1 py-1 text-xs text-foreground" bind:value>
+	<select class="rounded bg-surface px-1 py-1 text-xs text-foreground" name={label} bind:value>
 		{#each options as option (option.value)}
 			<option value={option.value}>{option.label}</option>
 		{/each}

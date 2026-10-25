@@ -12,7 +12,7 @@ import { resolveScenes } from './scenes.ts';
 import { defaultProjectSlug } from '../server/projects.ts';
 import { sliceRanges, type SliceRange } from '../scene/runtime/slices.ts';
 import { PREVIEW_JPEG_QUALITY, type FrameFormat } from '../scene/options.ts';
-import type { AudioTrack } from '../scene/audio/tracks.ts';
+import { createAudioTrack, type AudioTrack } from '../scene/audio/tracks.ts';
 import { buildAudioFilters, buildMixFilter } from '../scene/audio/render-filters.ts';
 import type { RenderBridge } from '../scene/runtime/render-bridge.js';
 import type { RenderReport } from '../scene/runtime/report.js';
@@ -148,6 +148,11 @@ const pageErrors: string[] = [];
 const sceneStats: { id: string; frames: number; ms: number }[] = [];
 const sceneTracks = new Map<string, readonly AudioTrack[]>();
 const sceneTotals = new Map<string, number>();
+/*
+ * Narration belongs to the whole presentation, so it is applied once to the
+ * joined video rather than to each scene.
+ */
+let narrationTracks: readonly AudioTrack[] = [];
 const progress: {
 	id: string;
 	frames: number;
@@ -168,7 +173,9 @@ async function main() {
 		console.log(`animotion render [scenes...]
 
 Record a presentation into a video. Scenes with audio tracks
-automatically receive an AAC audio track.
+automatically receive an AAC audio track, and the project's
+voiceover is mixed in over the whole presentation. A voiceover
+clip that runs past the last frame is cut off at the end.
 
 Arguments:
   scenes             scene ids to render individually (default: all scenes)
@@ -372,6 +379,18 @@ Examples:
 		process.exit(1);
 	}
 
+	/*
+	 * Narration covers the whole presentation, so it is only mixed into a
+	 * joined render. A per scene render is one scene on its own, and splitting
+	 * a clip across scene files would defeat the point of it.
+	 */
+	if (joined) {
+		narrationTracks = await loadNarration(project);
+		if (narrationTracks.length > 0) {
+			console.log(`Found ${narrationTracks.length} narration clips.`);
+		}
+	}
+
 	const streaming = !args.framesOnly && !args.keepFrames;
 	/*
 	 * One scene being one job is simple but wasteful whenever scene lengths
@@ -573,7 +592,8 @@ Examples:
 	console.log(
 		`Captured ${targets.length} scenes, ${totalFrames} frames in ${captureElapsed.toFixed(2)}s`
 	);
-	const hasAudio = targets.some((id) => (sceneTracks.get(id)?.length ?? 0) > 0);
+	const hasAudio =
+		targets.some((id) => (sceneTracks.get(id)?.length ?? 0) > 0) || narrationTracks.length > 0;
 
 	if (reporting && !args.framesOnly) report({ type: 'encoding' });
 
@@ -609,6 +629,7 @@ Examples:
 			} else {
 				console.log('Encoding final video...');
 				await concatSceneVideos(targets, args.out, hasAudio);
+				await addNarration(args.out, args);
 				console.log('Done. Output:', resolve(args.out));
 			}
 		} else {
@@ -1153,7 +1174,49 @@ async function encodePresentationWithAudio(ids: string[], args: ResolvedArgs) {
 	}
 	await addSceneAudio(ids, args, true);
 	await concatSceneVideos(ids, args.out, true);
+	await addNarration(args.out, args);
 	if (!args.keepFrames) await cleanupFrames(ids);
+}
+
+/**
+ * Loads the project's narration as audio tracks on the presentation clock.
+ *
+ * Clips are stored in absolute seconds, which is the same clock the joined
+ * video runs on, so a clip needs no translation and may span any number of
+ * scenes. A clip that ends past the video is simply cut off by the encode,
+ * and its stored length is left alone.
+ */
+async function loadNarration(project: string | null): Promise<readonly AudioTrack[]> {
+	if (project === null) return [];
+	const { readVoiceoverTrack, voiceoverFilePath } = await import('../server/voiceovers.ts');
+	try {
+		const track = await readVoiceoverTrack(project);
+		return track.clips.map((clip) =>
+			createAudioTrack(voiceoverFilePath(project, clip.file), {
+				at: clip.start,
+				trimStart: clip.trimStart,
+				duration: clip.duration
+			})
+		);
+	} catch (error) {
+		console.warn(`Skipping narration: ${(error as Error).message}`);
+		return [];
+	}
+}
+
+/** Mixes the narration over the finished video, when the project has any. */
+async function addNarration(video: string, args: ResolvedArgs) {
+	if (narrationTracks.length === 0) return;
+	const duration = totalPresentationDuration(args);
+	console.log(`Mixing ${narrationTracks.length} narration clips...`);
+	await muxTracksInPlace(video, narrationTracks, duration);
+}
+
+/** Seconds of video actually produced, across every captured scene. */
+function totalPresentationDuration(args: ResolvedArgs) {
+	let total = 0;
+	for (const frames of sceneTotals.values()) total += frames / args.fps;
+	return total;
 }
 
 /**
@@ -1193,6 +1256,70 @@ async function muxSceneAudioInPlace(
 		await rm(temp, { force: true });
 		throw error;
 	}
+}
+
+/**
+ * Replaces a video's audio with a mix of local files, leaving the picture
+ * untouched. Narration is read straight from disk because the recordings are
+ * part of the project, so there is nothing to download.
+ */
+async function muxTracksInPlace(video: string, tracks: readonly AudioTrack[], duration: number) {
+	const temp = `${video}.narration.mp4`;
+	try {
+		await muxTrackFiles(video, temp, tracks, duration);
+		await rm(video, { force: true });
+		await rename(temp, video);
+	} catch (error) {
+		await rm(temp, { force: true });
+		throw error;
+	}
+}
+
+async function muxTrackFiles(
+	video: string,
+	out: string,
+	tracks: readonly AudioTrack[],
+	duration: number
+) {
+	const inputs: string[] = ['-i', video];
+	for (const track of tracks) inputs.push('-i', track.src);
+
+	const graph = buildAudioFilters(tracks, duration);
+	const filters = [...graph.filters];
+	/*
+	 * The mix ends with the last clip, but the video runs to the end of the
+	 * presentation. Padding extends the mix so both streams cover the whole
+	 * file, which is what a player expects.
+	 */
+	filters.push(
+		`${buildMixFilter(graph.mixInputs)},aresample=48000,aformat=channel_layouts=stereo,apad=whole_dur=${duration.toFixed(6)}[outa]`
+	);
+
+	await runFfmpeg([
+		'-y',
+		'-loglevel',
+		'error',
+		...inputs,
+		'-filter_complex',
+		filters.join(';'),
+		'-map',
+		'0:v:0',
+		'-map',
+		'[outa]',
+		'-c:v',
+		'copy',
+		'-c:a',
+		'pcm_s16le',
+		'-ar',
+		'48000',
+		'-ac',
+		'2',
+		'-t',
+		duration.toFixed(6),
+		'-movflags',
+		'+faststart',
+		out
+	]);
 }
 
 async function muxSceneAudio(

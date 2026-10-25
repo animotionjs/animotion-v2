@@ -169,6 +169,7 @@
 				{#each items as item (item.slug)}
 					{const open = `/presentation/${encodeURIComponent(item.slug)}`}
 					{const edit = `/timeline/${encodeURIComponent(item.slug)}`}
+					{const compose = `/editor/${encodeURIComponent(item.slug)}`}
 					<div class="flex items-center gap-1 rounded-lg px-3 py-2 hover:bg-white/5">
 						{#if renaming === item.slug}
 							<form
@@ -219,6 +220,24 @@
 								<span class="truncate">{item.name}</span>
 							</a>
 						{/if}
+						<a
+							class="shrink-0 px-1 opacity-40 hover:opacity-100"
+							href={compose}
+							title="Open in editor"
+							aria-label={`Open ${item.name} in editor`}
+						>
+							<svg
+								width="18"
+								height="18"
+								viewBox="0 0 24 24"
+								fill="none"
+								stroke="currentColor"
+								stroke-width="2"
+								stroke-linecap="round"
+							>
+								<path d="M3 6h12M3 12h18M3 18h8" />
+							</svg>
+						</a>
 						<a
 							class="shrink-0 px-1 opacity-40 hover:opacity-100"
 							href={edit}

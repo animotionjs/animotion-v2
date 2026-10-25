@@ -96,7 +96,7 @@
 	async function reveal() {
 		actionError = null;
 		try {
-			await openRenderFolder();
+			await openRenderFolder(project);
 		} catch (e) {
 			actionError = messageOf(e);
 		}

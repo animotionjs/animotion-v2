@@ -407,6 +407,51 @@ Every frame is driven by the same engine and FPS used to render, so what you scr
 
 The render attaches to the dev server you are already running, so the page never reloads, and one render runs at a time. Video renders land in `rendered/<slug>/<id>.mp4` (previews in `rendered/<slug>/<id>.preview.mp4`), full presentations in `rendered/<slug>/video.mp4` or whatever `configure({ render: { out } })` names, and image sequences in `rendered/<slug>/frames/<id>/` as `frame_000001.png` files.
 
+A full presentation render also mixes in the project's voiceover, if it has one. Narration is laid over the joined video in a single pass, so a clip that crosses a scene boundary needs nothing special, and a clip that ends past the last frame is cut off there.
+
+## Editing the whole presentation
+
+The `/editor/[slug]/[[scene]]` route lays the presentation out as one timeline. Visit `/editor/example` to open it, or `/editor/example/about` to open on a scene.
+
+The editor shows the scene on screen at the top and the timeline at the bottom:
+
+- **Scenes track**: one block per scene laid end to end, each as long as the scene's own timing. Inside a block, the enter transition is shaded, each step is divided, and holds and waits are hatched, so you can see where the scene rests and where it moves.
+- **Voiceover track**: always drawn under the scenes track, so its purpose is clear before anything is recorded. It spans the whole presentation, never one scene.
+- **Playhead**: one line across the whole presentation. Playback runs from the first scene to the last without pausing at a boundary, and it shows the real transition, where the leaving scene plays its exit under the entering scene's enter.
+- **Transport**: play and pause, one frame at a time, jump to the previous or next scene. Playback stops on the last frame.
+
+Pan the timeline by scrolling and zoom with `ctrl` or `cmd` and the wheel, the zoom buttons, or the keys below. The viewport follows the playhead while the clock runs. The timeline opens fitted to the whole presentation and keeps fitting as scenes are measured, until you zoom by hand. Zooming out goes below a fit, so the whole show can be pulled back with margin.
+
+| Key               | Action                            |
+| ----------------- | --------------------------------- |
+| `space`           | Play / pause                      |
+| `←` / `→`         | Nudge one frame                   |
+| `shift` + `←` `→` | Jump to the previous / next scene |
+| `Home` / `End`    | Go to the start / the end         |
+| `+` / `-`         | Zoom in / out                     |
+| `f`               | Fit the whole presentation        |
+| `r`               | Record a voiceover                |
+
+Scene lengths come from a measuring pass, because a scene only reports its timing once its component has mounted. The editor mounts each scene once, off screen, reads its timing, then unmounts it. Measured lengths are cached for the session and keyed by scene and frame rate, so a rate change measures at the new rate, changing back reuses what was already measured, and navigating between scenes never measures twice. Only the scene under the playhead stays alive.
+
+### Settings and rendering
+
+The `settings` menu in the editor header owns `aspect`, `resolution`, `fps`, `quality` and `output`. It opens seeded from config, and the preview and the render both read it, so what you see is what gets written. Changing the aspect or the resolution reshapes the preview stage, and changing the frame rate moves the frame grid, the snapping and every measured block to the new rate together. Render quality and output are render only choices that do not touch the timeline.
+
+The `render` button renders the whole presentation with the current settings. It attaches to the dev server you are already running, just like the timeline render, and one render runs at a time.
+
+### Voiceover
+
+A presentation can carry narration recorded in the editor. The voiceover track sits under the scenes track and spans the whole presentation rather than any one scene, so a clip may begin and end anywhere, including across a scene boundary.
+
+Move the playhead where you want to speak and press `r`, or use the record button in the transport. The clock freezes while recording, so a take keeps the place you started it. The take is drawn on the track as it is captured, with its waveform growing, and it settles into a saved clip when you stop. Press `r` again or the `stop` button to keep it. The `voiceover` button in the transport toggles whether narration is audible in the preview, next to a speaker icon.
+
+Clips drag along the track with the pointer, land on frame boundaries, and can be nudged with `←` and `→` or deleted with `Delete`. Clips cannot overlap, and a recording that runs into the next clip stops itself and keeps what fits. Narration plays through the preview continuously, across every scene boundary.
+
+Recordings are written to `src/projects/<slug>/voiceover/` as 48 kHz mono 16 bit WAV, next to the scenes, so they belong to the project and are committed with it. The format is uncompressed on purpose: nothing is lost before the export encodes it, and there is room to work on the audio later.
+
+A clip may run past the end of the last scene, and dragging it back is how that is fixed. When the video renders, narration is mixed over the whole presentation in one pass, and anything past the last frame is cut off. The stored clip keeps its full length either way.
+
 ## Configuration
 
 The `src/lib/config/` directory holds the presentation settings.

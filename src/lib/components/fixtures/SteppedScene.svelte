@@ -11,5 +11,7 @@
 	const label = getSceneId()();
 </script>
 
+<div data-chapter>Fixture chapter</div>
+
 <p data-testid="stage-scene">{label}</p>
 <span data-testid="stage-step" style:opacity={scene.opacity}></span>

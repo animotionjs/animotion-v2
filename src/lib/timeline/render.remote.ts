@@ -67,8 +67,9 @@ export const cancelRender = command(async () => {
 	cancelRunningRender();
 });
 
-export const openRenderFolder = command(async () => {
-	await openRenderedFolder();
+export const openRenderFolder = command('unchecked', async (project: unknown) => {
+	if (project != null && typeof project !== 'string') error(400, 'Invalid project');
+	await openRenderedFolder(project ?? null);
 });
 
 export const renderStatus = query.live(async function* () {

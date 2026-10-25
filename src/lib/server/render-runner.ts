@@ -1,6 +1,6 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import { mkdir } from 'node:fs/promises';
-import { dirname, basename } from 'node:path';
+import { dirname, basename, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 /*
  * Applying the project config keeps the default output path in sync with
@@ -9,6 +9,7 @@ import { fileURLToPath } from 'node:url';
 import '#lib/config/configure.js';
 import { getOptions, PREVIEW_JPEG_QUALITY, resolveRenderSize } from '../scene/options.js';
 import { parseRenderReport } from '../scene/runtime/report.js';
+import { flushVoiceoverWrites } from './voiceovers.js';
 import type { AspectRatio, ResolutionName } from '../scene/options.js';
 
 /*
@@ -98,20 +99,37 @@ export function cancelRender() {
 	update({ phase: 'idle', output: null, error: null, duration: null });
 }
 
-/** Opens the folder of the last finished render in the platform file manager. */
-export async function openRenderedFolder() {
-	if (current.phase !== 'done' || !outputFolder) throw new Error('Nothing was rendered yet');
+/**
+ * Opens the folder where renders for `project` land, in the platform file
+ * manager. The folder is opened whether or not a render has run this session,
+ * because the button is about reaching the output, not about the last render.
+ * It is created when missing, so the click always lands somewhere real.
+ */
+export async function openRenderedFolder(project: string | null = null) {
 	const opener = OPENERS[process.platform] ?? 'xdg-open';
-	return new Promise<void>((resolve, reject) => {
-		const proc = spawn(opener, [outputFolder], { detached: true, stdio: 'ignore' });
-		proc.on('error', () => reject(new Error(`Could not open ${outputFolder}`)));
+	/*
+	 * A finished render knows its exact folder. An images render lands in
+	 * rendered/<project>/frames, which a guess from the project alone would
+	 * miss, so that path is preferred while it is known.
+	 */
+	const known =
+		current.phase === 'done' && outputFolder
+			? outputFolder
+			: project
+				? `${OUT_DIR}/${project}`
+				: OUT_DIR;
+	await mkdir(known, { recursive: true });
+	const folder = resolve(known);
+	return new Promise<void>((done, reject) => {
+		const proc = spawn(opener, [folder], { detached: true, stdio: 'ignore' });
+		proc.on('error', () => reject(new Error(`Could not open ${folder}`)));
 		/*
 		 * Windows explorer exits with code 1 even when it opened the folder,
 		 * so there a spawn error is the only way the request can fail.
 		 */
 		proc.on('exit', (code) => {
-			if (process.platform === 'win32' || code === 0) resolve();
-			else reject(new Error(`Could not open ${outputFolder}`));
+			if (process.platform === 'win32' || code === 0) done();
+			else reject(new Error(`Could not open ${folder}`));
 		});
 		proc.unref();
 	});
@@ -119,6 +137,12 @@ export async function openRenderedFolder() {
 
 export async function startRender(input: StartRenderInput) {
 	if (child) throw new Error('A render is already running');
+
+	/*
+	 * A recording still in flight is only in memory, so the queued writes are
+	 * flushed before ffmpeg looks for the narration files.
+	 */
+	await flushVoiceoverWrites();
 
 	const { width, height } = resolveRenderSize(input.aspect, input.resolution);
 	/*

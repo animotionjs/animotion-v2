@@ -67,6 +67,7 @@ const STARTER_SCENE = `<script lang="ts">
 </script>
 
 <div data-notes>What I say when this slide is on screen.</div>
+<div data-chapter>Opening title</div>
 
 <div class="text-6xl font-bold">
 	{#if scene.view === 'logo'}

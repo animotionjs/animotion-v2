@@ -1,12 +1,34 @@
 import tailwindcss from '@tailwindcss/vite';
-import { defineConfig } from 'vitest/config';
+import { resolve } from 'node:path';
+import { defineConfig, type Plugin } from 'vitest/config';
 import { playwright } from '@vitest/browser-playwright';
 import adapter from '@sveltejs/adapter-auto';
 import { sveltekit } from '@sveltejs/kit/vite';
 
+/*
+ * Tailwind records every scanned file as a dependency of the stylesheet, so an
+ * edit to one reaches the browser. A scene added after that scan is not a
+ * dependency yet, so its classes stay off the client until the page reloads.
+ * Watch added scenes and emit the stylesheet as changed again, so Vite runs its
+ * normal CSS update and the first render is styled.
+ */
+function sceneStylesRefresh(): Plugin {
+	return {
+		name: 'animotion-scene-styles',
+		configureServer(server) {
+			const theme = resolve(server.config.root, 'src/styles/theme.css');
+			server.watcher.on('add', (file) => {
+				if (!/\/src\/projects\/.*\.svelte$/.test(file)) return;
+				server.watcher.emit('change', theme);
+			});
+		}
+	};
+}
+
 export default defineConfig({
 	plugins: [
 		tailwindcss(),
+		sceneStylesRefresh(),
 		sveltekit({
 			compilerOptions: {
 				// force runes mode for the project, except for libraries (can be removed in Svelte 6)
@@ -20,10 +42,13 @@ export default defineConfig({
 	],
 	server: {
 		/*
-		 * Project manifests are read with the file system on demand, never
-		 * imported, so watching them only causes pointless page reloads.
+		 * Scene components are imported by the editor, so editing one must reach
+		 * the browser. A project's voiceover audio and track are read with the file
+		 * system on demand, so watching them only causes pointless page reloads.
 		 */
-		watch: { ignored: ['**/src/projects/**/project.json'] }
+		watch: {
+			ignored: ['**/src/projects/**/voiceover/**', '**/src/projects/**/project.json']
+		}
 	},
 	test: {
 		expect: { requireAssertions: true },

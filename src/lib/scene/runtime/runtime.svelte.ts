@@ -806,7 +806,13 @@ export class SceneManager {
 			this.playEnter();
 		} else {
 			this.#liveTimeOffset = this.#tracks.length > 0 ? this.enterDuration : 0;
-			this.#resetTransitionState();
+			/*
+			 * A suppressed enter belongs to whoever called `suppressEnter`, and
+			 * the load event above has already let them position the scene. A
+			 * reset here would undo that and show the scene in its natural
+			 * state for a frame.
+			 */
+			if (!this.#suppressEnter) this.#resetTransitionState();
 			this.#emitPlaybackChange();
 		}
 		this.#firstLoad = false;

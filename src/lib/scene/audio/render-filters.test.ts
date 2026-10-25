@@ -78,6 +78,24 @@ describe('buildAudioFilters', () => {
 		);
 	});
 
+	it('delays a clip that starts partway through the presentation', () => {
+		const { filters } = buildAudioFilters(
+			[createAudioTrack('narration.wav', { at: 12.5, duration: 3 })],
+			20
+		);
+		expect(filters[0]).toContain('adelay=12500:all=1');
+		expect(filters[0]).toContain('atrim=start=0:end=3');
+	});
+
+	it('keeps a clip that starts past the end of the video', () => {
+		// a clip may outlive the video, and the encode is what cuts it off
+		const { filters } = buildAudioFilters(
+			[createAudioTrack('narration.wav', { at: 18, duration: 6 })],
+			10
+		);
+		expect(filters[0]).toContain('adelay=18000:all=1');
+	});
+
 	it('speeds the render tape style and trims source seconds', () => {
 		const { filters } = buildAudioFilters([createAudioTrack('a.mp3', { duration: 2, rate: 2 })], 6);
 		expect(filters[0]).toContain('atrim=start=0:end=4');
