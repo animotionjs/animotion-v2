@@ -58,6 +58,8 @@ export class CanvasSceneManager implements UiScenePlayback {
 	finished = false;
 	time = 0;
 	#width: number;
+	#lastTime = 0;
+	#lastTransition: TransitionState = IDENTITY_TRANSITION;
 	#render: ((time: number, transition: TransitionState) => void) | null = null;
 
 	constructor(instance: SceneInstance, width = 1920) {
@@ -111,11 +113,17 @@ export class CanvasSceneManager implements UiScenePlayback {
 		this.seekToTime(this.enterDuration + this.instance.duration);
 	}
 
+	redraw() {
+		this.#render?.(this.#lastTime, this.#lastTransition);
+	}
+
 	clear() {
 		this.#render = null;
 	}
 
 	#draw(time: number, transition: TransitionState) {
+		this.#lastTime = time;
+		this.#lastTransition = transition;
 		this.#render?.(time, transition);
 	}
 }

@@ -44,7 +44,14 @@
 		onmeasured(entry.id, timeline, entry.chapter ?? '');
 		controller.attach(entry.id, manager);
 
+		const observer = new ResizeObserver(() => {
+			renderer.resize();
+			manager.redraw();
+		});
+		observer.observe(canvas);
+
 		return () => {
+			observer.disconnect();
 			controller.detach(entry.id);
 			manager.clear();
 		};

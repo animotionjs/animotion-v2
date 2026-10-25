@@ -5,8 +5,6 @@ export interface RendererOptions {
 	height?: number;
 	/** Background fill, or `null` to leave the canvas transparent. */
 	background?: string | null;
-	/** Backing-store pixels per logical unit. Defaults to the canvas's on-screen density. */
-	scale?: number;
 }
 
 const IDENTITY: TransitionState = { opacity: 1, x: 0, y: 0, scale: 1 };
@@ -15,7 +13,7 @@ export class CanvasRenderer {
 	readonly width: number;
 	readonly height: number;
 	readonly background: string | null;
-	readonly scale: number;
+	scale: number;
 	#canvas: HTMLCanvasElement;
 	#scene: SceneInstance;
 	#ctx: CanvasRenderingContext2D;
@@ -26,25 +24,33 @@ export class CanvasRenderer {
 		this.width = options.width ?? 1920;
 		this.height = options.height ?? 1080;
 		this.background = options.background === undefined ? '#09090b' : options.background;
+		this.scale = 1;
 
 		if (canvas.width !== this.width) canvas.width = this.width;
 		if (canvas.height !== this.height) canvas.height = this.height;
 
-		const density = typeof window === 'undefined' ? 1 : window.devicePixelRatio || 1;
-		let available = this.width;
-		if (canvas.clientWidth > 0) available = canvas.clientWidth;
-		else if (typeof window !== 'undefined') available = window.innerWidth;
-		const shown = available / this.width;
-		this.scale = options.scale ?? Math.max(1, shown * density);
-
-		const pixelWidth = Math.max(1, Math.round(this.width * this.scale));
-		const pixelHeight = Math.max(1, Math.round(this.height * this.scale));
-		if (canvas.width !== pixelWidth) canvas.width = pixelWidth;
-		if (canvas.height !== pixelHeight) canvas.height = pixelHeight;
-
 		const context = canvas.getContext('2d');
 		if (!context) throw new Error('CanvasRenderer requires a 2D canvas context.');
 		this.#ctx = context;
+
+		this.resize();
+	}
+
+	/** Matches the backing store to the canvas's on-screen size. */
+	resize() {
+		const density = typeof window === 'undefined' ? 1 : window.devicePixelRatio || 1;
+		let available = this.width;
+		if (this.#canvas.clientWidth > 0) available = this.#canvas.clientWidth;
+		else if (typeof window !== 'undefined') available = window.innerWidth;
+		const shown = available / this.width;
+		const scale = Math.max(0.1, shown * density);
+		if (Math.abs(scale - this.scale) < 1e-6) return;
+
+		this.scale = scale;
+		const pixelWidth = Math.max(1, Math.round(this.width * scale));
+		const pixelHeight = Math.max(1, Math.round(this.height * scale));
+		if (this.#canvas.width !== pixelWidth) this.#canvas.width = pixelWidth;
+		if (this.#canvas.height !== pixelHeight) this.#canvas.height = pixelHeight;
 	}
 
 	draw(time = 0) {
