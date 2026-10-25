@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { onDestroy, untrack } from 'svelte';
-	import { getOptions, ASPECT_RATIOS } from '../scene/options.js';
+	import { getOptions, resolveShapeSize } from '../scene/options.js';
 	import EditorScene from './EditorScene.svelte';
 	import CanvasEditorScene from '../canvas/CanvasEditorScene.svelte';
 	import EditorTimeline from './EditorTimeline.svelte';
@@ -23,6 +23,7 @@
 	import type { EditorSettings } from './settings.js';
 	import type { SceneEntry, Sequence } from '../scene/runtime/sequence.js';
 	import type { UiTimeline } from '../canvas/ui.js';
+	import type { AspectRatio } from '../scene/options.js';
 
 	interface Props {
 		/** Ordered scenes laid out on the timeline. */
@@ -40,17 +41,25 @@
 	 * grid and the render all read this one object, so nothing can drift
 	 * between what is shown and what is written.
 	 */
+	const projectEntry = untrack(() => sequence[0]);
+	const projectWidth = untrack(() => projectEntry?.width ?? 1920);
+	const projectHeight = untrack(() => projectEntry?.height ?? 1080);
+	const projectAspect: AspectRatio = untrack(() => {
+		if (Math.abs(projectWidth - projectHeight) < 1e-6) return 'square';
+		if (projectHeight > projectWidth) return 'vertical';
+		return 'video';
+	});
+
 	let settings = $state<EditorSettings>({
-		aspect: getOptions().aspectRatio.name,
+		aspect: projectAspect,
 		resolution: getOptions().render.resolution ?? '1080p',
 		fps: getOptions().render.fps,
 		quality: 'full',
 		output: 'video'
 	});
 
-	const ratio = $derived(
-		ASPECT_RATIOS[settings.aspect].width / ASPECT_RATIOS[settings.aspect].height
-	);
+	const ratio = projectWidth / projectHeight;
+	const renderSize = $derived(resolveShapeSize(projectWidth, projectHeight, settings.resolution));
 
 	const controller = untrack(() => new EditorController(sequence, settings.fps));
 	const voiceover = untrack(() => new EditorVoiceover(controller, project));
@@ -177,6 +186,8 @@
 				scene: null,
 				project,
 				aspect: settings.aspect,
+				width: renderSize.width,
+				height: renderSize.height,
 				resolution: settings.resolution,
 				fps: settings.fps,
 				quality: settings.quality,

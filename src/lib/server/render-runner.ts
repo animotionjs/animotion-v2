@@ -33,6 +33,10 @@ export interface StartRenderInput {
 	aspect: AspectRatio;
 	resolution: ResolutionName;
 	fps: number;
+	/** Project width, or undefined to fall back to the configured aspect preset. */
+	width?: number;
+	/** Project height, or undefined to fall back to the configured aspect preset. */
+	height?: number;
 	/** Speed versus fidelity tradeoff picked in the timeline UI. */
 	quality: QualityTier;
 	/** Whether frames become a single video or a folder of image files. */
@@ -144,7 +148,10 @@ export async function startRender(input: StartRenderInput) {
 	 */
 	await flushVoiceoverWrites();
 
-	const { width, height } = resolveRenderSize(input.aspect, input.resolution);
+	const { width, height } =
+		input.width && input.height
+			? { width: input.width, height: input.height }
+			: resolveRenderSize(input.aspect, input.resolution);
 	/*
 	 * Drafts write to their own file, so a preview render never clobbers the
 	 * full quality output.

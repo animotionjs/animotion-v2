@@ -16,6 +16,7 @@ export {
 	group,
 	rect,
 	text,
+	wrapText,
 	type NodeInit,
 	type NodeState,
 	type NodeValues,
@@ -23,6 +24,18 @@ export {
 	type Size,
 	type TextInit
 } from './nodes.js';
+export {
+	applyShadow,
+	clearShadow,
+	resolvePaint,
+	type GradientPaint,
+	type GradientStop,
+	type LinearGradientPaint,
+	type Paint,
+	type RadialGradientPaint,
+	type Shadow
+} from './paint.js';
+export { ImageNode, VideoNode, type MediaFit } from './media.js';
 export {
 	Animation,
 	ParallelStep,
@@ -47,7 +60,14 @@ export {
 	type TimelineStep,
 	type TransitionState
 } from './scene.js';
-export { CodeNode, type CodeNodeInit } from './code-node.js';
+export {
+	CodeNode,
+	position,
+	range,
+	type CodeNodeInit,
+	type CodePosition,
+	type CodeRange
+} from './code-node.js';
 export { AudioPlayer, type AudioCue, type AudioOptions } from './audio.js';
 export {
 	Camera,
@@ -58,7 +78,14 @@ export {
 } from './camera.js';
 export { LayoutStep, type LayoutOptions, type LayoutTransition } from './layout.js';
 export { findNode, measureWorld, getMeasureContext, type Bounds } from './measure.js';
-export { CanvasRenderer, type RendererOptions } from './renderer.js';
+export { CanvasRenderer, type RendererFit, type RendererOptions } from './renderer.js';
+export {
+	enterTransition,
+	exitTransition,
+	resolveTransition,
+	type ResolvedTransition
+} from './transition.js';
+export { CanvasSceneManager, toUiTimeline, type UiScenePlayback, type UiTimeline } from './ui.js';
 export {
 	defineProject,
 	projectDuration,

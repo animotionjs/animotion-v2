@@ -25,9 +25,19 @@ export type ResolutionName = keyof typeof RESOLUTIONS;
  */
 export function resolveRenderSize(aspect: AspectRatio, resolution: ResolutionName) {
 	const { width: pw, height: ph } = ASPECT_RATIOS[aspect];
+	return resolveShapeSize(pw, ph, resolution);
+}
+
+/**
+ * Scales a project's own shape up to a size tier. The smaller side matches
+ * the tier, so a project keeps its exact aspect at every resolution.
+ */
+export function resolveShapeSize(width: number, height: number, resolution: ResolutionName) {
 	const tier = RESOLUTIONS[resolution];
-	if (pw <= ph) return { width: tier, height: Math.round((tier * ph) / pw) };
-	return { width: Math.round((tier * pw) / ph), height: tier };
+	// video encoders expect even dimensions, so round outwards to the next pair
+	const even = (value: number) => Math.max(2, Math.round(value / 2) * 2);
+	if (width <= height) return { width: even(tier), height: even((tier * height) / width) };
+	return { width: even((tier * width) / height), height: even(tier) };
 }
 
 /** Frame image format captured from the page. */
@@ -96,9 +106,9 @@ export interface TransitionConfig {
 	duration?: number;
 	/** Easing applied to the transition. Defaults to `easeInOut`. */
 	ease?: Easing;
-	/** Slide distance in px (slide only). Defaults to `100`. */
+	/** Slide distance in scene units (slide only). Defaults to the scene width. */
 	distance?: number;
-	/** Starting scale factor (zoom only). Defaults to `0.5`. */
+	/** Starting and ending scale factor (zoom only). Defaults to `0.5`. */
 	scale?: number;
 }
 

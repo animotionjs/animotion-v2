@@ -77,6 +77,7 @@ export class EditorController {
 	/** The guest whose finished frame has been pinned this handoff. */
 	#guestScene: string | null = null;
 	#listeners = new SvelteSet<() => void>();
+	#direction: 'forward' | 'backward' = 'forward';
 
 	constructor(sequence: Sequence, fps: number) {
 		this.#sequence = sequence;
@@ -238,7 +239,9 @@ export class EditorController {
 	seek(seconds: number) {
 		if (this.locked) return;
 		this.pause();
-		this.time = this.snap(seconds);
+		const target = this.snap(seconds);
+		this.#direction = target >= this.time ? 'forward' : 'backward';
+		this.time = target;
 		this.#bodyScene = null;
 		this.#syncIndices();
 		this.#positionActive();
@@ -294,6 +297,7 @@ export class EditorController {
 			this.#rewindActive();
 		}
 		this.playing = true;
+		this.#direction = 'forward';
 		this.#bodyScene = null;
 		this.#lastNow = performance.now();
 		this.#accumulator = 0;
@@ -308,6 +312,7 @@ export class EditorController {
 		}
 		if (!this.playing) return;
 		this.playing = false;
+		for (const manager of this.#managers.values()) manager.pause?.();
 		this.#emit();
 	}
 
@@ -427,6 +432,7 @@ export class EditorController {
 		const lane = this.lanes[this.activeIndex];
 		const manager = lane && this.#managers.get(lane.id);
 		if (!lane || !manager) return;
+		manager.setDirection?.(this.#direction);
 		const enter = lane.timeline?.enterDuration ?? 0;
 		const local = this.time - lane.start;
 		if (enter > 0 && local < enter) {
@@ -456,6 +462,7 @@ export class EditorController {
 		const lane = this.lanes[index];
 		const manager = lane && this.#managers.get(lane.id);
 		if (!lane || !manager || !manager.loaded) return;
+		manager.setDirection?.(this.#direction);
 
 		if (this.#guestScene !== lane.id) {
 			/*
@@ -466,8 +473,8 @@ export class EditorController {
 			manager.seekToTime(manager.timeline.totalDuration);
 			this.#guestScene = lane.id;
 		}
-		const exit = manager.exitDuration;
-		manager.setExitProgress(exit > 0 ? clamp(local / exit, 0, 1) : 1);
+		const enter = this.lanes[this.activeIndex]?.timeline?.enterDuration ?? manager.exitDuration;
+		manager.setExitProgress(enter > 0 ? clamp(local / enter, 0, 1) : 1);
 	}
 
 	/** Stops at the last frame. */

@@ -154,10 +154,10 @@ export class LayoutStep implements Step {
 		this.#states = null;
 	}
 
-	drawOverlay(ctx: CanvasRenderingContext2D) {
+	drawOverlay(ctx: CanvasRenderingContext2D, time = 0) {
 		for (const { node, bounds } of this.#exiting) {
 			const alpha = this.#exit === 'fade' ? node.layoutAlpha() : 1;
-			node.drawGhost(ctx, bounds.x, bounds.y, alpha);
+			node.drawGhost(ctx, bounds.x, bounds.y, alpha, time);
 		}
 	}
 

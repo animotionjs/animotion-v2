@@ -8,7 +8,7 @@ export interface Step {
 	setProgress(progress: number): void;
 	end(): void;
 	revert(): void;
-	drawOverlay?(ctx: CanvasRenderingContext2D): void;
+	drawOverlay?(ctx: CanvasRenderingContext2D, time: number): void;
 }
 
 export class WaitStep implements Step {
@@ -147,8 +147,8 @@ export class ParallelStep implements Step {
 		for (const step of this.steps) step.revert();
 	}
 
-	drawOverlay(ctx: CanvasRenderingContext2D) {
-		for (const step of this.steps) step.drawOverlay?.(ctx);
+	drawOverlay(ctx: CanvasRenderingContext2D, time: number) {
+		for (const step of this.steps) step.drawOverlay?.(ctx, time);
 	}
 }
 

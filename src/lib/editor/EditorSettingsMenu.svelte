@@ -1,10 +1,5 @@
 <script lang="ts">
-	import {
-		ASPECT_RATIOS,
-		RESOLUTIONS,
-		type AspectRatio,
-		type ResolutionName
-	} from '../scene/options.js';
+	import { RESOLUTIONS, type ResolutionName } from '../scene/options.js';
 	import Picker from '../timeline/Picker.svelte';
 	import type { EditorSettings, EditorQuality } from './settings.js';
 
@@ -26,10 +21,6 @@
 
 	let open = $state(false);
 
-	const aspectOptions = (Object.keys(ASPECT_RATIOS) as AspectRatio[]).map((name) => ({
-		value: name,
-		label: name
-	}));
 	const resolutionOptions = (Object.keys(RESOLUTIONS) as ResolutionName[]).map((name) => ({
 		value: name,
 		label: name
@@ -82,7 +73,7 @@
 		<div
 			class="absolute right-0 z-20 mt-1 flex w-56 flex-col gap-3 rounded border border-foreground/10 bg-background p-3 shadow-xl"
 		>
-			<Picker label="aspect" bind:value={settings.aspect} options={aspectOptions} />
+			<p class="text-xs text-foreground/60">aspect: {settings.aspect} (from project size)</p>
 			<Picker label="resolution" bind:value={settings.resolution} options={resolutionOptions} />
 			<Picker label="fps" bind:value={settings.fps} options={rateOptions} />
 			<Picker label="quality" bind:value={settings.quality} options={qualityOptions} />

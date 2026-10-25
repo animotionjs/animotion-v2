@@ -44,6 +44,7 @@ export default defineScene(
 	{
 		chapter: 'Layout',
 		notes:
-			'The layout step glides keyed nodes between measured positions. Every node carries a layout key so the engine can match it across states. Watch the list reverse.'
+			'The layout step glides keyed nodes between measured positions. Every node carries a layout key so the engine can match it across states. Watch the list reverse.',
+		transition: { type: 'zoom', duration: 0.6, scale: 0.85 }
 	}
 );

@@ -6,22 +6,27 @@ export default defineScene(
 	// eslint-disable-next-line require-yield
 	function* (s) {
 		s.text('About', {
-			y: -29,
+			y: -86,
 			fontSize: 48,
 			fontWeight: 700,
 			fill: '#ffffff'
 		});
 
-		s.text('Svelte 5 + SvelteKit + Tailwind CSS 4', {
-			y: 37,
-			fontSize: 25,
-			fontWeight: 400,
-			fill: '#9ca3af'
-		});
+		s.body(
+			'This talk is built with Svelte 5 runes, SvelteKit, and Tailwind CSS 4. The animations are driven by a canvas scene builder, not CSS keyframes, so every frame can be seeked, scrubbed, and rendered as video.',
+			{
+				y: 44,
+				maxWidth: 920,
+				lineHeight: 1.5,
+				fontSize: 25,
+				fill: '#9ca3af'
+			}
+		);
 	},
 	{
 		chapter: 'About',
 		notes:
-			'This talk is built with Svelte 5 runes, SvelteKit, and Tailwind CSS 4. The animations are driven by the scene builder, not CSS keyframes.'
+			'This talk is built with Svelte 5 runes, SvelteKit, and Tailwind CSS 4. The animations are driven by the scene builder, not CSS keyframes. Long text wraps to its measured width.',
+		transition: { type: 'fade', duration: 0.5 }
 	}
 );

@@ -71,6 +71,7 @@ export default defineScene(
 	{
 		chapter: 'Tick',
 		notes:
-			'The tick step runs a callback every frame with progress, time, deltaTime, and frame, letting you drive arbitrary state like a progress bar and a counter.'
+			'The tick step runs a callback every frame with progress, time, deltaTime, and frame, letting you drive arbitrary state like a progress bar and a counter.',
+		transition: { type: 'slide', duration: 0.45 }
 	}
 );

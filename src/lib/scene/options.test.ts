@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import { getOptions, resolveRenderSize, setOptions } from './options';
+import { getOptions, resolveRenderSize, resolveShapeSize, setOptions } from './options';
 
 beforeEach(() => {
 	setOptions({ aspectRatio: 'video', render: {}, transition: null });
@@ -76,6 +76,12 @@ describe('options', () => {
 		expect(resolveRenderSize('video', '720p')).toEqual({ width: 1280, height: 720 });
 		expect(resolveRenderSize('square', '4k')).toEqual({ width: 2160, height: 2160 });
 		expect(resolveRenderSize('vertical', '1080p')).toEqual({ width: 1080, height: 1920 });
+	});
+
+	it('keeps a project shape at every resolution', () => {
+		expect(resolveShapeSize(1920, 1080, '1080p')).toEqual({ width: 1920, height: 1080 });
+		expect(resolveShapeSize(1600, 1200, '720p')).toEqual({ width: 960, height: 720 });
+		expect(resolveShapeSize(1080, 1920, '2k')).toEqual({ width: 1440, height: 2560 });
 	});
 
 	it('exposes the tier in use, or null when dimensions take over', () => {

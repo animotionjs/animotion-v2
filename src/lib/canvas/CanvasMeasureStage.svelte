@@ -12,6 +12,10 @@
 
 	onMount(() => {
 		if (!entry.definition) return;
-		onmeasured(entry.id, toUiTimeline(entry.definition.timeline()), entry.chapter ?? '');
+		onmeasured(
+			entry.id,
+			toUiTimeline(entry.definition.timeline(), entry.definition.transition),
+			entry.chapter ?? ''
+		);
 	});
 </script>

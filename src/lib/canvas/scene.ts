@@ -1,5 +1,6 @@
 import { Camera, frame as cameraFrame, type CameraOptions, type CameraTarget } from './camera.js';
 import { CodeNode, type CodeNodeInit } from './code-node.js';
+import { ImageNode, VideoNode, type MediaFit } from './media.js';
 import { LayoutStep, type LayoutOptions } from './layout.js';
 import type { AudioCue, AudioOptions } from './audio.js';
 import {
@@ -13,6 +14,7 @@ import {
 	type TextInit
 } from './nodes.js';
 import { Animation, type Step } from './steps.js';
+import type { TransitionConfig } from '../scene/options.js';
 
 export interface TimelineStep {
 	index: number;
@@ -51,12 +53,16 @@ export interface SceneInstance {
 	seek(seconds: number): void;
 	draw(ctx: CanvasRenderingContext2D, transition?: TransitionState): void;
 	snapshot(): NodeSnapshot;
+	/** Called by async nodes when the picture needs to be drawn again. */
+	setInvalidate(callback: (() => void) | null): void;
 }
 
 export interface SceneDefinition {
 	readonly id: string;
 	readonly chapter?: string;
 	readonly notes?: string;
+	/** Overrides the configured scene transition, or disables it with `null`. */
+	readonly transition?: TransitionConfig | null;
 	create(): SceneInstance;
 	timeline(): SceneTimeline;
 }
@@ -103,6 +109,36 @@ export class SceneBuilder {
 
 	code(init: CodeNodeInit): CodeNode {
 		const node = new CodeNode(init);
+		this.root.add(node);
+		return node;
+	}
+
+	image(
+		init: {
+			src: string;
+			width?: number | null;
+			height?: number | null;
+			fit?: MediaFit;
+			radius?: number;
+		} & NodeInit
+	): ImageNode {
+		const node = new ImageNode(init);
+		this.root.add(node);
+		return node;
+	}
+
+	video(
+		init: {
+			src: string;
+			width?: number | null;
+			height?: number | null;
+			fit?: MediaFit;
+			radius?: number;
+			muted?: boolean;
+			loop?: boolean;
+		} & NodeInit
+	): VideoNode {
+		const node = new VideoNode(init);
 		this.root.add(node);
 		return node;
 	}
@@ -178,6 +214,7 @@ class Instance implements SceneInstance {
 	#completed = 0;
 	#active: number | null = null;
 	#activeProgress = 0;
+	#time = 0;
 
 	constructor(
 		readonly id: string,
@@ -185,7 +222,15 @@ class Instance implements SceneInstance {
 		readonly steps: readonly Step[],
 		readonly camera: Camera,
 		readonly audio: readonly AudioCue[]
-	) {}
+	) {
+		this.root.onInvalidate = () => this.#invalidate?.();
+	}
+
+	#invalidate: (() => void) | null = null;
+
+	setInvalidate(callback: (() => void) | null) {
+		this.#invalidate = callback;
+	}
 
 	get duration(): number {
 		return this.steps.reduce((total, step) => total + step.duration, 0);
@@ -209,6 +254,7 @@ class Instance implements SceneInstance {
 	seek(seconds: number) {
 		const total = this.duration;
 		const target = Math.min(total, Math.max(0, seconds));
+		this.#time = target;
 
 		if (target <= 0) {
 			this.#reset();
@@ -285,8 +331,8 @@ class Instance implements SceneInstance {
 		ctx.rotate((this.camera.deg() * Math.PI) / 180);
 		ctx.translate(-this.camera.x(), -this.camera.y());
 
-		this.root.draw(ctx);
-		for (const step of this.steps) step.drawOverlay?.(ctx);
+		this.root.draw(ctx, this.#time);
+		for (const step of this.steps) step.drawOverlay?.(ctx, this.#time);
 
 		ctx.restore();
 		ctx.restore();
@@ -332,7 +378,11 @@ function createInstance(id: string, build: SceneBuild): SceneInstance {
 export function defineScene(
 	id: string,
 	build: SceneBuild,
-	meta: { chapter?: string; notes?: string } = {}
+	meta: {
+		chapter?: string;
+		notes?: string;
+		transition?: TransitionConfig | null;
+	} = {}
 ): SceneDefinition {
 	let cachedTimeline: SceneTimeline | null = null;
 
@@ -340,6 +390,7 @@ export function defineScene(
 		id,
 		chapter: meta.chapter,
 		notes: meta.notes,
+		transition: meta.transition,
 		create: () => createInstance(id, build),
 		timeline: () => {
 			cachedTimeline ??= createInstance(id, build).timeline;

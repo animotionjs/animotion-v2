@@ -3,8 +3,13 @@
 	import { SvelteMap } from 'svelte/reactivity';
 	import { goto } from '$app/navigation';
 	import { AudioPlayer } from '../canvas/audio.js';
-	import { easeInOut } from '../canvas/easing.js';
 	import { CanvasRenderer } from '../canvas/renderer.js';
+	import {
+		enterTransition,
+		exitTransition,
+		resolveTransition,
+		type ResolvedTransition
+	} from '../canvas/transition.js';
 	import { PluginManager } from '../plugins/manager.svelte.js';
 	import { getOptions } from '../scene/options.js';
 	import type { AudioTrack } from '../scene/audio/tracks.js';
@@ -52,11 +57,16 @@
 
 	let outgoing = $state<SceneInstance | null>(null);
 	let outgoingTime = 0;
-	let transitionProgress = $state(isRender ? 0 : 1);
 	let direction: 'forward' | 'backward' = 'forward';
+	let activeTransition: ResolvedTransition | null = untrack(() =>
+		resolveTransition(scenes[sceneIndex]!.transition)
+	);
+	let transitionProgress = $state(
+		isRender && activeTransition && activeTransition.duration > 0 ? 0 : 1
+	);
 
 	/** Render mode advances the enter transition and each step on demand. */
-	let renderEnter = isRender;
+	let renderEnter = isRender && activeTransition !== null && activeTransition.duration > 0;
 	let renderEnd: number | null = null;
 	let renderExit = -1;
 
@@ -198,6 +208,7 @@
 		return () => {
 			cancelled = true;
 			teardownRenderBridge();
+			scene.setInvalidate(null);
 			renderer = null;
 			audio?.stop();
 			audio = null;
@@ -226,32 +237,24 @@
 
 		current.begin();
 		if (renderExit >= 0) {
-			const eased = easeInOut(renderExit);
-			current.drawScene(scene, duration, {
-				opacity: 1 - eased,
-				x: -eased * width,
-				y: 0,
-				scale: 1
-			});
+			current.drawScene(
+				scene,
+				duration,
+				exitTransition(activeTransition, renderExit, width, direction)
+			);
 		} else if (transitionProgress < 1) {
-			const eased = easeInOut(transitionProgress);
-			const sign = direction === 'forward' ? 1 : -1;
-			const offset = sign * width;
-
 			if (outgoing) {
-				current.drawScene(outgoing, outgoingTime, {
-					opacity: 1 - eased,
-					x: -eased * offset,
-					y: 0,
-					scale: 1
-				});
+				current.drawScene(
+					outgoing,
+					outgoingTime,
+					exitTransition(activeTransition, transitionProgress, width, direction)
+				);
 			}
-			current.drawScene(scene, time, {
-				opacity: eased,
-				x: (1 - eased) * offset,
-				y: 0,
-				scale: 1
-			});
+			current.drawScene(
+				scene,
+				time,
+				enterTransition(activeTransition, transitionProgress, width, direction)
+			);
 		} else {
 			current.drawScene(scene, time);
 		}
@@ -300,14 +303,15 @@
 
 	/** Advances one render frame through the enter, a step, or the exit. */
 	function advanceRenderFrame(delta: number) {
+		const duration = activeTransition?.duration ?? 0;
 		if (renderExit >= 0) {
-			renderExit = Math.min(1, renderExit + delta / 0.8);
+			renderExit = duration > 0 ? Math.min(1, renderExit + delta / duration) : 1;
 			draw();
 			return { done: renderExit >= 1 };
 		}
 
 		if (renderEnter) {
-			transitionProgress = Math.min(1, transitionProgress + delta / 0.8);
+			transitionProgress = duration > 0 ? Math.min(1, transitionProgress + delta / duration) : 1;
 			if (transitionProgress >= 1) {
 				transitionProgress = 1;
 				outgoing = null;
@@ -341,7 +345,7 @@
 	}
 
 	function playRenderExit() {
-		renderExit = 0;
+		renderExit = activeTransition && activeTransition.duration > 0 ? 0 : 1;
 		draw();
 	}
 
@@ -450,6 +454,7 @@
 		lastStep = -1;
 
 		const definition = scenes[index]!;
+		activeTransition = resolveTransition(definition.transition);
 		const nextScene = definition.create();
 		const saved = savedTimes.get(definition.id);
 		let nextTime = 0;
@@ -460,17 +465,28 @@
 		scene = nextScene;
 		time = nextTime;
 		if (!audioDisabled) audio?.load(nextScene.audio);
-		transitionProgress = 0;
-		transitionStart = performance.now();
-		cancelAnimationFrame(transitionFrame);
-		transitionFrame = requestAnimationFrame(tickTransition);
+		nextScene.setInvalidate(draw);
+		if (activeTransition && activeTransition.duration > 0) {
+			transitionProgress = 0;
+			transitionStart = performance.now();
+			cancelAnimationFrame(transitionFrame);
+			transitionFrame = requestAnimationFrame(tickTransition);
+		} else {
+			transitionProgress = 1;
+			outgoing = null;
+		}
 		draw();
 		pluginManager.emitSceneChange({ id: definition.id, index });
 		updateUrl();
 	}
 
 	function tickTransition(now: number) {
-		const nextProgress = Math.min(1, (now - transitionStart) / 800);
+		const duration = (activeTransition?.duration ?? 0) * 1000;
+		if (duration <= 0) {
+			finishTransition();
+			return;
+		}
+		const nextProgress = Math.min(1, (now - transitionStart) / duration);
 		transitionProgress = nextProgress;
 		if (nextProgress >= 1) outgoing = null;
 		draw();

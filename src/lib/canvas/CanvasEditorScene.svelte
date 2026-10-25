@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { onDestroy, onMount, untrack } from 'svelte';
+	import { AudioPlayer } from './audio.js';
 	import { CanvasRenderer } from './renderer.js';
 	import { CanvasSceneManager } from './ui.js';
 	import type { SceneEntry } from '../scene/runtime/sequence.js';
@@ -22,7 +23,7 @@
 
 	const instance = definition.create();
 	const sceneWidth = untrack(() => entry.width ?? 1920);
-	const manager = new CanvasSceneManager(instance, sceneWidth);
+	const manager = new CanvasSceneManager(instance, sceneWidth, definition.transition);
 	const timeline = manager.timeline;
 
 	let canvas: HTMLCanvasElement | undefined;
@@ -36,11 +37,16 @@
 			background: null
 		});
 
-		manager.setRenderer((time, transition) => {
+		const audio = new AudioPlayer();
+		audio.load(instance.audio);
+
+		manager.setRenderer((time, transition, playing) => {
 			renderer.begin();
 			renderer.drawScene(instance, time, transition);
 			renderer.end();
+			audio.sync(time, playing);
 		});
+		instance.setInvalidate(() => manager.redraw());
 		onmeasured(entry.id, timeline, entry.chapter ?? '');
 		controller.attach(entry.id, manager);
 
@@ -54,6 +60,8 @@
 			observer.disconnect();
 			controller.detach(entry.id);
 			manager.clear();
+			instance.setInvalidate(null);
+			audio.stop();
 		};
 	});
 
