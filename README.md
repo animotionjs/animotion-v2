@@ -29,6 +29,7 @@ src/projects/example/
     02-about.ts
     03-layout.ts
     04-tick.ts
+    05-code.ts
 ```
 
 `project.ts` declares the canvas size, background, and scene order:
@@ -111,7 +112,12 @@ title.opacity.to(1, 0.6); // animate
 
 Layout steps use `layoutKey` nodes. Added nodes enter, removed nodes exit, retained nodes glide between measured bounds.
 
-Camera steps target a node or explicit coordinates. Code steps crossfade a canvas code block.
+Camera steps target a node or explicit coordinates. Code steps crossfade a canvas code block:
+
+```ts
+const code = s.code({ code: 'const a = 1;', fontSize: 26, lineHeight: 1.55 });
+yield * code.morphTo('const a = 2;', 0.8);
+```
 
 ## Editor UI
 
@@ -158,4 +164,8 @@ pnpm format
 - No rich text wrapping.
 - No HTML nodes.
 - No visual property editing.
+- Code blocks crossfade whole sources. Insert, replace, remove, selection, scrolling and language themes are not implemented.
+- No gradients or shadows.
+- No images or video nodes.
+- No reveal, repeat, or crossfade step helpers from the old DOM engine.
 - A project has one canvas size, so other render aspect ratios letterbox it.
