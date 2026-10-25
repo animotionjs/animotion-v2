@@ -164,7 +164,7 @@ pnpm format
 - No rich text wrapping.
 - No HTML nodes.
 - No visual property editing.
-- Code blocks crossfade whole sources. Insert, replace, remove, selection, scrolling and language themes are not implemented.
+- Code blocks use a small built-in highlighter and crossfade whole sources. Twinkleplop languages and themes, token edits, selection, and scrolling are not wired into canvas code yet.
 - No gradients or shadows.
 - No images or video nodes.
 - No reveal, repeat, or crossfade step helpers from the old DOM engine.
