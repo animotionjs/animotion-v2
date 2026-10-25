@@ -175,6 +175,10 @@ export class SceneBuilder {
 }
 
 class Instance implements SceneInstance {
+	#completed = 0;
+	#active: number | null = null;
+	#activeProgress = 0;
+
 	constructor(
 		readonly id: string,
 		readonly root: GroupNode,
@@ -197,29 +201,77 @@ class Instance implements SceneInstance {
 		return { steps, totalDuration: cursor };
 	}
 
+	/**
+	 * Moves the scene to an absolute time. Forward playback only advances the
+	 * current step, while a backward seek rebuilds from the start, so scrubbing
+	 * stays deterministic without replaying every earlier step on every frame.
+	 */
 	seek(seconds: number) {
-		for (let index = this.steps.length - 1; index >= 0; index--) {
-			this.steps[index]?.revert();
+		const total = this.duration;
+		const target = Math.min(total, Math.max(0, seconds));
+
+		if (target <= 0) {
+			this.#reset();
 		}
 
-		const target = Math.max(0, seconds);
+		let index = 0;
 		let cursor = 0;
-
-		for (const step of this.steps) {
+		for (; index < this.steps.length; index++) {
+			const step = this.steps[index]!;
 			const end = cursor + step.duration;
-			if (target >= end) {
-				step.start();
-				step.setProgress(1);
-				step.end();
-				cursor = end;
-				continue;
-			}
+			if (target < end) break;
+			cursor = end;
+		}
 
-			step.start();
-			const local = Math.max(0, target - cursor);
-			step.setProgress(step.duration > 0 ? local / step.duration : 1);
+		if (index >= this.steps.length) {
+			this.#completeTo(this.steps.length);
 			return;
 		}
+
+		const step = this.steps[index]!;
+		const progress = step.duration > 0 ? (target - cursor) / step.duration : 1;
+		const rewound =
+			index < this.#completed ||
+			(this.#active !== null &&
+				(index < this.#active ||
+					(index === this.#active && progress + 1e-9 < this.#activeProgress)));
+		if (rewound) this.#reset();
+
+		this.#completeTo(index);
+
+		if (this.#active !== index) {
+			step.start();
+			this.#active = index;
+			this.#activeProgress = 0;
+		}
+
+		step.setProgress(progress);
+		this.#activeProgress = progress;
+	}
+
+	#completeTo(index: number) {
+		while (this.#completed < index) {
+			const step = this.steps[this.#completed]!;
+			if (this.#active !== this.#completed) {
+				step.start();
+				this.#active = this.#completed;
+			}
+			step.setProgress(1);
+			step.end();
+			this.#active = null;
+			this.#completed += 1;
+			this.#activeProgress = 0;
+		}
+	}
+
+	#reset() {
+		if (this.#active !== null) this.steps[this.#active]?.revert();
+		for (let index = this.#completed - 1; index >= 0; index--) {
+			this.steps[index]?.revert();
+		}
+		this.#completed = 0;
+		this.#active = null;
+		this.#activeProgress = 0;
 	}
 
 	draw(ctx: CanvasRenderingContext2D, transition: TransitionState = IDENTITY_TRANSITION) {

@@ -12,12 +12,12 @@ const ENTER_DURATION = 0.8;
 
 const IDENTITY_TRANSITION: TransitionState = { opacity: 1, x: 0, y: 0, scale: 1 };
 
-function enterTransition(progress: number): TransitionState {
-	return { opacity: progress, x: (1 - progress) * 1920, y: 0, scale: 1 };
+function enterTransition(progress: number, width: number): TransitionState {
+	return { opacity: progress, x: (1 - progress) * width, y: 0, scale: 1 };
 }
 
-function exitTransition(progress: number): TransitionState {
-	return { opacity: 1 - progress, x: -progress * 1920, y: 0, scale: 1 };
+function exitTransition(progress: number, width: number): TransitionState {
+	return { opacity: 1 - progress, x: -progress * width, y: 0, scale: 1 };
 }
 
 export function toUiTimeline(timeline: SceneTimeline): UiTimeline {
@@ -57,10 +57,12 @@ export class CanvasSceneManager implements UiScenePlayback {
 	readonly exitDuration = ENTER_DURATION;
 	finished = false;
 	time = 0;
+	#width: number;
 	#render: ((time: number, transition: TransitionState) => void) | null = null;
 
-	constructor(instance: SceneInstance) {
+	constructor(instance: SceneInstance, width = 1920) {
 		this.instance = instance;
+		this.#width = width;
 	}
 
 	get timeline(): UiTimeline {
@@ -69,7 +71,7 @@ export class CanvasSceneManager implements UiScenePlayback {
 
 	setRenderer(render: (time: number, transition: TransitionState) => void) {
 		this.#render = render;
-		this.#draw(0, enterTransition(1));
+		this.#draw(0, enterTransition(1, this.#width));
 	}
 
 	seekToTime(seconds: number) {
@@ -78,7 +80,7 @@ export class CanvasSceneManager implements UiScenePlayback {
 		this.finished = this.time >= total;
 
 		if (this.time < this.enterDuration) {
-			this.#draw(0, enterTransition(this.time / this.enterDuration));
+			this.#draw(0, enterTransition(this.time / this.enterDuration, this.#width));
 			return;
 		}
 
@@ -86,11 +88,14 @@ export class CanvasSceneManager implements UiScenePlayback {
 	}
 
 	setEnterProgress(progress: number) {
-		this.#draw(0, enterTransition(Math.min(1, Math.max(0, progress))));
+		this.#draw(0, enterTransition(Math.min(1, Math.max(0, progress)), this.#width));
 	}
 
 	setExitProgress(progress: number) {
-		this.#draw(this.instance.duration, exitTransition(Math.min(1, Math.max(0, progress))));
+		this.#draw(
+			this.instance.duration,
+			exitTransition(Math.min(1, Math.max(0, progress)), this.#width)
+		);
 	}
 
 	play() {

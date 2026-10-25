@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { RectNode, all, defineScene, easeInOut, easeOut, wait } from '../../lib/canvas/index.js';
+import {
+	RectNode,
+	all,
+	defineScene,
+	easeInOut,
+	easeOut,
+	linear,
+	wait
+} from '../../lib/canvas/index.js';
 
 function firstRect(scene: { root: { children: readonly unknown[] } }): RectNode {
 	const node = scene.root.children[0];
@@ -41,6 +49,34 @@ describe('canvas scene', () => {
 
 		scene.seek(0);
 		expect(box.opacity()).toBe(0);
+		expect(box.x()).toBe(0);
+	});
+
+	it('advances inside a step and rewinds deterministically', () => {
+		const definition = defineScene('incremental', function* (s) {
+			const box = s.rect({ width: 100, height: 100, opacity: 0 });
+			yield* box.opacity.to(1, 1, linear);
+			yield* box.x.to(100, 1, linear);
+		});
+
+		const scene = definition.create();
+		const box = firstRect(scene);
+
+		scene.seek(0.25);
+		expect(box.opacity()).toBeCloseTo(0.25);
+
+		scene.seek(0.75);
+		expect(box.opacity()).toBeCloseTo(0.75);
+
+		scene.seek(0.25);
+		expect(box.opacity()).toBeCloseTo(0.25);
+
+		scene.seek(1.25);
+		expect(box.opacity()).toBe(1);
+		expect(box.x()).toBeCloseTo(25);
+
+		scene.seek(0.5);
+		expect(box.opacity()).toBeCloseTo(0.5);
 		expect(box.x()).toBe(0);
 	});
 

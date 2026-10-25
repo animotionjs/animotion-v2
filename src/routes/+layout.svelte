@@ -1,4 +1,5 @@
 <script lang="ts">
+	import '#lib/config/configure.js';
 	import '../styles/theme.css';
 
 	let { children } = $props();

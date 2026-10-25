@@ -1,23 +1,23 @@
-import { defineScene, wait } from '#lib/canvas/index.js';
+import { defineScene } from '#lib/canvas/index.js';
 
 export default defineScene(
 	'about',
+	// a static scene still uses the generator shape, so there is nothing to yield
+	// eslint-disable-next-line require-yield
 	function* (s) {
 		s.text('About', {
-			y: -20,
+			y: -29,
 			fontSize: 48,
 			fontWeight: 700,
 			fill: '#ffffff'
 		});
 
 		s.text('Svelte 5 + SvelteKit + Tailwind CSS 4', {
-			y: 40,
+			y: 37,
 			fontSize: 25,
 			fontWeight: 400,
 			fill: '#9ca3af'
 		});
-
-		yield* wait(1.2);
 	},
 	{
 		chapter: 'About',

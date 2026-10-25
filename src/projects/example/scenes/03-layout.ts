@@ -1,4 +1,4 @@
-import { defineScene, wait } from '#lib/canvas/index.js';
+import { defineScene, getMeasureContext } from '#lib/canvas/index.js';
 
 const items = ['Svelte 5', 'SvelteKit', 'Tailwind 4', 'TypeScript'];
 
@@ -6,13 +6,11 @@ export default defineScene(
 	'layout',
 	function* (s) {
 		const nodes = new Map(
-			items.map((item, index) => [
+			items.map((item) => [
 				item,
 				s.text(item, {
 					layoutKey: item,
-					x: -80,
-					y: -75 + index * 50,
-					fontSize: 31,
+					fontSize: 30.72,
 					fontWeight: 400,
 					fill: '#ffffff',
 					align: 'left'
@@ -20,23 +18,32 @@ export default defineScene(
 			])
 		);
 
+		const ctx = getMeasureContext();
+		const width = Math.max(...items.map((item) => nodes.get(item)!.measure(ctx).width));
+		const top = -90.24;
+		const gap = 60.16;
+
+		items.forEach((item, index) => {
+			const node = nodes.get(item)!;
+			node.x(-width / 2);
+			node.y(top + index * gap);
+		});
+
 		function place(order: string[]) {
 			return s.layout(
 				() => {
-					order.forEach((item, index) => nodes.get(item)?.y(-75 + index * 50));
+					order.forEach((item, index) => nodes.get(item)!.y(top + index * gap));
 				},
-				{ duration: 0.5, enter: 'scale' }
+				{ duration: 0.5 }
 			);
 		}
 
-		yield* wait(0.2);
 		yield* place([...items].reverse());
-		yield* wait(0.2);
 		yield* place([...items]);
 	},
 	{
 		chapter: 'Layout',
 		notes:
-			'The layout step animates DOM changes with FLIP. Every element carries a data-layout key so the engine can match it across states. Watch the list reverse.'
+			'The layout step glides keyed nodes between measured positions. Every node carries a layout key so the engine can match it across states. Watch the list reverse.'
 	}
 );

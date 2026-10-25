@@ -5,6 +5,7 @@ import {
 	defineScene,
 	easeInOut,
 	easeOut,
+	linear,
 	wait
 } from '../../lib/canvas/index.js';
 
@@ -52,6 +53,34 @@ describe('canvas layout', () => {
 		scene.seek(0);
 		expect(a.x() + a.layoutX()).toBe(-200);
 		expect(b.x() + b.layoutX()).toBe(200);
+	});
+
+	it('pops an entering node in from zero scale', () => {
+		const logos: RectNode[] = [];
+		const definition = defineScene('pop', function* (s) {
+			yield* wait(0.1);
+			yield* s.layout(
+				() => {
+					logos.push(s.rect({ layoutKey: 'logo', width: 100, height: 100 }));
+				},
+				{ duration: 1, enter: 'scale', ease: linear }
+			);
+		});
+
+		const scene = definition.create();
+		scene.seek(0.1);
+		const logo = logos.at(-1);
+		if (!logo) throw new Error('expected the entering rect');
+
+		expect(logo.layoutScaleX()).toBe(0);
+		expect(logo.layoutScaleY()).toBe(0);
+
+		scene.seek(0.6);
+		expect(logo.layoutScaleX()).toBeCloseTo(0.5);
+		expect(logo.layoutScaleY()).toBeCloseTo(0.5);
+
+		scene.seek(1.1);
+		expect(logo.layoutScaleX()).toBe(1);
 	});
 
 	it('adds and removes keyed nodes with the layout step', () => {

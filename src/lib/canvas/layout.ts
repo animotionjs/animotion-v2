@@ -113,7 +113,11 @@ export class LayoutStep implements Step {
 
 		for (const node of this.#entering) {
 			const alpha = this.#enter === 'fade' ? eased : 1;
-			const scale = this.#enter === 'scale' ? lerp(0.9, 1, eased) : 1;
+			/*
+			 * the original layout scale transition pops in from nothing, so the
+			 * first frame of an enter is fully hidden without a separate fade
+			 */
+			const scale = this.#enter === 'scale' ? eased : 1;
 			node.layoutAlpha(alpha);
 			node.layoutScaleX(scale);
 			node.layoutScaleY(scale);
@@ -121,7 +125,7 @@ export class LayoutStep implements Step {
 
 		for (const { node } of this.#exiting) {
 			const alpha = this.#exit === 'fade' ? 1 - eased : 1;
-			const scale = this.#exit === 'scale' ? lerp(1, 0.9, eased) : 1;
+			const scale = this.#exit === 'scale' ? 1 - eased : 1;
 			node.layoutAlpha(alpha);
 			node.layoutScaleX(scale);
 			node.layoutScaleY(scale);

@@ -1,4 +1,4 @@
-import { validateProject } from './types.js';
+import { validateProject } from './types.ts';
 
 export interface NoiseSuppressionSettings {
 	enabled: boolean;

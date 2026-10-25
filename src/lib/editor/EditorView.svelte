@@ -349,15 +349,15 @@
 			-->
 			<svelte:boundary>
 				<div
-					class="relative overflow-hidden bg-black shadow-2xl"
+					class="relative overflow-hidden shadow-2xl"
 					style:width="{stageWidth}px"
 					style:height="{stageHeight}px"
+					style:background={sequence[0]?.background ?? '#060608'}
 				>
 					{#each mounted as item (item.id)}
 						{#if item.entry.definition}
 							<CanvasEditorScene
 								entry={item.entry}
-								{ratio}
 								{controller}
 								active={item.active}
 								onmeasured={report}

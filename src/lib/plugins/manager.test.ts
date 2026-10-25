@@ -1,7 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { PluginManager } from './manager.svelte';
-import type { Plugin, PluginContext } from './types';
-import type { SceneManager } from '../scene/runtime/runtime.svelte';
+import type { Plugin, PluginContext, PresentationManager } from './types';
 
 function createMockContext(): PluginContext {
 	const navigateTo = vi.fn();
@@ -9,7 +8,7 @@ function createMockContext(): PluginContext {
 	const prev = vi.fn();
 
 	return {
-		manager: {} as SceneManager,
+		manager: {} as PresentationManager,
 		state: {
 			sceneId: 'intro',
 			sceneIndex: 0,

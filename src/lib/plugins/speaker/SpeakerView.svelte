@@ -99,9 +99,15 @@
 			<span class="text-sm leading-none text-zinc-500">Step</span>
 			<span class="text-sm leading-none font-semibold tabular-nums">
 				{#if presentation}
-					{presentation.finished
-						? `done (${presentation.totalSteps})`
-						: `${presentation.step + 1} / ${presentation.totalSteps}`}
+					{#if presentation.finished}
+						{#if presentation.totalSteps > 0}
+							done ({presentation.totalSteps})
+						{:else}
+							done
+						{/if}
+					{:else}
+						{presentation.step + 1} / {presentation.totalSteps}
+					{/if}
 				{:else}–{/if}
 			</span>
 		</div>

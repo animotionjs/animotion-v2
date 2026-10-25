@@ -8,13 +8,12 @@
 
 	interface Props {
 		entry: SceneEntry;
-		ratio: number;
 		controller: EditorController;
 		active: boolean;
 		onmeasured: (id: string, timeline: UiTimeline, chapter: string) => void;
 	}
 
-	let { entry, ratio, controller, active, onmeasured }: Props = $props();
+	let { entry, controller, active, onmeasured }: Props = $props();
 
 	const definition = untrack(() => entry.definition);
 	if (!definition) {
@@ -22,7 +21,8 @@
 	}
 
 	const instance = definition.create();
-	const manager = new CanvasSceneManager(instance);
+	const sceneWidth = untrack(() => entry.width ?? 1920);
+	const manager = new CanvasSceneManager(instance, sceneWidth);
 	const timeline = manager.timeline;
 
 	let canvas: HTMLCanvasElement | undefined;
@@ -33,7 +33,7 @@
 		const renderer = new CanvasRenderer(canvas, instance, {
 			width: entry.width ?? 1920,
 			height: entry.height ?? 1080,
-			background: entry.background ?? '#060608'
+			background: null
 		});
 
 		manager.setRenderer((time, transition) => {
@@ -58,5 +58,9 @@
 	data-editor-scene
 	data-active={active ? '' : undefined}
 >
-	<canvas bind:this={canvas} class="h-full w-full" style:aspect-ratio={ratio}></canvas>
+	<canvas
+		bind:this={canvas}
+		class="block h-full w-full object-contain"
+		style:aspect-ratio="{entry.width ?? 1920} / {entry.height ?? 1080}"
+	></canvas>
 </div>

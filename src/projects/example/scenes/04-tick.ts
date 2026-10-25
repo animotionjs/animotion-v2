@@ -1,74 +1,72 @@
-import { defineScene, easeInOut, tick, wait } from '#lib/canvas/index.js';
+import { defineScene, easeInOut, tick } from '#lib/canvas/index.js';
 
 export default defineScene(
 	'tick',
 	function* (s) {
 		s.text('tick step', {
-			y: -220,
-			fontSize: 64,
+			y: -170.5,
+			fontSize: 67.2,
 			fontWeight: 700,
 			fill: '#ffffff'
 		});
 
 		s.text('progress', {
-			x: -320,
-			y: -100,
-			fontSize: 27,
+			x: -341.33,
+			y: -68.45,
+			fontSize: 30.72,
 			fill: '#9ca3af',
 			align: 'left'
 		});
 
 		const percent = s.text('0%', {
-			x: 320,
-			y: -100,
-			fontSize: 27,
+			x: 341.33,
+			y: -68.45,
+			fontSize: 30.72,
 			fill: '#ffffff',
 			align: 'right'
 		});
 
 		s.rect({
-			y: -40,
-			width: 640,
-			height: 16,
-			radius: 8,
+			y: -28.8,
+			width: 682.67,
+			height: 19.2,
+			radius: 9.6,
 			fill: '#27272a'
 		});
 
 		const bar = s.rect({
-			x: -320,
-			y: -40,
-			width: 0.01,
-			height: 16,
-			radius: 8,
+			x: -341.33,
+			y: -28.8,
+			width: 0,
+			height: 19.2,
+			radius: 9.6,
 			fill: '#fbbf24'
 		});
 
 		s.text('time', {
-			y: 80,
-			fontSize: 27,
+			y: 49.27,
+			fontSize: 30.72,
 			fill: '#9ca3af'
 		});
 
 		const seconds = s.text('0.0s', {
-			y: 150,
-			fontSize: 60,
+			y: 160.95,
+			fontSize: 86.4,
 			fontWeight: 700,
 			fill: '#ffffff'
 		});
 
 		yield* tick(
 			({ progress, time }) => {
-				const width = progress * 640;
-				bar.width(Math.max(0.01, width));
-				bar.x(-320 + width / 2);
+				const width = progress * 682.67;
+				bar.width(width);
+				bar.x(-341.33 + width / 2);
 				percent.text(`${Math.round(progress * 100)}%`);
 				seconds.text(`${time.toFixed(1)}s`);
 			},
 			2.4,
 			easeInOut
 		);
-
-		yield* wait(0.4);
 	},
 	{
 		chapter: 'Tick',

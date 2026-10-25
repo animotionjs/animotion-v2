@@ -1,5 +1,12 @@
-import type { SceneManager } from '../scene/runtime/runtime.svelte';
 import type { SceneEntry } from '../scene/runtime/sequence';
+
+/** The parts of a scene manager a plugin may drive. */
+export interface PresentationManager {
+	/** Moves to a step by index, optionally with the step completed or the scene finished. */
+	seek(step: number, completed?: boolean, finished?: boolean): void;
+	/** Plays the current step in place. */
+	play(): void;
+}
 
 /** A snapshot of where the presentation currently is. Read it anytime, since the shell keeps it current. */
 export interface PresentationState {
@@ -30,7 +37,7 @@ export interface PluginContext {
 	 * The manager of the scene on screen. Read it when it is needed, since a
 	 * scene change swaps in a different manager.
 	 */
-	readonly manager: SceneManager;
+	readonly manager: PresentationManager;
 	/**
 	 * Moves to `id`. `step` seeds where the scene resumes, for callers that
 	 * track a position the scene has not reached yet.

@@ -49,12 +49,12 @@ export default defineProject({
 ## Scene
 
 ```ts
-import { defineScene, easeInOut } from '#lib/canvas/index.js';
+import { defineScene, easeInOut, getMeasureContext } from '#lib/canvas/index.js';
 
 export default defineScene('intro', function* (s) {
 	const title = s.text('Animotion', {
 		layoutKey: 'title',
-		fontSize: 86,
+		fontSize: 86.4,
 		fontWeight: 700,
 		fill: '#ffffff',
 		opacity: 0
@@ -64,8 +64,16 @@ export default defineScene('intro', function* (s) {
 
 	yield* s.layout(
 		() => {
-			title.x(70);
-			s.text('🪄', { layoutKey: 'logo', x: -230, fontSize: 86 });
+			const ctx = getMeasureContext();
+			const titleWidth = title.measure(ctx).width;
+			const logo = s.text('🪄', { layoutKey: 'logo', fontSize: 86.4, fontWeight: 700 });
+
+			ctx.font = title.font;
+			const gap = ctx.measureText(' ').width;
+			const logoWidth = logo.measure(ctx).width;
+
+			logo.x(-(titleWidth + gap) / 2);
+			title.x((logoWidth + gap) / 2);
 		},
 		{ duration: 0.6, enter: 'scale', ease: easeInOut }
 	);
@@ -121,7 +129,16 @@ The scene preview, measurement, and timing use `src/lib/canvas`. The editor chro
 
 ## Presentation UI
 
-`/presentation/<slug>` keeps the full-screen player and progress bar. Arrow keys move between steps, space plays or pauses, and `f` toggles fullscreen.
+`/presentation/<slug>` keeps the full-screen player and progress bar. Arrow keys move between steps, space plays or pauses, `f` toggles fullscreen, and `s` opens the speaker view. Scene changes update the URL, so a scene can be opened directly.
+
+## Rendering
+
+The existing render button records canvas scenes through the same frame protocol as before. The CLI works too:
+
+```sh
+pnpm render
+pnpm render intro --frames-only
+```
 
 ## Commands
 
@@ -136,9 +153,9 @@ pnpm format
 
 ## Current limits
 
-- No video encoding from the canvas engine yet.
 - No GPU or WebGL backend.
 - No flexbox or grid layout engine.
 - No rich text wrapping.
 - No HTML nodes.
 - No visual property editing.
+- A project has one canvas size, so other render aspect ratios letterbox it.
