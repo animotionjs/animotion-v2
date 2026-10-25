@@ -26,12 +26,15 @@ export {
 export {
 	Animation,
 	ParallelStep,
+	TickStep,
 	TweenStep,
 	WaitStep,
 	all,
+	tick,
 	tween,
 	wait,
-	type Step
+	type Step,
+	type TickFrame
 } from './steps.js';
 export {
 	SceneBuilder,
@@ -65,4 +68,3 @@ export {
 	type ProjectDefinition,
 	type ProjectSize
 } from './project.js';
-export { project } from './demo-project.js';

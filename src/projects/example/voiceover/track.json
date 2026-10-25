@@ -1,26 +1,26 @@
 {
-  "version": 1,
-  "project": "example",
-  "clips": [
-    {
-      "id": "101ea946",
-      "label": "Recording 1",
-      "file": "101ea946.wav",
-      "start": 2.716666666666667,
-      "duration": 3.883333333333333,
-      "trimStart": 1.3666666666666667,
-      "sourceDuration": 8.330666666666668,
-      "mime": "audio/wav"
-    },
-    {
-      "id": "9efac273",
-      "label": "Recording 2",
-      "file": "9efac273.wav",
-      "start": 9.633333333333333,
-      "duration": 3.116666666666667,
-      "trimStart": 1.9666666666666668,
-      "sourceDuration": 11.146666666666667,
-      "mime": "audio/wav"
-    }
-  ]
+	"version": 1,
+	"project": "example",
+	"clips": [
+		{
+			"id": "101ea946",
+			"label": "Recording 1",
+			"file": "101ea946.wav",
+			"start": 2.716666666666667,
+			"duration": 3.883333333333333,
+			"trimStart": 1.3666666666666667,
+			"sourceDuration": 8.330666666666668,
+			"mime": "audio/wav"
+		},
+		{
+			"id": "9efac273",
+			"label": "Recording 2",
+			"file": "9efac273.wav",
+			"start": 9.633333333333333,
+			"duration": 3.116666666666667,
+			"trimStart": 1.9666666666666668,
+			"sourceDuration": 11.146666666666667,
+			"mime": "audio/wav"
+		}
+	]
 }

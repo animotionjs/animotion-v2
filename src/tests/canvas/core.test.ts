@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { RectNode, all, defineScene, easeInOut, easeOut, wait } from './index.js';
+import { RectNode, all, defineScene, easeInOut, easeOut, wait } from '../../lib/canvas/index.js';
 
 function firstRect(scene: { root: { children: readonly unknown[] } }): RectNode {
 	const node = scene.root.children[0];

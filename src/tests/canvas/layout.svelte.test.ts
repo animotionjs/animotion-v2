@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { CodeNode, RectNode, defineScene, easeInOut, easeOut, wait } from './index.js';
+import {
+	CodeNode,
+	RectNode,
+	defineScene,
+	easeInOut,
+	easeOut,
+	wait
+} from '../../lib/canvas/index.js';
 
 function rectAt(scene: { root: { children: readonly unknown[] } }, index = 0): RectNode {
 	const node = scene.root.children[index];

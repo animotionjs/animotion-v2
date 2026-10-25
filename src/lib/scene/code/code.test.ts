@@ -312,9 +312,7 @@ count is {count}
 
 	it('ignores angle brackets inside expression attributes of a multiline tag', () => {
 		const input = `<button\nonclick={count > 3}\n>\nIncrement\n</button>`;
-		expect(smartIndent(input)).toBe(
-			`<button\n  onclick={count > 3}\n>\n  Increment\n</button>`
-		);
+		expect(smartIndent(input)).toBe(`<button\n  onclick={count > 3}\n>\n  Increment\n</button>`);
 	});
 
 	it('is idempotent with multiline tags', () => {

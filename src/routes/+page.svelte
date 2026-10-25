@@ -168,7 +168,6 @@
 			{:else}
 				{#each items as item (item.slug)}
 					{const open = `/presentation/${encodeURIComponent(item.slug)}`}
-					{const edit = `/timeline/${encodeURIComponent(item.slug)}`}
 					{const compose = `/editor/${encodeURIComponent(item.slug)}`}
 					<div class="flex items-center gap-1 rounded-lg px-3 py-2 hover:bg-white/5">
 						{#if renaming === item.slug}
@@ -236,24 +235,6 @@
 								stroke-linecap="round"
 							>
 								<path d="M3 6h12M3 12h18M3 18h8" />
-							</svg>
-						</a>
-						<a
-							class="shrink-0 px-1 opacity-40 hover:opacity-100"
-							href={edit}
-							title="Open in timeline"
-							aria-label={`Open ${item.name} in timeline`}
-						>
-							<svg
-								width="18"
-								height="18"
-								viewBox="0 0 24 24"
-								fill="none"
-								stroke="currentColor"
-								stroke-width="2"
-								stroke-linejoin="round"
-							>
-								<path d="M8 5v14l11-7z" />
 							</svg>
 						</a>
 						<button

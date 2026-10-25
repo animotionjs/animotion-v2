@@ -33,9 +33,7 @@ describe('projects', () => {
 			expect(await listProjects(root)).toEqual([]);
 			const slug = await createProject('Example', root);
 			expect(slug).toBe('example');
-			expect(await listProjects(root)).toEqual([
-				{ slug: 'example', name: 'Example', scenes: 1 }
-			]);
+			expect(await listProjects(root)).toEqual([{ slug: 'example', name: 'Example', scenes: 1 }]);
 		} finally {
 			await rm(root, { recursive: true, force: true });
 		}
@@ -56,9 +54,7 @@ describe('projects', () => {
 		try {
 			await createProject('Demo', root);
 			expect(await renameProject('demo', 'Example', root)).toBe('example');
-			expect(await listProjects(root)).toEqual([
-				{ slug: 'example', name: 'Example', scenes: 1 }
-			]);
+			expect(await listProjects(root)).toEqual([{ slug: 'example', name: 'Example', scenes: 1 }]);
 		} finally {
 			await rm(root, { recursive: true, force: true });
 		}
@@ -71,9 +67,7 @@ describe('projects', () => {
 			const nested = join(root, 'demo', 'scenes', '02-deep');
 			await mkdir(nested, { recursive: true });
 			await writeFile(join(nested, 'scene.svelte'), '<p>deep</p>');
-			expect(await listProjects(root)).toEqual([
-				{ slug: 'demo', name: 'Demo', scenes: 2 }
-			]);
+			expect(await listProjects(root)).toEqual([{ slug: 'demo', name: 'Demo', scenes: 2 }]);
 		} finally {
 			await rm(root, { recursive: true, force: true });
 		}
@@ -85,12 +79,8 @@ describe('projects', () => {
 			await createProject('Demo', root);
 			expect(await renameProject('demo', 'Demo', root)).toBe('demo');
 			expect(await renameProject('demo', 'Demo!', root)).toBe('demo');
-			expect(await listProjects(root)).toEqual([
-				{ slug: 'demo', name: 'Demo!', scenes: 1 }
-			]);
-			await expect(renameProject('missing', 'missing', root)).rejects.toThrow(
-				'Unknown project'
-			);
+			expect(await listProjects(root)).toEqual([{ slug: 'demo', name: 'Demo!', scenes: 1 }]);
+			await expect(renameProject('missing', 'missing', root)).rejects.toThrow('Unknown project');
 		} finally {
 			await rm(root, { recursive: true, force: true });
 		}

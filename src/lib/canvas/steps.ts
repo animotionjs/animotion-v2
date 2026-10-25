@@ -1,4 +1,4 @@
-import { clamp, easeInOut, type Easing } from './easing.js';
+import { clamp, easeInOut, linear, type Easing } from './easing.js';
 import type { Interpolate, Signal } from './signal.js';
 
 export interface Step {
@@ -20,6 +20,57 @@ export class WaitStep implements Step {
 	setProgress() {}
 	end() {}
 	revert() {}
+}
+
+export interface TickFrame {
+	progress: number;
+	time: number;
+	deltaTime: number;
+	frame: number;
+}
+
+export class TickStep implements Step {
+	readonly label = 'tick';
+	#onTick: (frame: TickFrame) => void;
+	#duration: number;
+	#ease: Easing;
+	#time = 0;
+	#frame = 0;
+
+	constructor(onTick: (frame: TickFrame) => void, duration: number, ease: Easing = linear) {
+		this.#onTick = onTick;
+		this.#duration = duration;
+		this.#ease = ease;
+	}
+
+	get duration(): number {
+		return this.#duration;
+	}
+
+	start() {
+		this.#time = 0;
+		this.#frame = 0;
+	}
+
+	setProgress(progress: number) {
+		const time = clamp(progress, 0, 1) * this.#duration;
+		this.#frame++;
+		this.#onTick({
+			progress: this.#ease(clamp(progress, 0, 1)),
+			time,
+			deltaTime: time - this.#time,
+			frame: this.#frame
+		});
+		this.#time = time;
+	}
+
+	end() {}
+
+	revert() {
+		this.#onTick({ progress: 0, time: 0, deltaTime: 0, frame: 0 });
+		this.#time = 0;
+		this.#frame = 0;
+	}
 }
 
 export class TweenStep<T> implements Step {
@@ -116,6 +167,14 @@ export class Animation implements Iterable<Step> {
 
 export function wait(seconds = 1): Animation {
 	return new Animation(new WaitStep(seconds));
+}
+
+export function tick(
+	onTick: (frame: TickFrame) => void,
+	duration = 0.5,
+	ease: Easing = linear
+): Animation {
+	return new Animation(new TickStep(onTick, duration, ease));
 }
 
 export function all(...animations: Animation[]): Animation {

@@ -214,7 +214,7 @@ export class TextNode extends Node {
 		this.text = stringSignal(init.text, `${this.id}.text`);
 		this.fontSize = numberSignal(init.fontSize ?? 32, `${this.id}.fontSize`);
 		this.fontFamily = stringSignal(
-			init.fontFamily ?? 'system-ui, sans-serif',
+			init.fontFamily ?? 'Atkinson Hyperlegible, system-ui, sans-serif',
 			`${this.id}.fontFamily`
 		);
 		this.fontWeight = numberSignal(init.fontWeight ?? 400, `${this.id}.fontWeight`);

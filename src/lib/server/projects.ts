@@ -168,7 +168,9 @@ export async function renameProject(
 			const existing = await stat(current);
 			if (!existing.isDirectory()) throw new Error('Unknown project');
 		} catch (error) {
-			if ((error as NodeJS.ErrnoException).code === 'ENOENT') throw new Error('Unknown project');
+			if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+				throw new Error('Unknown project', { cause: error });
+			}
 			throw error;
 		}
 		const trimmed = name.trim();

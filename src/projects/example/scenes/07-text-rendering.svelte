@@ -29,7 +29,7 @@
 
 <div class="relative h-full w-full overflow-hidden bg-zinc-950">
 	<div
-		class="absolute grid-bg"
+		class="grid-bg absolute"
 		style:left="-6000px"
 		style:top="-4000px"
 		style:width="12000px"
@@ -69,7 +69,8 @@
 
 <style>
 	.grid-bg {
-		background-image: linear-gradient(rgb(255 255 255 / 0.06) 1px, transparent 1px),
+		background-image:
+			linear-gradient(rgb(255 255 255 / 0.06) 1px, transparent 1px),
 			linear-gradient(90deg, rgb(255 255 255 / 0.06) 1px, transparent 1px);
 		background-size: 100px 100px;
 	}
