@@ -13,10 +13,11 @@ export class CanvasRenderer {
 	readonly width: number;
 	readonly height: number;
 	readonly background: string | null;
-	scale: number;
 	#canvas: HTMLCanvasElement;
 	#scene: SceneInstance;
 	#ctx: CanvasRenderingContext2D;
+	#fit = 1;
+	#density = 1;
 
 	constructor(canvas: HTMLCanvasElement, scene: SceneInstance, options: RendererOptions = {}) {
 		this.#canvas = canvas;
@@ -24,33 +25,36 @@ export class CanvasRenderer {
 		this.width = options.width ?? 1920;
 		this.height = options.height ?? 1080;
 		this.background = options.background === undefined ? '#09090b' : options.background;
-		this.scale = 1;
 
-		if (canvas.width !== this.width) canvas.width = this.width;
-		if (canvas.height !== this.height) canvas.height = this.height;
+		this.resize();
 
 		const context = canvas.getContext('2d');
 		if (!context) throw new Error('CanvasRenderer requires a 2D canvas context.');
 		this.#ctx = context;
-
-		this.resize();
 	}
 
 	/** Matches the backing store to the canvas's on-screen size. */
 	resize() {
+		const cssWidth = this.#canvas.clientWidth > 0 ? this.#canvas.clientWidth : this.width;
+		const cssHeight = this.#canvas.clientHeight > 0 ? this.#canvas.clientHeight : this.height;
+		const fit = cssWidth / this.width;
 		const density = typeof window === 'undefined' ? 1 : window.devicePixelRatio || 1;
-		let available = this.width;
-		if (this.#canvas.clientWidth > 0) available = this.#canvas.clientWidth;
-		else if (typeof window !== 'undefined') available = window.innerWidth;
-		const shown = available / this.width;
-		const scale = Math.max(0.1, shown * density);
-		if (Math.abs(scale - this.scale) < 1e-6) return;
+		const pixelWidth = Math.max(1, Math.round(cssWidth * density));
+		const pixelHeight = Math.max(1, Math.round(cssHeight * density));
 
-		this.scale = scale;
-		const pixelWidth = Math.max(1, Math.round(this.width * scale));
-		const pixelHeight = Math.max(1, Math.round(this.height * scale));
-		if (this.#canvas.width !== pixelWidth) this.#canvas.width = pixelWidth;
-		if (this.#canvas.height !== pixelHeight) this.#canvas.height = pixelHeight;
+		if (
+			Math.abs(fit - this.#fit) < 1e-6 &&
+			Math.abs(density - this.#density) < 1e-6 &&
+			this.#canvas.width === pixelWidth &&
+			this.#canvas.height === pixelHeight
+		) {
+			return;
+		}
+
+		this.#fit = fit;
+		this.#density = density;
+		this.#canvas.width = pixelWidth;
+		this.#canvas.height = pixelHeight;
 	}
 
 	draw(time = 0) {
@@ -61,14 +65,20 @@ export class CanvasRenderer {
 
 	begin() {
 		const ctx = this.#ctx;
-		ctx.setTransform(this.scale, 0, 0, this.scale, 0, 0);
-		ctx.clearRect(0, 0, this.width, this.height);
+		const cssWidth = this.#canvas.clientWidth > 0 ? this.#canvas.clientWidth : this.width;
+		const cssHeight = this.#canvas.clientHeight > 0 ? this.#canvas.clientHeight : this.height;
+		const visibleWidth = cssWidth / this.#fit;
+		const visibleHeight = cssHeight / this.#fit;
+		const scale = this.#fit * this.#density;
+
+		ctx.setTransform(scale, 0, 0, scale, 0, 0);
+		ctx.clearRect(0, 0, visibleWidth, visibleHeight);
 		if (this.background !== null) {
 			ctx.fillStyle = this.background;
-			ctx.fillRect(0, 0, this.width, this.height);
+			ctx.fillRect(0, 0, visibleWidth, visibleHeight);
 		}
 		ctx.save();
-		ctx.translate(this.width / 2, this.height / 2);
+		ctx.translate(visibleWidth / 2, visibleHeight / 2);
 	}
 
 	drawScene(scene: SceneInstance, time: number, transition: TransitionState = IDENTITY) {

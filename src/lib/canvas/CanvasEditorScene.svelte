@@ -65,9 +65,5 @@
 	data-editor-scene
 	data-active={active ? '' : undefined}
 >
-	<canvas
-		bind:this={canvas}
-		class="block h-full w-full object-contain"
-		style:aspect-ratio="{entry.width ?? 1920} / {entry.height ?? 1080}"
-	></canvas>
+	<canvas bind:this={canvas} class="block h-full w-full"></canvas>
 </div>

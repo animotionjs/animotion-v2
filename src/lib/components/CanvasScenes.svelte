@@ -43,7 +43,6 @@
 	const audioDisabled = isRender || query.has('embed');
 	const previousId = isRender ? query.get('previous') : null;
 	let showProgress = $state(!isRender);
-	let viewportRatio = $state(1);
 
 	const requested = initial.sceneId ? scenes.findIndex((entry) => entry.id === initial.sceneId) : 0;
 	let sceneIndex = $state(requested >= 0 ? requested : 0);
@@ -93,7 +92,6 @@
 		((sceneIndex + (duration > 0 ? time / duration : 1)) / scenes.length) * 100
 	);
 	const transitioning = $derived(outgoing !== null && transitionProgress < 1);
-	const cover = $derived(viewportRatio > width / height + 1e-6);
 
 	const sequence: SceneEntry[] = scenes.map((definition, order) => ({
 		id: definition.id,
@@ -161,11 +159,9 @@
 
 	onMount(() => {
 		const updateViewport = () => {
-			viewportRatio = window.innerWidth / window.innerHeight;
 			renderer?.resize();
 			draw();
 		};
-		updateViewport();
 		window.addEventListener('resize', updateViewport);
 		return () => window.removeEventListener('resize', updateViewport);
 	});
@@ -573,11 +569,7 @@
 	class="relative flex h-dvh w-dvw items-center justify-center overflow-hidden bg-background"
 	style:text-rendering="geometricprecision"
 >
-	<canvas
-		bind:this={canvas}
-		class={['block h-full w-full', cover ? 'object-cover' : 'object-contain']}
-		style:aspect-ratio="{width} / {height}"
-	></canvas>
+	<canvas bind:this={canvas} class="block h-full w-full"></canvas>
 </div>
 
 <!--
