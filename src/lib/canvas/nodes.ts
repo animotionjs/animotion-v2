@@ -1,4 +1,11 @@
-import { applyShadow, clearShadow, resolvePaint, type Paint, type Shadow } from './paint.js';
+import {
+	applyShadow,
+	clearShadow,
+	resolvePaint,
+	snapTextPoint,
+	type Paint,
+	type Shadow
+} from './paint.js';
 import {
 	createSignal,
 	discreteInterpolate,
@@ -233,6 +240,11 @@ export interface TextInit extends NodeInit {
 	maxWidth?: number | null;
 	/** Line height as a multiple of the font size. */
 	lineHeight?: number;
+	/**
+	 * Rasterizes the text once into an offscreen bitmap. Use this for text that
+	 * scales, because Chromium snaps glyphs to pixels on every redraw.
+	 */
+	cache?: boolean;
 }
 
 /** Wraps text to `maxWidth` using the context's current font. */
@@ -295,6 +307,8 @@ export class TextNode extends Node {
 	readonly align: Signal<CanvasTextAlign>;
 	readonly maxWidth: Signal<number | null>;
 	readonly lineHeight: Signal<number>;
+	readonly cache: boolean;
+	#cached: { key: string; canvas: HTMLCanvasElement; scale: number } | null = null;
 
 	constructor(init: TextInit) {
 		super(init);
@@ -313,6 +327,7 @@ export class TextNode extends Node {
 			`${this.id}.maxWidth`
 		);
 		this.lineHeight = numberSignal(init.lineHeight ?? 1.25, `${this.id}.lineHeight`);
+		this.cache = init.cache ?? false;
 	}
 
 	override saveState(): NodeState {
@@ -384,13 +399,120 @@ export class TextNode extends Node {
 		const lineHeight = this.fontSize() * this.lineHeight();
 		const height = Math.max(1, lines.length) * lineHeight;
 		const top = -height / 2;
-		const x = this.align() === 'left' ? -boxWidth / 2 : this.align() === 'right' ? boxWidth / 2 : 0;
 
-		ctx.fillStyle = resolvePaint(ctx, this.fill(), boxWidth, height, -boxWidth / 2, top);
-		for (let index = 0; index < lines.length; index++) {
-			ctx.fillText(lines[index]!, x, top + (index + 0.5) * lineHeight);
+		if (this.cache || this.#isScaled()) {
+			this.#drawCached(ctx, lines, boxWidth, height, lineHeight, top);
+		} else {
+			this.#drawLines(ctx, lines, boxWidth, height, lineHeight, top);
 		}
 		ctx.restore();
+	}
+
+	#drawLines(
+		ctx: CanvasRenderingContext2D,
+		lines: string[],
+		boxWidth: number,
+		height: number,
+		lineHeight: number,
+		top: number
+	) {
+		const x = this.align() === 'left' ? -boxWidth / 2 : this.align() === 'right' ? boxWidth / 2 : 0;
+		ctx.fillStyle = resolvePaint(ctx, this.fill(), boxWidth, height, -boxWidth / 2, top);
+		for (let index = 0; index < lines.length; index++) {
+			const point = snapTextPoint(ctx, x, top + (index + 0.5) * lineHeight);
+			ctx.fillText(lines[index]!, point.x, point.y);
+		}
+	}
+
+	#isScaled(): boolean {
+		if (
+			Math.abs(this.scale() - 1) > 1e-4 ||
+			Math.abs(this.layoutScaleX() - 1) > 1e-4 ||
+			Math.abs(this.layoutScaleY() - 1) > 1e-4
+		) {
+			return true;
+		}
+		let parent = this.parent;
+		while (parent) {
+			if (
+				Math.abs(parent.scale() - 1) > 1e-4 ||
+				Math.abs(parent.layoutScaleX() - 1) > 1e-4 ||
+				Math.abs(parent.layoutScaleY() - 1) > 1e-4
+			) {
+				return true;
+			}
+			parent = parent.parent;
+		}
+		return false;
+	}
+
+	/**
+	 * Draws a text node from a bitmap rendered once at its resting size. Scaling
+	 * the bitmap keeps the glyph shape stable, which avoids Chromium's per-frame
+	 * text snapping.
+	 */
+	#drawCached(
+		ctx: CanvasRenderingContext2D,
+		lines: string[],
+		boxWidth: number,
+		height: number,
+		lineHeight: number,
+		top: number
+	) {
+		const matrix = ctx.getTransform();
+		let parentScaleX = 1;
+		let parentScaleY = 1;
+		let parent = this.parent;
+		while (parent) {
+			parentScaleX *= parent.scale() * parent.layoutScaleX();
+			parentScaleY *= parent.scale() * parent.layoutScaleY();
+			parent = parent.parent;
+		}
+		const ownScaleX = Math.abs(this.scale() * this.layoutScaleX()) || 1;
+		const ownScaleY = Math.abs(this.scale() * this.layoutScaleY()) || 1;
+		const baseScaleX = Math.hypot(matrix.a, matrix.b) / Math.abs(parentScaleX * ownScaleX);
+		const baseScaleY = Math.hypot(matrix.c, matrix.d) / Math.abs(parentScaleY * ownScaleY);
+		const scale = Math.max(0.1, Math.max(baseScaleX, baseScaleY));
+		const roundedScale = Math.round(scale * 1000) / 1000;
+		const padding = 8;
+		const key = [
+			this.text(),
+			this.font,
+			JSON.stringify(this.fill()),
+			this.align(),
+			this.maxWidth(),
+			this.lineHeight(),
+			roundedScale
+		].join('|');
+
+		if (!this.#cached || this.#cached.key !== key) {
+			const canvas = document.createElement('canvas');
+			canvas.width = Math.max(1, Math.ceil((boxWidth + padding * 2) * roundedScale));
+			canvas.height = Math.max(1, Math.ceil((height + padding * 2) * roundedScale));
+			const cache = canvas.getContext('2d');
+			if (!cache) return;
+			cache.setTransform(
+				roundedScale,
+				0,
+				0,
+				roundedScale,
+				(boxWidth / 2 + padding) * roundedScale,
+				(height / 2 + padding) * roundedScale
+			);
+			cache.font = this.font;
+			cache.textAlign = this.align();
+			cache.textBaseline = 'middle';
+			this.#drawLines(cache, lines, boxWidth, height, lineHeight, top);
+			this.#cached = { key, canvas, scale: roundedScale };
+		}
+
+		ctx.drawImage(
+			this.#cached.canvas,
+			-boxWidth / 2 - padding,
+			-height / 2 - padding,
+			boxWidth + padding * 2,
+			height + padding * 2
+		);
 	}
 }
 

@@ -98,3 +98,33 @@ export function resolvePaint(
 	addStops(gradient, paint.stops);
 	return gradient;
 }
+
+/**
+ * Nudges a text anchor onto the device pixel grid. Canvas rasterizes glyphs
+ * differently at fractional positions, which makes letters look uneven at
+ * rest and shimmer while they move.
+ */
+export function snapTextPoint(
+	ctx: CanvasRenderingContext2D,
+	x: number,
+	y: number
+): { x: number; y: number } {
+	const matrix = ctx.getTransform();
+	if (
+		!Number.isFinite(matrix.a) ||
+		!Number.isFinite(matrix.d) ||
+		Math.abs(matrix.b) > 1e-6 ||
+		Math.abs(matrix.c) > 1e-6
+	) {
+		return { x, y };
+	}
+
+	const deviceX = matrix.a * x + matrix.e;
+	const deviceY = matrix.d * y + matrix.f;
+	const scaleX = Math.abs(matrix.a) > 1e-6 ? matrix.a : 1;
+	const scaleY = Math.abs(matrix.d) > 1e-6 ? matrix.d : 1;
+	return {
+		x: x + (Math.round(deviceX) - deviceX) / scaleX,
+		y: y + (Math.round(deviceY) - deviceY) / scaleY
+	};
+}

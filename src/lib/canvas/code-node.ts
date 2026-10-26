@@ -6,6 +6,7 @@ import {
 	type MorphToken
 } from '../code/highlighter.js';
 import { themes } from '../code/themes.js';
+import { snapTextPoint } from './paint.js';
 import { clamp, easeInOut, lerp, type Easing } from './easing.js';
 import { Node, type NodeInit, type NodeState, type Size } from './nodes.js';
 import {
@@ -360,20 +361,23 @@ export class CodeNode extends Node {
 			: 0;
 		const scroll = this.scroll();
 		const clipHeight = Math.max(1, targetLayout.visibleLines) * lineHeight;
+		const anchor = snapTextPoint(ctx, left, top);
+		const drawLeft = anchor.x;
+		const drawTop = anchor.y;
 
 		ctx.beginPath();
-		ctx.rect(left, top, Math.max(1, width), clipHeight);
+		ctx.rect(drawLeft, drawTop, Math.max(1, width), clipHeight);
 		ctx.clip();
 
-		this.#drawLineNumbers(ctx, target, left, top, charWidth, lineHeight, gutter, scroll, 1);
+		this.#drawLineNumbers(ctx, target, drawLeft, drawTop, charWidth, lineHeight, gutter, scroll, 1);
 
-		this.#drawSelection(ctx, left, top, charWidth, lineHeight, gutter, scroll);
+		this.#drawSelection(ctx, drawLeft, drawTop, charWidth, lineHeight, gutter, scroll);
 
 		if (previous !== null && progress < 1) {
 			this.#refreshMorph();
-			this.#drawMorph(ctx, left, top, charWidth, lineHeight, gutter, scroll, progress);
+			this.#drawMorph(ctx, drawLeft, drawTop, charWidth, lineHeight, gutter, scroll, progress);
 		} else {
-			this.#drawTokens(ctx, target, left, top, charWidth, lineHeight, gutter, scroll, 1);
+			this.#drawTokens(ctx, target, drawLeft, drawTop, charWidth, lineHeight, gutter, scroll, 1);
 		}
 
 		ctx.restore();
