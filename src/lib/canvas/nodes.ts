@@ -6,11 +6,19 @@ import {
 import {
 	applyShadow,
 	clearShadow,
+	getPaintVersion,
 	resolvePaint,
 	snapTextPoint,
 	type Paint,
 	type Shadow
 } from './paint.js';
+import {
+	expandBounds,
+	roundedRectPath,
+	transformBounds,
+	unionBounds,
+	type Box
+} from './geometry.js';
 import {
 	createSignal,
 	discreteInterpolate,
@@ -18,6 +26,18 @@ import {
 	stringSignal,
 	type Signal
 } from './signal.js';
+
+export interface ClipBox {
+	/** Center offset from the node origin. */
+	x?: number;
+	y?: number;
+	width: number;
+	height: number;
+	radius?: number;
+	smoothness?: number;
+}
+
+export type ClipRegion = boolean | ClipBox;
 
 export interface NodeInit {
 	id?: string;
@@ -29,6 +49,23 @@ export interface NodeInit {
 	opacity?: number;
 	visible?: boolean;
 	shadow?: Shadow | null;
+	/**
+	 * Caches this node and its children in an offscreen bitmap. Use it for
+	 * subtrees that move or scale without changing their contents.
+	 */
+	cache?: boolean;
+	/** Extra space around a cached subtree, to keep shadows from clipping. */
+	cachePadding?: number;
+	/**
+	 * Clips the node's children to its own shape, or to an explicit rounded
+	 * box for groups and other nodes without a path of their own.
+	 */
+	clip?: ClipRegion;
+}
+
+export interface DrawOptions {
+	/** True while the scene clock is running live, which lets video play natively. */
+	playing?: boolean;
 }
 
 export interface NodeValues {
@@ -66,10 +103,24 @@ export abstract class Node {
 	readonly layoutScaleX: Signal<number>;
 	readonly layoutScaleY: Signal<number>;
 	readonly layoutAlpha: Signal<number>;
+	readonly cache: boolean;
+	readonly cachePadding: number;
+	readonly clip: ClipRegion;
+	/** Video subtrees opt out because every frame has different pixels. */
+	get cacheable(): boolean {
+		return true;
+	}
 	/** Set by the scene instance so async nodes can ask for a redraw. */
 	onInvalidate: (() => void) | null = null;
 	parent: Node | null = null;
 	#children: Node[] = [];
+	#cachedSubtree: {
+		key: string;
+		canvas: HTMLCanvasElement;
+		scale: number;
+		offsetX: number;
+		offsetY: number;
+	} | null = null;
 
 	constructor(init: NodeInit = {}) {
 		this.id = init.id ?? `node-${nextNodeId++}`;
@@ -86,6 +137,9 @@ export abstract class Node {
 		this.layoutScaleX = numberSignal(1, `${this.id}.layoutScaleX`);
 		this.layoutScaleY = numberSignal(1, `${this.id}.layoutScaleY`);
 		this.layoutAlpha = numberSignal(1, `${this.id}.layoutAlpha`);
+		this.cache = init.cache ?? false;
+		this.cachePadding = init.cachePadding ?? 48;
+		this.clip = init.clip ?? false;
 	}
 
 	get children(): readonly Node[] {
@@ -190,9 +244,96 @@ export abstract class Node {
 
 	abstract measure(ctx: CanvasRenderingContext2D): Size;
 
-	abstract drawSelf(ctx: CanvasRenderingContext2D, time?: number): void;
+	abstract drawSelf(ctx: CanvasRenderingContext2D, time?: number, options?: DrawOptions): void;
 
-	draw(ctx: CanvasRenderingContext2D, time = 0) {
+	/** Extra drawing state that a cache signature must notice. */
+	protected drawState(): Record<string, unknown> {
+		return {};
+	}
+
+	/** The node's own painted box in local coordinates. */
+	selfBounds(ctx: CanvasRenderingContext2D): Box {
+		const size = this.measure(ctx);
+		let bounds: Box = {
+			x: -size.width / 2,
+			y: -size.height / 2,
+			width: size.width,
+			height: size.height
+		};
+		const shadow = this.shadow();
+		if (shadow) {
+			const blur = (shadow.blur ?? 24) * 2;
+			const offset = Math.max(Math.abs(shadow.offsetX ?? 0), Math.abs(shadow.offsetY ?? 0));
+			bounds = expandBounds(bounds, blur + offset);
+		}
+		if (this.clip) {
+			const clip =
+				typeof this.clip === 'object'
+					? {
+							x: (this.clip.x ?? 0) - this.clip.width / 2,
+							y: (this.clip.y ?? 0) - this.clip.height / 2,
+							width: this.clip.width,
+							height: this.clip.height
+						}
+					: this.clipBounds(ctx);
+			if (clip) bounds = unionBounds(bounds, clip);
+		}
+		return bounds;
+	}
+
+	/** The painted box of this node and every visible child in local coordinates. */
+	contentBounds(ctx: CanvasRenderingContext2D): Box {
+		let bounds = this.selfBounds(ctx);
+		for (const child of this.#children) {
+			const alpha = child.opacity() * child.layoutAlpha();
+			if (!child.visible() || alpha <= 0) continue;
+			const childBounds = transformBounds(
+				child.contentBounds(ctx),
+				child.x() + child.layoutX(),
+				child.y() + child.layoutY(),
+				child.rotation(),
+				child.scale() * child.layoutScaleX(),
+				child.scale() * child.layoutScaleY()
+			);
+			bounds = unionBounds(bounds, childBounds);
+		}
+		return bounds;
+	}
+
+	/** The shape used by `clip`, in local coordinates. */
+	protected clipBounds(ctx: CanvasRenderingContext2D): Box | null {
+		const size = this.measure(ctx);
+		return {
+			x: -size.width / 2,
+			y: -size.height / 2,
+			width: size.width,
+			height: size.height
+		};
+	}
+
+	protected applyClip(ctx: CanvasRenderingContext2D) {
+		if (typeof this.clip === 'object') {
+			const clip = this.clip;
+			roundedRectPath(
+				ctx,
+				clip.width,
+				clip.height,
+				clip.radius ?? 0,
+				clip.smoothness ?? 0,
+				clip.x ?? 0,
+				clip.y ?? 0
+			);
+			ctx.clip();
+			return;
+		}
+
+		const bounds = this.clipBounds(ctx) ?? this.selfBounds(ctx);
+		ctx.beginPath();
+		ctx.rect(bounds.x, bounds.y, bounds.width, bounds.height);
+		ctx.clip();
+	}
+
+	draw(ctx: CanvasRenderingContext2D, time = 0, options: DrawOptions = {}) {
 		const alpha = this.opacity() * this.layoutAlpha();
 		if (!this.visible() || alpha <= 0) return;
 
@@ -202,10 +343,11 @@ export abstract class Node {
 		ctx.scale(this.scale() * this.layoutScaleX(), this.scale() * this.layoutScaleY());
 		ctx.globalAlpha *= alpha;
 
-		applyShadow(ctx, this.shadow());
-		this.drawSelf(ctx, time);
-		clearShadow(ctx);
-		for (const child of this.#children) child.draw(ctx, time);
+		if (this.cache && this.cacheable && cacheDepth === 0) {
+			this.#drawSubtreeCached(ctx, time, options);
+		} else {
+			this.#drawContent(ctx, time, options);
+		}
 
 		ctx.restore();
 	}
@@ -224,14 +366,130 @@ export abstract class Node {
 		ctx.rotate((this.rotation() * Math.PI) / 180);
 		ctx.scale(this.scale() * this.layoutScaleX(), this.scale() * this.layoutScaleY());
 		ctx.globalAlpha *= alpha;
-
-		applyShadow(ctx, this.shadow());
-		this.drawSelf(ctx, time);
-		clearShadow(ctx);
-		for (const child of this.#children) child.draw(ctx, time);
-
+		this.#drawContent(ctx, time, { playing: false });
 		ctx.restore();
 	}
+
+	#drawContent(ctx: CanvasRenderingContext2D, time: number, options: DrawOptions) {
+		applyShadow(ctx, this.shadow());
+		this.drawSelf(ctx, time, options);
+		clearShadow(ctx);
+
+		if (this.clip) {
+			ctx.save();
+			this.applyClip(ctx);
+			for (const child of this.#children) child.draw(ctx, time, options);
+			ctx.restore();
+			return;
+		}
+
+		for (const child of this.#children) child.draw(ctx, time, options);
+	}
+
+	#drawSubtreeCached(ctx: CanvasRenderingContext2D, time: number, options: DrawOptions) {
+		if (typeof document === 'undefined') {
+			this.#drawContent(ctx, time, options);
+			return;
+		}
+
+		const signature = this.#cacheSignature();
+		if (signature === null) {
+			this.#drawContent(ctx, time, options);
+			return;
+		}
+
+		const matrix = ctx.getTransform();
+		const scaleX = Math.hypot(matrix.a, matrix.b);
+		const scaleY = Math.hypot(matrix.c, matrix.d);
+		const worldScale = Math.max(scaleX, scaleY);
+		const scale = Math.max(0.5, Math.min(4, Math.round(worldScale * 4) / 4));
+		const key = `${scale}|${signature}`;
+
+		if (!this.#cachedSubtree || this.#cachedSubtree.key !== key) {
+			const bounds = expandBounds(this.contentBounds(ctx), this.cachePadding);
+			const width = Math.ceil(bounds.width * scale);
+			const height = Math.ceil(bounds.height * scale);
+			if (width <= 0 || height <= 0 || width > 4096 || height > 4096) {
+				this.#cachedSubtree = null;
+				this.#drawContent(ctx, time, options);
+				return;
+			}
+
+			const canvas = document.createElement('canvas');
+			canvas.width = Math.max(1, width);
+			canvas.height = Math.max(1, height);
+			const cache = canvas.getContext('2d');
+			if (!cache) {
+				this.#drawContent(ctx, time, options);
+				return;
+			}
+
+			const offsetX = -bounds.x * scale;
+			const offsetY = -bounds.y * scale;
+			cache.setTransform(scale, 0, 0, scale, offsetX, offsetY);
+			cacheDepth += 1;
+			try {
+				this.#drawContent(cache, time, options);
+			} finally {
+				cacheDepth -= 1;
+			}
+			this.#cachedSubtree = { key, canvas, scale, offsetX, offsetY };
+		}
+
+		const cached = this.#cachedSubtree;
+		if (!cached) {
+			this.#drawContent(ctx, time, options);
+			return;
+		}
+		ctx.drawImage(
+			cached.canvas,
+			-cached.offsetX / cached.scale,
+			-cached.offsetY / cached.scale,
+			cached.canvas.width / cached.scale,
+			cached.canvas.height / cached.scale
+		);
+	}
+
+	#cacheSignature(): string | null {
+		if (!this.cacheable) return null;
+		const state = { ...this.saveState(), ...this.drawState() } as Record<string, unknown>;
+		delete state.x;
+		delete state.y;
+		delete state.rotation;
+		delete state.scale;
+		delete state.opacity;
+		delete state.layoutX;
+		delete state.layoutY;
+		delete state.layoutScaleX;
+		delete state.layoutScaleY;
+		delete state.layoutAlpha;
+
+		const children: string[] = [];
+		for (const child of this.#children) {
+			const signature = child.#cacheSignature();
+			if (signature === null) return null;
+			children.push(signature);
+		}
+
+		return safeStringify({
+			state,
+			clip: this.clip,
+			paint: getPaintVersion(),
+			children
+		});
+	}
+}
+
+let cacheDepth = 0;
+
+function safeStringify(value: unknown): string {
+	return JSON.stringify(value, (_key, item: unknown) => {
+		if (typeof item === 'function') return '[function]';
+		if (typeof HTMLElement !== 'undefined' && item instanceof HTMLElement) {
+			return `[element:${item.tagName}]`;
+		}
+		return item;
+	});
 }
 
 export interface TextInit extends NodeInit {
@@ -245,11 +503,6 @@ export interface TextInit extends NodeInit {
 	maxWidth?: number | null;
 	/** Line height as a multiple of the font size. */
 	lineHeight?: number;
-	/**
-	 * Rasterizes the text once into an offscreen bitmap. Use this for text that
-	 * scales, because Chromium snaps glyphs to pixels on every redraw.
-	 */
-	cache?: boolean;
 }
 
 /** Wraps text to `maxWidth` using the context's current font. */
@@ -312,7 +565,6 @@ export class TextNode extends Node {
 	readonly align: Signal<CanvasTextAlign>;
 	readonly maxWidth: Signal<number | null>;
 	readonly lineHeight: Signal<number>;
-	readonly cache: boolean;
 	#cached: {
 		key: string;
 		canvas: HTMLCanvasElement;
@@ -321,7 +573,6 @@ export class TextNode extends Node {
 		offsetY: number;
 	} | null = null;
 	#prepared: { key: string; value: PreparedTextWithSegments } | null = null;
-	#wasScaled = false;
 
 	constructor(init: TextInit) {
 		super(init);
@@ -340,7 +591,6 @@ export class TextNode extends Node {
 			`${this.id}.maxWidth`
 		);
 		this.lineHeight = numberSignal(init.lineHeight ?? 1.25, `${this.id}.lineHeight`);
-		this.cache = init.cache ?? true;
 	}
 
 	override saveState(): NodeState {
@@ -434,23 +684,9 @@ export class TextNode extends Node {
 		ctx.textAlign = this.align();
 		ctx.textBaseline = 'middle';
 
-		const lines = wrapText(ctx, this.text(), this.maxWidth());
-		const boxWidth = lines.reduce(
-			(widest, line) => Math.max(widest, ctx.measureText(line).width),
-			0
-		);
-		const lineHeight = this.fontSize() * this.lineHeight();
-		const height = Math.max(1, lines.length) * lineHeight;
-		const top = -height / 2;
-
-		const scaled = this.#isScaled();
-		if (scaled) this.#wasScaled = true;
-
-		if (this.cache || this.#wasScaled) {
-			this.#drawCached(ctx, lines, boxWidth, height, lineHeight, top);
-		} else {
-			this.#drawLines(ctx, lines, boxWidth, height, lineHeight, top);
-		}
+		const layout = this.#layout(ctx);
+		const top = -layout.height / 2;
+		this.#drawCached(ctx, layout.lines, layout.width, layout.height, layout.lineHeight, top);
 		ctx.restore();
 	}
 
@@ -464,7 +700,9 @@ export class TextNode extends Node {
 		snap = true
 	) {
 		const x = this.align() === 'left' ? -boxWidth / 2 : this.align() === 'right' ? boxWidth / 2 : 0;
-		ctx.fillStyle = resolvePaint(ctx, this.fill(), boxWidth, height, -boxWidth / 2, top);
+		ctx.fillStyle = resolvePaint(ctx, this.fill(), boxWidth, height, -boxWidth / 2, top, () =>
+			this.requestDraw()
+		);
 		for (let index = 0; index < lines.length; index++) {
 			const point = snap
 				? snapTextPoint(ctx, x, top + (index + 0.5) * lineHeight)
@@ -473,31 +711,9 @@ export class TextNode extends Node {
 		}
 	}
 
-	#isScaled(): boolean {
-		if (
-			Math.abs(this.scale() - 1) > 1e-4 ||
-			Math.abs(this.layoutScaleX() - 1) > 1e-4 ||
-			Math.abs(this.layoutScaleY() - 1) > 1e-4
-		) {
-			return true;
-		}
-		let parent = this.parent;
-		while (parent) {
-			if (
-				Math.abs(parent.scale() - 1) > 1e-4 ||
-				Math.abs(parent.layoutScaleX() - 1) > 1e-4 ||
-				Math.abs(parent.layoutScaleY() - 1) > 1e-4
-			) {
-				return true;
-			}
-			parent = parent.parent;
-		}
-		return false;
-	}
-
 	/**
 	 * Draws a text node from a bitmap rendered once at its resting size. Scaling
-	 * the bitmap keeps the glyph shape stable, which avoids Chromium's per-frame
+	 * the bitmap keeps the glyph shape stable, which avoids Chromium's per frame
 	 * text snapping.
 	 */
 	#drawCached(
@@ -527,7 +743,8 @@ export class TextNode extends Node {
 		const key = [
 			this.text(),
 			this.font,
-			JSON.stringify(this.fill()),
+			safeStringify(this.fill()),
+			getPaintVersion(),
 			this.align(),
 			this.maxWidth(),
 			this.lineHeight(),
@@ -576,6 +793,8 @@ export interface RectInit extends NodeInit {
 	width: number;
 	height: number;
 	radius?: number;
+	/** 0 keeps circular corners, positive values use cubic corners. */
+	smoothness?: number;
 	fill?: Paint | null;
 	stroke?: Paint | null;
 	strokeWidth?: number;
@@ -586,6 +805,7 @@ export class RectNode extends Node {
 	readonly width: Signal<number>;
 	readonly height: Signal<number>;
 	readonly radius: Signal<number>;
+	readonly smoothness: Signal<number>;
 	readonly fill: Signal<Paint | null>;
 	readonly stroke: Signal<Paint | null>;
 	readonly strokeWidth: Signal<number>;
@@ -595,6 +815,7 @@ export class RectNode extends Node {
 		this.width = numberSignal(init.width, `${this.id}.width`);
 		this.height = numberSignal(init.height, `${this.id}.height`);
 		this.radius = numberSignal(init.radius ?? 0, `${this.id}.radius`);
+		this.smoothness = numberSignal(init.smoothness ?? 0, `${this.id}.smoothness`);
 		this.fill = createSignal<Paint | null>(
 			init.fill ?? null,
 			discreteInterpolate,
@@ -618,6 +839,7 @@ export class RectNode extends Node {
 			width: this.width(),
 			height: this.height(),
 			radius: this.radius(),
+			smoothness: this.smoothness(),
 			fill: this.fill(),
 			stroke: this.stroke(),
 			strokeWidth: this.strokeWidth()
@@ -629,6 +851,7 @@ export class RectNode extends Node {
 		if (typeof state.width === 'number') this.width(state.width);
 		if (typeof state.height === 'number') this.height(state.height);
 		if (typeof state.radius === 'number') this.radius(state.radius);
+		if (typeof state.smoothness === 'number') this.smoothness(state.smoothness);
 		if (state.fill === null || typeof state.fill === 'string' || typeof state.fill === 'object') {
 			this.fill(state.fill as Paint | null);
 		}
@@ -642,34 +865,36 @@ export class RectNode extends Node {
 		if (typeof state.strokeWidth === 'number') this.strokeWidth(state.strokeWidth);
 	}
 
+	protected override clipBounds(): Box {
+		const width = this.width();
+		const height = this.height();
+		return { x: -width / 2, y: -height / 2, width, height };
+	}
+
+	protected override applyClip(ctx: CanvasRenderingContext2D) {
+		roundedRectPath(ctx, this.width(), this.height(), this.radius(), this.smoothness());
+		ctx.clip();
+	}
+
 	drawSelf(ctx: CanvasRenderingContext2D) {
 		const width = this.width();
 		const height = this.height();
-		const radius = Math.min(this.radius(), width / 2, height / 2);
 		const left = -width / 2;
 		const top = -height / 2;
 
-		ctx.beginPath();
-		ctx.moveTo(left + radius, top);
-		ctx.lineTo(left + width - radius, top);
-		ctx.quadraticCurveTo(left + width, top, left + width, top + radius);
-		ctx.lineTo(left + width, top + height - radius);
-		ctx.quadraticCurveTo(left + width, top + height, left + width - radius, top + height);
-		ctx.lineTo(left + radius, top + height);
-		ctx.quadraticCurveTo(left, top + height, left, top + height - radius);
-		ctx.lineTo(left, top + radius);
-		ctx.quadraticCurveTo(left, top, left + radius, top);
-		ctx.closePath();
+		roundedRectPath(ctx, width, height, this.radius(), this.smoothness());
 
 		const fill = this.fill();
 		if (fill) {
-			ctx.fillStyle = resolvePaint(ctx, fill, width, height, left, top);
+			ctx.fillStyle = resolvePaint(ctx, fill, width, height, left, top, () => this.requestDraw());
 			ctx.fill();
 		}
 
 		const stroke = this.stroke();
 		if (stroke && this.strokeWidth() > 0) {
-			ctx.strokeStyle = resolvePaint(ctx, stroke, width, height, left, top);
+			ctx.strokeStyle = resolvePaint(ctx, stroke, width, height, left, top, () =>
+				this.requestDraw()
+			);
 			ctx.lineWidth = this.strokeWidth();
 			ctx.stroke();
 		}
@@ -678,6 +903,14 @@ export class RectNode extends Node {
 
 export class GroupNode extends Node {
 	override readonly kind = 'group';
+
+	override selfBounds(): Box {
+		return { x: 0, y: 0, width: 0, height: 0 };
+	}
+
+	protected override clipBounds(ctx: CanvasRenderingContext2D): Box {
+		return this.contentBounds(ctx);
+	}
 
 	measure(ctx: CanvasRenderingContext2D): Size {
 		let left = Infinity;

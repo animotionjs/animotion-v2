@@ -1,4 +1,4 @@
-import { defineScene, getMeasureContext } from '#lib/canvas/index.js';
+import { defineScene, getMeasureContext, spring } from '#lib/canvas/index.js';
 
 const items = ['Svelte 5', 'SvelteKit', 'Tailwind 4', 'TypeScript'];
 
@@ -34,7 +34,10 @@ export default defineScene(
 				() => {
 					order.forEach((item, index) => nodes.get(item)!.y(top + index * gap));
 				},
-				{ duration: 0.5 }
+				{
+					duration: 0.8,
+					ease: spring({ stiffness: 150, damping: 19 })
+				}
 			);
 		}
 
@@ -44,7 +47,7 @@ export default defineScene(
 	{
 		chapter: 'Layout',
 		notes:
-			'The layout step glides keyed nodes between measured positions. Every node carries a layout key so the engine can match it across states. Watch the list reverse.',
+			'The layout step glides keyed nodes between measured positions with a spring easing curve. Every node carries a layout key so the engine can match it across states. Watch the list reverse.',
 		transition: { type: 'fade', duration: 0.45 }
 	}
 );

@@ -21,8 +21,7 @@ export default defineScene(
 					layoutKey: 'logo',
 					fontSize: 86.4,
 					fontWeight: 700,
-					fill: '#ffffff',
-					cache: true
+					fill: '#ffffff'
 				});
 
 				ctx.font = title.font;

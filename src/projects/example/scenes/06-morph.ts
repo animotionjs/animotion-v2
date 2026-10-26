@@ -62,6 +62,7 @@ export default defineScene(
 				type: 'radial',
 				stops: [
 					{ offset: 0, color: 'rgba(251, 191, 36, 0.16)' },
+					{ offset: 0.55, color: 'rgba(251, 191, 36, 0)' },
 					{ offset: 1, color: 'rgba(251, 191, 36, 0)' }
 				]
 			},
@@ -77,6 +78,9 @@ export default defineScene(
 					width: 380,
 					height: 300,
 					radius: 28,
+					smoothness: 0.6,
+					cache: index !== 0,
+					cachePadding: 96,
 					fill: card.fill,
 					stroke: 'rgba(255, 255, 255, 0.08)',
 					strokeWidth: 1,
@@ -189,7 +193,7 @@ export default defineScene(
 	{
 		chapter: 'Morph',
 		notes:
-			'A card grows into a panel while the other cards reflow around it. The card box is tweened directly so its text stays sharp, and the surrounding cards move with a keyed layout step.',
+			'A card grows into a panel while the other cards reflow around it. The card box is tweened directly so its text stays sharp, the corners are continuous curves, and the side cards are cached while they move. The surrounding cards use a keyed layout step.',
 		transition: { type: 'fade', duration: 0.5 }
 	}
 );

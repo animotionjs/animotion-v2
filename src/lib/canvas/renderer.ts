@@ -1,4 +1,5 @@
 import type { SceneInstance, TransitionState } from './scene.js';
+import type { DrawOptions } from './nodes.js';
 
 export type RendererFit = 'contain' | 'cover';
 
@@ -93,9 +94,14 @@ export class CanvasRenderer {
 		ctx.translate(visibleWidth / 2, visibleHeight / 2);
 	}
 
-	drawScene(scene: SceneInstance, time: number, transition: TransitionState = IDENTITY) {
+	drawScene(
+		scene: SceneInstance,
+		time: number,
+		transition: TransitionState = IDENTITY,
+		options: DrawOptions = {}
+	) {
 		scene.seek(time);
-		scene.draw(this.#ctx, transition);
+		scene.draw(this.#ctx, transition, options);
 	}
 
 	end() {

@@ -47,7 +47,7 @@
 
 			manager.setRenderer((time, transition, playing) => {
 				renderer.begin();
-				renderer.drawScene(instance, time, transition);
+				renderer.drawScene(instance, time, transition, { playing });
 				renderer.end();
 				audio.sync(time, playing);
 			});

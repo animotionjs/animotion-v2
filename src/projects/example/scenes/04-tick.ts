@@ -4,63 +4,59 @@ export default defineScene(
 	'tick',
 	function* (s) {
 		s.text('tick step', {
-			y: -170.5,
+			y: -380,
 			fontSize: 67.2,
 			fontWeight: 700,
 			fill: '#ffffff'
 		});
 
-		s.text('progress', {
-			x: -341.33,
-			y: -68.45,
-			fontSize: 30.72,
-			fill: '#9ca3af',
-			align: 'left'
+		s.circle({
+			y: -40,
+			radius: 150,
+			stroke: '#27272a',
+			strokeWidth: 18
+		});
+
+		const ring = s.circle({
+			y: -40,
+			radius: 150,
+			startAngle: -90,
+			endAngle: -90,
+			stroke: {
+				type: 'conic',
+				startAngle: -Math.PI / 2,
+				stops: [
+					{ offset: 0, color: '#fbbf24' },
+					{ offset: 0.55, color: '#38bdf8' },
+					{ offset: 1, color: '#fbbf24' }
+				]
+			},
+			strokeWidth: 18
 		});
 
 		const percent = s.text('0%', {
-			x: 341.33,
-			y: -68.45,
-			fontSize: 30.72,
-			fill: '#ffffff',
-			align: 'right'
+			y: -40,
+			fontSize: 72,
+			fontWeight: 700,
+			fill: '#ffffff'
 		});
 
-		s.rect({
-			y: -28.8,
-			width: 682.67,
-			height: 19.2,
-			radius: 9.6,
-			fill: '#27272a'
-		});
-
-		const bar = s.rect({
-			x: -341.33,
-			y: -28.8,
-			width: 0,
-			height: 19.2,
-			radius: 9.6,
-			fill: '#fbbf24'
-		});
-
-		s.text('time', {
-			y: 49.27,
+		s.text('progress', {
+			y: 154,
 			fontSize: 30.72,
 			fill: '#9ca3af'
 		});
 
 		const seconds = s.text('0.0s', {
-			y: 160.95,
-			fontSize: 86.4,
+			y: 238,
+			fontSize: 67.2,
 			fontWeight: 700,
 			fill: '#ffffff'
 		});
 
 		yield* tick(
 			({ progress, time }) => {
-				const width = progress * 682.67;
-				bar.width(width);
-				bar.x(-341.33 + width / 2);
+				ring.endAngle(-90 + progress * 360);
 				percent.text(`${Math.round(progress * 100)}%`);
 				seconds.text(`${time.toFixed(1)}s`);
 			},
@@ -71,7 +67,7 @@ export default defineScene(
 	{
 		chapter: 'Tick',
 		notes:
-			'The tick step runs a callback every frame with progress, time, deltaTime, and frame, letting you drive arbitrary state like a progress bar and a counter.',
+			'The tick step runs a callback every frame with progress, time, deltaTime, and frame. Here it drives a conic gradient progress ring and a counter.',
 		transition: { type: 'slide', duration: 0.45 }
 	}
 );

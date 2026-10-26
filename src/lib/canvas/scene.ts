@@ -7,13 +7,30 @@ import {
 	GroupNode,
 	RectNode,
 	TextNode,
+	type DrawOptions,
 	type Node,
 	type NodeInit,
 	type NodeState,
 	type RectInit,
 	type TextInit
 } from './nodes.js';
-import { Animation, type Step } from './steps.js';
+import {
+	BezierNode,
+	CircleNode,
+	LineNode,
+	PathNode,
+	PolygonNode,
+	SplineNode,
+	type BezierInit,
+	type CircleInit,
+	type LineInit,
+	type PathInit,
+	type SplineInit
+} from './shapes.js';
+import { RichTextNode, type RichTextInit, type RichTextRun } from './rich-text.js';
+import { SvgNode, type SvgInit } from './svg.js';
+import { StepRunner, Animation, type Step } from './steps.js';
+import { ThreadRecorder, withThreadRecorder, type Thread } from './threading.js';
 import type { TransitionConfig } from '../scene/options.js';
 
 export interface TimelineStep {
@@ -48,10 +65,11 @@ export interface SceneInstance {
 	readonly steps: readonly Step[];
 	readonly camera: Camera;
 	readonly audio: readonly AudioCue[];
+	readonly threads: readonly Thread[];
 	readonly duration: number;
 	readonly timeline: SceneTimeline;
 	seek(seconds: number): void;
-	draw(ctx: CanvasRenderingContext2D, transition?: TransitionState): void;
+	draw(ctx: CanvasRenderingContext2D, transition?: TransitionState, options?: DrawOptions): void;
 	snapshot(): NodeSnapshot;
 	/** Called by async nodes when the picture needs to be drawn again. */
 	setInvalidate(callback: (() => void) | null): void;
@@ -72,6 +90,7 @@ export type SceneBuild = (builder: SceneBuilder) => Generator<Step, void, unknow
 export class SceneBuilder {
 	readonly root = new GroupNode();
 	readonly camera = new Camera();
+	readonly threads = new ThreadRecorder();
 	#audio: AudioCue[] = [];
 
 	get audio(): readonly AudioCue[] {
@@ -107,6 +126,21 @@ export class SceneBuilder {
 		return cameraFrame(this.root, this.camera, target, options);
 	}
 
+	/** Starts an animation in the background at the current recorded time. */
+	spawn(animation: Animation): Thread {
+		return this.threads.spawn(animation);
+	}
+
+	/** Waits for a background thread to finish. */
+	join(thread: Thread): Animation {
+		return this.threads.join(thread);
+	}
+
+	/** Stops a background thread at the current recorded time. */
+	cancel(thread: Thread) {
+		this.threads.cancel(thread);
+	}
+
 	code(init: CodeNodeInit): CodeNode {
 		const node = new CodeNode(init);
 		this.root.add(node);
@@ -120,6 +154,8 @@ export class SceneBuilder {
 			height?: number | null;
 			fit?: MediaFit;
 			radius?: number;
+			smoothness?: number;
+			smoothing?: boolean;
 		} & NodeInit
 	): ImageNode {
 		const node = new ImageNode(init);
@@ -134,11 +170,25 @@ export class SceneBuilder {
 			height?: number | null;
 			fit?: MediaFit;
 			radius?: number;
+			smoothness?: number;
+			smoothing?: boolean;
 			muted?: boolean;
 			loop?: boolean;
 		} & NodeInit
 	): VideoNode {
 		const node = new VideoNode(init);
+		this.root.add(node);
+		return node;
+	}
+
+	svg(init: SvgInit): SvgNode {
+		const node = new SvgNode(init);
+		this.root.add(node);
+		return node;
+	}
+
+	rich(runs: RichTextRun[], init: Omit<RichTextInit, 'runs'> = {}): RichTextNode {
+		const node = new RichTextNode({ runs, ...init });
 		this.root.add(node);
 		return node;
 	}
@@ -191,6 +241,42 @@ export class SceneBuilder {
 		return node;
 	}
 
+	circle(init: CircleInit): CircleNode {
+		const node = new CircleNode(init);
+		this.root.add(node);
+		return node;
+	}
+
+	line(init: LineInit): LineNode {
+		const node = new LineNode(init);
+		this.root.add(node);
+		return node;
+	}
+
+	polygon(init: Omit<LineInit, 'closed'> & { closed?: boolean }): PolygonNode {
+		const node = new PolygonNode(init);
+		this.root.add(node);
+		return node;
+	}
+
+	spline(init: SplineInit): SplineNode {
+		const node = new SplineNode(init);
+		this.root.add(node);
+		return node;
+	}
+
+	bezier(init: BezierInit): BezierNode {
+		const node = new BezierNode(init);
+		this.root.add(node);
+		return node;
+	}
+
+	path(init: PathInit): PathNode {
+		const node = new PathNode(init);
+		this.root.add(node);
+		return node;
+	}
+
 	card(init: RectInit, ...children: Node[]): RectNode {
 		const node = new RectNode({
 			fill: '#18181b',
@@ -210,10 +296,31 @@ export class SceneBuilder {
 	}
 }
 
+class ThreadRuntime {
+	#runner: StepRunner;
+
+	constructor(readonly thread: Thread) {
+		this.#runner = new StepRunner([thread.animation.step]);
+	}
+
+	seek(time: number) {
+		const span = this.thread.end - this.thread.start;
+		if (span <= 0) {
+			this.#runner.reset();
+			return;
+		}
+		const local = time - this.thread.start;
+		if (local <= 0) {
+			this.#runner.reset();
+			return;
+		}
+		this.#runner.seek(Math.min(local, span));
+	}
+}
+
 class Instance implements SceneInstance {
-	#completed = 0;
-	#active: number | null = null;
-	#activeProgress = 0;
+	#runner: StepRunner;
+	#runtimes: ThreadRuntime[];
 	#time = 0;
 
 	constructor(
@@ -221,8 +328,11 @@ class Instance implements SceneInstance {
 		readonly root: GroupNode,
 		readonly steps: readonly Step[],
 		readonly camera: Camera,
-		readonly audio: readonly AudioCue[]
+		readonly audio: readonly AudioCue[],
+		readonly threads: readonly Thread[] = []
 	) {
+		this.#runner = new StepRunner(steps);
+		this.#runtimes = threads.map((thread) => new ThreadRuntime(thread));
 		this.root.onInvalidate = () => this.#invalidate?.();
 	}
 
@@ -233,7 +343,7 @@ class Instance implements SceneInstance {
 	}
 
 	get duration(): number {
-		return this.steps.reduce((total, step) => total + step.duration, 0);
+		return this.#runner.duration;
 	}
 
 	get timeline(): SceneTimeline {
@@ -247,80 +357,22 @@ class Instance implements SceneInstance {
 	}
 
 	/**
-	 * Moves the scene to an absolute time. Forward playback only advances the
-	 * current step, while a backward seek rebuilds from the start, so scrubbing
-	 * stays deterministic without replaying every earlier step on every frame.
+	 * Moves the scene to an absolute time. The step runner handles forward
+	 * playback and backward seeks, and background threads follow the same clock.
 	 */
 	seek(seconds: number) {
 		const total = this.duration;
 		const target = Math.min(total, Math.max(0, seconds));
 		this.#time = target;
-
-		if (target <= 0) {
-			this.#reset();
-		}
-
-		let index = 0;
-		let cursor = 0;
-		for (; index < this.steps.length; index++) {
-			const step = this.steps[index]!;
-			const end = cursor + step.duration;
-			if (target < end) break;
-			cursor = end;
-		}
-
-		if (index >= this.steps.length) {
-			this.#completeTo(this.steps.length);
-			return;
-		}
-
-		const step = this.steps[index]!;
-		const progress = step.duration > 0 ? (target - cursor) / step.duration : 1;
-		const rewound =
-			index < this.#completed ||
-			(this.#active !== null &&
-				(index < this.#active ||
-					(index === this.#active && progress + 1e-9 < this.#activeProgress)));
-		if (rewound) this.#reset();
-
-		this.#completeTo(index);
-
-		if (this.#active !== index) {
-			step.start();
-			this.#active = index;
-			this.#activeProgress = 0;
-		}
-
-		step.setProgress(progress);
-		this.#activeProgress = progress;
+		this.#runner.seek(target);
+		for (const runtime of this.#runtimes) runtime.seek(target);
 	}
 
-	#completeTo(index: number) {
-		while (this.#completed < index) {
-			const step = this.steps[this.#completed]!;
-			if (this.#active !== this.#completed) {
-				step.start();
-				this.#active = this.#completed;
-			}
-			step.setProgress(1);
-			step.end();
-			this.#active = null;
-			this.#completed += 1;
-			this.#activeProgress = 0;
-		}
-	}
-
-	#reset() {
-		if (this.#active !== null) this.steps[this.#active]?.revert();
-		for (let index = this.#completed - 1; index >= 0; index--) {
-			this.steps[index]?.revert();
-		}
-		this.#completed = 0;
-		this.#active = null;
-		this.#activeProgress = 0;
-	}
-
-	draw(ctx: CanvasRenderingContext2D, transition: TransitionState = IDENTITY_TRANSITION) {
+	draw(
+		ctx: CanvasRenderingContext2D,
+		transition: TransitionState = IDENTITY_TRANSITION,
+		options: DrawOptions = {}
+	) {
 		ctx.save();
 		ctx.translate(transition.x, transition.y);
 		ctx.scale(transition.scale, transition.scale);
@@ -331,7 +383,7 @@ class Instance implements SceneInstance {
 		ctx.rotate((this.camera.deg() * Math.PI) / 180);
 		ctx.translate(-this.camera.x(), -this.camera.y());
 
-		this.root.draw(ctx, this.#time);
+		this.root.draw(ctx, this.#time, options);
 		for (const step of this.steps) step.drawOverlay?.(ctx, this.#time);
 
 		ctx.restore();
@@ -357,22 +409,32 @@ function snapshotNode(node: Node): NodeSnapshot {
 
 function createInstance(id: string, build: SceneBuild): SceneInstance {
 	const builder = new SceneBuilder();
-	const generator = build(builder);
 	const steps: Step[] = [];
 
-	for (let next = generator.next(); !next.done; next = generator.next()) {
-		const step = next.value;
-		steps.push(step);
-		step.start();
-		step.setProgress(1);
-		step.end();
-	}
+	withThreadRecorder(builder.threads, () => {
+		const generator = build(builder);
+		for (let next = generator.next(); !next.done; next = generator.next()) {
+			const step = next.value;
+			steps.push(step);
+			step.start();
+			step.setProgress(1);
+			step.end();
+			builder.threads.advance(step);
+		}
+	});
 
 	for (let index = steps.length - 1; index >= 0; index--) {
 		steps[index]?.revert();
 	}
 
-	return new Instance(id, builder.root, steps, builder.camera, builder.audio);
+	return new Instance(
+		id,
+		builder.root,
+		steps,
+		builder.camera,
+		builder.audio,
+		builder.threads.threads
+	);
 }
 
 export function defineScene(

@@ -109,6 +109,125 @@ export class TweenStep<T> implements Step {
 	}
 }
 
+/**
+ * Drives a flat list of steps at an absolute time. Scenes and background
+ * threads share the same logic, so seeking behaves the same everywhere.
+ */
+export class StepRunner {
+	#completed = 0;
+	#active: number | null = null;
+	#activeProgress = 0;
+
+	constructor(readonly steps: readonly Step[]) {}
+
+	get duration(): number {
+		return this.steps.reduce((total, step) => total + step.duration, 0);
+	}
+
+	seek(seconds: number) {
+		const total = this.duration;
+		const target = Math.min(total, Math.max(0, seconds));
+
+		if (target <= 0) this.reset();
+
+		let index = 0;
+		let cursor = 0;
+		for (; index < this.steps.length; index++) {
+			const step = this.steps[index]!;
+			const end = cursor + step.duration;
+			if (target < end) break;
+			cursor = end;
+		}
+
+		if (index >= this.steps.length) {
+			this.completeTo(this.steps.length);
+			return;
+		}
+
+		const step = this.steps[index]!;
+		const progress = step.duration > 0 ? (target - cursor) / step.duration : 1;
+		const rewound =
+			index < this.#completed ||
+			(this.#active !== null &&
+				(index < this.#active ||
+					(index === this.#active && progress + 1e-9 < this.#activeProgress)));
+		if (rewound) this.reset();
+
+		this.completeTo(index);
+
+		if (this.#active !== index) {
+			step.start();
+			this.#active = index;
+			this.#activeProgress = 0;
+		}
+
+		step.setProgress(progress);
+		this.#activeProgress = progress;
+	}
+
+	completeTo(index: number) {
+		while (this.#completed < index) {
+			const step = this.steps[this.#completed]!;
+			if (this.#active !== this.#completed) {
+				step.start();
+				this.#active = this.#completed;
+			}
+			step.setProgress(1);
+			step.end();
+			this.#active = null;
+			this.#completed += 1;
+			this.#activeProgress = 0;
+		}
+	}
+
+	reset() {
+		if (this.#active !== null) this.steps[this.#active]?.revert();
+		for (let index = this.#completed - 1; index >= 0; index--) {
+			this.steps[index]?.revert();
+		}
+		this.#completed = 0;
+		this.#active = null;
+		this.#activeProgress = 0;
+	}
+}
+
+/** Plays several animations one after another as one timeline step. */
+export class SequenceStep implements Step {
+	readonly label = 'sequence';
+	readonly steps: readonly Step[];
+	#runner: StepRunner;
+
+	constructor(steps: readonly Step[]) {
+		this.steps = steps;
+		this.#runner = new StepRunner(steps);
+	}
+
+	get duration(): number {
+		return this.#runner.duration;
+	}
+
+	start() {
+		this.#runner.reset();
+		this.#runner.seek(0);
+	}
+
+	setProgress(progress: number) {
+		this.#runner.seek(clamp(progress, 0, 1) * this.duration);
+	}
+
+	end() {
+		this.#runner.seek(this.duration);
+	}
+
+	revert() {
+		this.#runner.reset();
+	}
+
+	drawOverlay(ctx: CanvasRenderingContext2D, time: number) {
+		for (const step of this.steps) step.drawOverlay?.(ctx, time);
+	}
+}
+
 export class ParallelStep implements Step {
 	readonly label = 'parallel';
 	#done: boolean[] = [];
@@ -160,6 +279,10 @@ export class ParallelStep implements Step {
 export class Animation implements Iterable<Step> {
 	constructor(readonly step: Step) {}
 
+	get duration(): number {
+		return this.step.duration;
+	}
+
 	*[Symbol.iterator]() {
 		yield this.step;
 	}
@@ -179,6 +302,11 @@ export function tick(
 
 export function all(...animations: Animation[]): Animation {
 	return new Animation(new ParallelStep(animations.map((animation) => animation.step)));
+}
+
+/** Runs animations one after another inside a single timeline step. */
+export function sequence(...animations: Animation[]): Animation {
+	return new Animation(new SequenceStep(animations.map((animation) => animation.step)));
 }
 
 export function tween<T>(

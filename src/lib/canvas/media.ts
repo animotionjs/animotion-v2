@@ -1,4 +1,5 @@
-import { Node, type NodeInit, type NodeState, type Size } from './nodes.js';
+import { roundedRectPath } from './geometry.js';
+import { Node, type DrawOptions, type NodeInit, type NodeState, type Size } from './nodes.js';
 import {
 	createSignal,
 	discreteInterpolate,
@@ -15,23 +16,18 @@ interface MediaInit extends NodeInit {
 	height?: number | null;
 	fit?: MediaFit;
 	radius?: number;
+	smoothness?: number;
+	smoothing?: boolean;
 }
 
-function drawRounded(ctx: CanvasRenderingContext2D, width: number, height: number, radius: number) {
-	const left = -width / 2;
-	const top = -height / 2;
-	const r = Math.min(radius, width / 2, height / 2);
-	ctx.beginPath();
-	ctx.moveTo(left + r, top);
-	ctx.lineTo(left + width - r, top);
-	ctx.quadraticCurveTo(left + width, top, left + width, top + r);
-	ctx.lineTo(left + width, top + height - r);
-	ctx.quadraticCurveTo(left + width, top + height, left + width - r, top + height);
-	ctx.lineTo(left + r, top + height);
-	ctx.quadraticCurveTo(left, top + height, left, top + height - r);
-	ctx.lineTo(left, top + r);
-	ctx.quadraticCurveTo(left, top, left + r, top);
-	ctx.closePath();
+function drawRounded(
+	ctx: CanvasRenderingContext2D,
+	width: number,
+	height: number,
+	radius: number,
+	smoothness = 0
+) {
+	roundedRectPath(ctx, width, height, radius, smoothness);
 }
 
 function paintMedia(
@@ -79,12 +75,14 @@ function paintMedia(
 }
 
 export class ImageNode extends Node {
-	override readonly kind = 'image';
+	override readonly kind: string = 'image';
 	readonly src: Signal<string>;
 	readonly width: Signal<number | null>;
 	readonly height: Signal<number | null>;
 	readonly fit: Signal<MediaFit>;
 	readonly radius: Signal<number>;
+	readonly smoothness: Signal<number>;
+	readonly smoothing: Signal<boolean>;
 	#image: HTMLImageElement | null = null;
 	#failed = false;
 
@@ -103,6 +101,12 @@ export class ImageNode extends Node {
 		);
 		this.fit = createSignal(init.fit ?? 'cover', discreteInterpolate, `${this.id}.fit`);
 		this.radius = numberSignal(init.radius ?? 0, `${this.id}.radius`);
+		this.smoothness = numberSignal(init.smoothness ?? 0, `${this.id}.smoothness`);
+		this.smoothing = createSignal(
+			init.smoothing ?? true,
+			discreteInterpolate,
+			`${this.id}.smoothing`
+		);
 		this.#load();
 	}
 
@@ -144,7 +148,9 @@ export class ImageNode extends Node {
 			width: this.width(),
 			height: this.height(),
 			fit: this.fit(),
-			radius: this.radius()
+			radius: this.radius(),
+			smoothness: this.smoothness(),
+			smoothing: this.smoothing()
 		};
 	}
 
@@ -155,24 +161,41 @@ export class ImageNode extends Node {
 		if (state.height === null || typeof state.height === 'number') this.height(state.height);
 		if (typeof state.fit === 'string') this.fit(state.fit as MediaFit);
 		if (typeof state.radius === 'number') this.radius(state.radius);
+		if (typeof state.smoothness === 'number') this.smoothness(state.smoothness);
+		if (typeof state.smoothing === 'boolean') this.smoothing(state.smoothing);
+	}
+
+	protected override drawState(): Record<string, unknown> {
+		return {
+			ready: Boolean(this.#image),
+			failed: this.#failed,
+			naturalWidth: this.#image?.naturalWidth ?? 0,
+			naturalHeight: this.#image?.naturalHeight ?? 0
+		};
 	}
 
 	drawSelf(ctx: CanvasRenderingContext2D) {
 		this.#load();
 		const size = this.measure();
-		drawRounded(ctx, size.width, size.height, this.radius());
+		drawRounded(ctx, size.width, size.height, this.radius(), this.smoothness());
 		ctx.save();
 		ctx.clip();
+		ctx.imageSmoothingEnabled = this.smoothing();
+		ctx.imageSmoothingQuality = 'high';
 		if (this.#image) {
-			paintMedia(
-				ctx,
-				this.#image,
-				this.#image.naturalWidth,
-				this.#image.naturalHeight,
-				size.width,
-				size.height,
-				this.fit()
-			);
+			if (this.#image.naturalWidth > 0) {
+				paintMedia(
+					ctx,
+					this.#image,
+					this.#image.naturalWidth,
+					this.#image.naturalHeight,
+					size.width,
+					size.height,
+					this.fit()
+				);
+			} else {
+				ctx.drawImage(this.#image, -size.width / 2, -size.height / 2, size.width, size.height);
+			}
 		} else {
 			ctx.fillStyle = '#18181b';
 			ctx.fillRect(-size.width / 2, -size.height / 2, size.width, size.height);
@@ -188,11 +211,15 @@ export class VideoNode extends Node {
 	readonly height: Signal<number | null>;
 	readonly fit: Signal<MediaFit>;
 	readonly radius: Signal<number>;
+	readonly smoothness: Signal<number>;
+	readonly smoothing: Signal<boolean>;
 	readonly muted: Signal<boolean>;
 	readonly loop: Signal<boolean>;
+	override get cacheable(): boolean {
+		return false;
+	}
 	#video: HTMLVideoElement | null = null;
 	#failed = false;
-	#lastSync = -1;
 
 	constructor(init: MediaInit & { muted?: boolean; loop?: boolean }) {
 		super(init);
@@ -209,6 +236,12 @@ export class VideoNode extends Node {
 		);
 		this.fit = createSignal(init.fit ?? 'cover', discreteInterpolate, `${this.id}.fit`);
 		this.radius = numberSignal(init.radius ?? 0, `${this.id}.radius`);
+		this.smoothness = numberSignal(init.smoothness ?? 0, `${this.id}.smoothness`);
+		this.smoothing = createSignal(
+			init.smoothing ?? true,
+			discreteInterpolate,
+			`${this.id}.smoothing`
+		);
 		this.muted = createSignal(init.muted ?? true, discreteInterpolate, `${this.id}.muted`);
 		this.loop = createSignal(init.loop ?? true, discreteInterpolate, `${this.id}.loop`);
 		this.#load();
@@ -246,14 +279,41 @@ export class VideoNode extends Node {
 		return { width: naturalWidth, height: naturalHeight };
 	}
 
-	#sync(time: number) {
+	#sync(time: number, playing: boolean) {
 		const video = this.#video;
 		if (!video) return;
-		const duration = Number.isFinite(video.duration) ? video.duration : time;
-		const target = this.loop() && duration > 0 ? time % duration : Math.min(time, duration);
-		if (Math.abs(target - this.#lastSync) < 1 / 15) return;
-		this.#lastSync = target;
-		if (Math.abs(video.currentTime - target) > 1 / 20) {
+		const duration = Number.isFinite(video.duration) && video.duration > 0 ? video.duration : null;
+		let target = time;
+		if (duration !== null) {
+			target = this.loop() ? ((time % duration) + duration) % duration : Math.min(time, duration);
+		}
+
+		if (video.loop !== this.loop()) video.loop = this.loop();
+		if (video.muted !== this.muted()) video.muted = this.muted();
+
+		if (!playing) {
+			if (!video.paused) video.pause();
+			if (Math.abs(video.currentTime - target) > 1 / 30) {
+				try {
+					video.currentTime = target;
+				} catch {
+					// the media may still be loading, the next frame retries
+				}
+			}
+			return;
+		}
+
+		if (video.paused) {
+			void video.play().catch(() => {
+				// autoplay can be refused, the clock seek below still keeps the frame current
+			});
+		}
+
+		let drift = video.currentTime - target;
+		if (duration !== null && this.loop()) {
+			drift = ((((drift + duration / 2) % duration) + duration) % duration) - duration / 2;
+		}
+		if (Math.abs(drift) > 0.25) {
 			try {
 				video.currentTime = target;
 			} catch {
@@ -270,6 +330,8 @@ export class VideoNode extends Node {
 			height: this.height(),
 			fit: this.fit(),
 			radius: this.radius(),
+			smoothness: this.smoothness(),
+			smoothing: this.smoothing(),
 			muted: this.muted(),
 			loop: this.loop()
 		};
@@ -282,17 +344,21 @@ export class VideoNode extends Node {
 		if (state.height === null || typeof state.height === 'number') this.height(state.height);
 		if (typeof state.fit === 'string') this.fit(state.fit as MediaFit);
 		if (typeof state.radius === 'number') this.radius(state.radius);
+		if (typeof state.smoothness === 'number') this.smoothness(state.smoothness);
+		if (typeof state.smoothing === 'boolean') this.smoothing(state.smoothing);
 		if (typeof state.muted === 'boolean') this.muted(state.muted);
 		if (typeof state.loop === 'boolean') this.loop(state.loop);
 	}
 
-	drawSelf(ctx: CanvasRenderingContext2D, time = 0) {
+	drawSelf(ctx: CanvasRenderingContext2D, time = 0, options: DrawOptions = {}) {
 		this.#load();
-		this.#sync(time);
+		this.#sync(time, options.playing ?? false);
 		const size = this.measure();
-		drawRounded(ctx, size.width, size.height, this.radius());
+		drawRounded(ctx, size.width, size.height, this.radius(), this.smoothness());
 		ctx.save();
 		ctx.clip();
+		ctx.imageSmoothingEnabled = this.smoothing();
+		ctx.imageSmoothingQuality = 'high';
 		const video = this.#video;
 		if (video && video.videoWidth > 0) {
 			paintMedia(

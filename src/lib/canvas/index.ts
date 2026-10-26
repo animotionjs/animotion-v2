@@ -17,6 +17,9 @@ export {
 	rect,
 	text,
 	wrapText,
+	type ClipBox,
+	type ClipRegion,
+	type DrawOptions,
 	type NodeInit,
 	type NodeState,
 	type NodeValues,
@@ -25,13 +28,62 @@ export {
 	type TextInit
 } from './nodes.js';
 export {
+	BezierNode,
+	CircleNode,
+	LineNode,
+	PathNode,
+	PathNode as Path2DNode,
+	PolygonNode,
+	ShapeNode,
+	SplineNode,
+	type BezierInit,
+	type CircleInit,
+	type LineInit,
+	type PathInit,
+	type ShapeInit,
+	type SplineInit
+} from './shapes.js';
+export {
+	RichTextNode,
+	type RichTextFragment,
+	type RichTextInit,
+	type RichTextLine,
+	type RichTextRun
+} from './rich-text.js';
+export { SvgNode, type SvgInit } from './svg.js';
+export {
+	boundsFromPoints,
+	catmullRom,
+	expandBounds,
+	roundedRectPath,
+	transformBounds,
+	unionBounds,
+	type Box,
+	type Point
+} from './geometry.js';
+export { spring, springTo, type SpringAnimationOptions, type SpringOptions } from './spring.js';
+export {
+	Thread,
+	ThreadRecorder,
+	cancel,
+	join,
+	loop,
+	spawn,
+	waitFor,
+	withThreadRecorder
+} from './threading.js';
+export {
 	applyShadow,
 	clearShadow,
 	resolvePaint,
+	type ConicGradientPaint,
 	type GradientPaint,
 	type GradientStop,
 	type LinearGradientPaint,
 	type Paint,
+	type PaintStyle,
+	type PatternPaint,
+	type PatternRepeat,
 	type RadialGradientPaint,
 	type Shadow
 } from './paint.js';
@@ -39,10 +91,13 @@ export { ImageNode, VideoNode, type MediaFit } from './media.js';
 export {
 	Animation,
 	ParallelStep,
+	SequenceStep,
+	StepRunner,
 	TickStep,
 	TweenStep,
 	WaitStep,
 	all,
+	sequence,
 	tick,
 	tween,
 	wait,

@@ -47,6 +47,13 @@ export interface CodeNodeInit extends NodeInit {
 	/** Reserve at least this many columns so edits do not recenter the block. */
 	minCols?: number;
 	selectionFill?: string;
+	/** Caret color. */
+	cursorFill?: string;
+	/** Caret blink period in seconds, or zero to keep it steady. */
+	cursorBlink?: number;
+	/** Color of the scroll fade masks, or zero size to hide them. */
+	scrollFadeColor?: string;
+	scrollFadeSize?: number;
 }
 
 interface CodeLayout {
@@ -140,9 +147,21 @@ export class CodeNode extends Node {
 	readonly selection: Signal<CodeRange | null>;
 	readonly selectionAlpha: Signal<number>;
 	readonly scroll: Signal<number>;
+	readonly cursor: Signal<CodePosition | null>;
+	readonly cursorAlpha: Signal<number>;
+	readonly cursorFill: Signal<string>;
+	readonly cursorBlink: number;
+	readonly scrollFadeColor: Signal<string>;
+	readonly scrollFadeSize: Signal<number>;
 	previousCode: string | null = null;
 	morphTokens: MorphToken[] = [];
 	#morphTheme = -1;
+	#tokenCache: { code: string; language: string; theme: number; tokens: MorphToken[] } | null =
+		null;
+
+	override get cacheable(): boolean {
+		return this.cursor() === null;
+	}
 
 	constructor(init: CodeNodeInit) {
 		super(init);
@@ -176,6 +195,15 @@ export class CodeNode extends Node {
 		);
 		this.selectionAlpha = numberSignal(0, `${this.id}.selectionAlpha`);
 		this.scroll = numberSignal(0, `${this.id}.scroll`);
+		this.cursor = createSignal<CodePosition | null>(null, discreteInterpolate, `${this.id}.cursor`);
+		this.cursorAlpha = numberSignal(0, `${this.id}.cursorAlpha`);
+		this.cursorFill = stringSignal(init.cursorFill ?? '#fbbf24', `${this.id}.cursorFill`);
+		this.cursorBlink = init.cursorBlink ?? 1.1;
+		this.scrollFadeColor = stringSignal(
+			init.scrollFadeColor ?? '#09090b',
+			`${this.id}.scrollFadeColor`
+		);
+		this.scrollFadeSize = numberSignal(init.scrollFadeSize ?? 0, `${this.id}.scrollFadeSize`);
 	}
 
 	get font(): string {
@@ -252,6 +280,16 @@ export class CodeNode extends Node {
 		return new Animation(new CodeScrollStep(this, line, duration, ease));
 	}
 
+	/** Shows the caret at a position, or fades it away when null. */
+	placeCursor(at: CodePosition | null, duration = 0.2, ease: Easing = easeInOut): Animation {
+		return new Animation(new CodeCursorStep(this, at, duration, ease));
+	}
+
+	/** Fades the caret away. */
+	hideCursor(duration = 0.2, ease: Easing = easeInOut): Animation {
+		return this.placeCursor(null, duration, ease);
+	}
+
 	#find(code: string, target: string): CodeRange | null {
 		const index = code.indexOf(target);
 		if (index === -1) return null;
@@ -298,26 +336,39 @@ export class CodeNode extends Node {
 	}
 
 	#tokens(code: string): MorphToken[] {
-		const tokens = highlight(code, this.language());
-		if (tokens.length > 0) {
-			return tokens.map((token) => ({
-				code: token.code,
-				color: token.color,
-				morph: 'retain',
-				from: [token.col, token.line],
-				to: [token.col, token.line]
-			}));
+		const language = this.language();
+		const theme = getThemeVersion();
+		if (
+			this.#tokenCache &&
+			this.#tokenCache.code === code &&
+			this.#tokenCache.language === language &&
+			this.#tokenCache.theme === theme
+		) {
+			return this.#tokenCache.tokens;
 		}
-		return code
-			.split('\n')
-			.filter((line) => line.length > 0)
-			.map((line, index) => ({
-				code: line,
-				color: '',
-				morph: 'retain' as const,
-				from: [0, index] as [number, number],
-				to: [0, index] as [number, number]
-			}));
+
+		const tokens = highlight(code, language);
+		const result =
+			tokens.length > 0
+				? tokens.map((token) => ({
+						code: token.code,
+						color: token.color,
+						morph: 'retain' as const,
+						from: [token.col, token.line] as [number, number],
+						to: [token.col, token.line] as [number, number]
+					}))
+				: code
+						.split('\n')
+						.filter((line) => line.length > 0)
+						.map((line, index) => ({
+							code: line,
+							color: '',
+							morph: 'retain' as const,
+							from: [0, index] as [number, number],
+							to: [0, index] as [number, number]
+						}));
+		this.#tokenCache = { code, language, theme, tokens: result };
+		return result;
 	}
 
 	/** Rebuilds the token diff for the current transition. */
@@ -339,7 +390,15 @@ export class CodeNode extends Node {
 		}
 	}
 
-	drawSelf(ctx: CanvasRenderingContext2D) {
+	protected override drawState(): Record<string, unknown> {
+		return {
+			theme: getThemeVersion(),
+			cursor: this.cursor(),
+			cursorAlpha: this.cursorAlpha()
+		};
+	}
+
+	drawSelf(ctx: CanvasRenderingContext2D, time = 0) {
 		ctx.save();
 		ctx.font = this.font;
 		ctx.textAlign = 'left';
@@ -380,7 +439,82 @@ export class CodeNode extends Node {
 			this.#drawTokens(ctx, target, drawLeft, drawTop, charWidth, lineHeight, gutter, scroll, 1);
 		}
 
+		this.#drawCursor(ctx, drawLeft, drawTop, width, charWidth, lineHeight, gutter, scroll, time);
+		this.#drawScrollFades(ctx, drawLeft, drawTop, width, clipHeight, targetLayout, scroll);
+
 		ctx.restore();
+	}
+
+	#drawCursor(
+		ctx: CanvasRenderingContext2D,
+		left: number,
+		top: number,
+		width: number,
+		charWidth: number,
+		lineHeight: number,
+		gutter: number,
+		scroll: number,
+		time: number
+	) {
+		const cursor = this.cursor();
+		const alpha = this.cursorAlpha();
+		if (!cursor || alpha <= 0) return;
+
+		let blink = 1;
+		if (this.cursorBlink > 0) {
+			blink = 0.35 + 0.65 * (0.5 + 0.5 * Math.cos((time / this.cursorBlink) * Math.PI * 2));
+		}
+
+		const x = left + gutter + cursor.col * charWidth;
+		const y = top + (cursor.line - scroll) * lineHeight + lineHeight * 0.08;
+		if (
+			x < left ||
+			x > left + width ||
+			y + lineHeight < top ||
+			y > top + lineHeight * this.#maxLinesSafe()
+		) {
+			return;
+		}
+
+		ctx.save();
+		ctx.globalAlpha *= alpha * blink;
+		ctx.fillStyle = this.cursorFill();
+		ctx.fillRect(x, y, Math.max(2, this.fontSize() * 0.07), lineHeight * 0.84);
+		ctx.restore();
+	}
+
+	#drawScrollFades(
+		ctx: CanvasRenderingContext2D,
+		left: number,
+		top: number,
+		width: number,
+		height: number,
+		layout: CodeLayout,
+		scroll: number
+	) {
+		const size = this.scrollFadeSize();
+		const maxLines = this.maxLines();
+		if (size <= 0 || maxLines === null) return;
+		const maxScroll = Math.max(0, layout.lines - layout.visibleLines);
+		if (maxScroll <= 0) return;
+		const color = this.scrollFadeColor();
+		const fade = Math.min(size, height / 2);
+
+		if (scroll > 0.01) {
+			const gradient = ctx.createLinearGradient(0, top, 0, top + fade);
+			gradient.addColorStop(0, color);
+			gradient.addColorStop(1, 'rgba(0, 0, 0, 0)');
+			ctx.fillStyle = gradient;
+			ctx.fillRect(left, top, Math.max(1, width), fade);
+		}
+
+		if (scroll < maxScroll - 0.01) {
+			const gradient = ctx.createLinearGradient(0, top + height - fade, 0, top + height);
+			gradient.addColorStop(0, 'rgba(0, 0, 0, 0)');
+			gradient.addColorStop(1, color);
+			ctx.fillStyle = gradient;
+			ctx.fillRect(left, top + height - fade, Math.max(1, width), fade);
+		}
 	}
 
 	#drawLineNumbers(
@@ -524,7 +658,12 @@ export class CodeNode extends Node {
 			selectionFill: this.selectionFill(),
 			selection: this.selection(),
 			selectionAlpha: this.selectionAlpha(),
-			scroll: this.scroll()
+			scroll: this.scroll(),
+			cursor: this.cursor(),
+			cursorAlpha: this.cursorAlpha(),
+			cursorFill: this.cursorFill(),
+			scrollFadeColor: this.scrollFadeColor(),
+			scrollFadeSize: this.scrollFadeSize()
 		};
 	}
 
@@ -554,6 +693,13 @@ export class CodeNode extends Node {
 		}
 		if (typeof state.selectionAlpha === 'number') this.selectionAlpha(state.selectionAlpha);
 		if (typeof state.scroll === 'number') this.scroll(state.scroll);
+		if (state.cursor === null || typeof state.cursor === 'object') {
+			this.cursor(state.cursor as CodePosition | null);
+		}
+		if (typeof state.cursorAlpha === 'number') this.cursorAlpha(state.cursorAlpha);
+		if (typeof state.cursorFill === 'string') this.cursorFill(state.cursorFill);
+		if (typeof state.scrollFadeColor === 'string') this.scrollFadeColor(state.scrollFadeColor);
+		if (typeof state.scrollFadeSize === 'number') this.scrollFadeSize(state.scrollFadeSize);
 	}
 }
 
@@ -646,6 +792,50 @@ class CodeSelectionStep implements Step {
 	revert() {
 		this.#node.selection(this.#previous);
 		this.#node.selectionAlpha(this.#previousAlpha);
+	}
+}
+
+class CodeCursorStep implements Step {
+	readonly label = 'code cursor';
+	readonly duration: number;
+	#node: CodeNode;
+	#target: CodePosition | null;
+	#ease: Easing;
+	#previous: CodePosition | null = null;
+	#previousAlpha = 0;
+
+	constructor(node: CodeNode, target: CodePosition | null, duration: number, ease: Easing) {
+		this.#node = node;
+		this.#target = target;
+		this.duration = duration;
+		this.#ease = ease;
+	}
+
+	start() {
+		this.#previous = this.#node.cursor();
+		this.#previousAlpha = this.#node.cursorAlpha();
+		if (this.#target) this.#node.cursor(this.#target);
+	}
+
+	setProgress(progress: number) {
+		const eased = this.#ease(clamp(progress, 0, 1));
+		if (this.#target) this.#node.cursorAlpha(eased);
+		else this.#node.cursorAlpha(this.#previousAlpha * (1 - eased));
+	}
+
+	end() {
+		if (this.#target) {
+			this.#node.cursor(this.#target);
+			this.#node.cursorAlpha(1);
+		} else {
+			this.#node.cursor(null);
+			this.#node.cursorAlpha(0);
+		}
+	}
+
+	revert() {
+		this.#node.cursor(this.#previous);
+		this.#node.cursorAlpha(this.#previousAlpha);
 	}
 }
 

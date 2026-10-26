@@ -14,6 +14,7 @@ export default defineScene(
 				type: 'radial',
 				stops: [
 					{ offset: 0, color: 'rgba(56, 189, 248, 0.14)' },
+					{ offset: 0.55, color: 'rgba(56, 189, 248, 0)' },
 					{ offset: 1, color: 'rgba(56, 189, 248, 0)' }
 				]
 			},
@@ -26,7 +27,8 @@ export default defineScene(
 			width: 620,
 			height: 360,
 			fit: 'cover',
-			radius: 24
+			radius: 24,
+			smoothness: 0.35
 		});
 
 		const video = s.video({
@@ -35,7 +37,9 @@ export default defineScene(
 			width: 620,
 			height: 360,
 			fit: 'cover',
-			radius: 24
+			radius: 24,
+			smoothness: 0.35,
+			smoothing: true
 		});
 
 		const imageCard = s.card(
@@ -45,6 +49,7 @@ export default defineScene(
 				width: 700,
 				height: 500,
 				radius: 32,
+				smoothness: 0.5,
 				fill: {
 					type: 'linear',
 					from: { x: 0, y: 0 },
@@ -76,6 +81,7 @@ export default defineScene(
 				width: 700,
 				height: 500,
 				radius: 32,
+				smoothness: 0.5,
 				fill: {
 					type: 'linear',
 					from: { x: 0, y: 0 },
@@ -101,7 +107,7 @@ export default defineScene(
 		);
 
 		const paragraph = s.body(
-			'Images and video are first class canvas nodes. Media is clipped to rounded corners and fitted inside its box, while the scene clock seeks the video to the frame on screen.',
+			'Images and video are first class canvas nodes. Media is clipped to rounded corners and fitted inside its box. While the scene plays the video runs natively and corrects drift against the clock, then seeks exactly when paused or rendered.',
 			{
 				y: 390,
 				maxWidth: 1180,
@@ -124,7 +130,7 @@ export default defineScene(
 	{
 		chapter: 'Media',
 		notes:
-			'Image and video nodes draw into the canvas with rounded clipping and cover fitting. The video follows the scene clock, so seeking and rendering land on the same frame. A sound cue plays through the editor and presentation audio players.',
+			'Image and video nodes draw into the canvas with rounded clipping and cover fitting. The video plays natively while the scene clock runs and seeks exactly during scrubbing and rendering, and smoothing keeps its scaled frames soft. A sound cue plays through the editor and presentation audio players.',
 		transition: { type: 'fade', duration: 0.6 }
 	}
 );

@@ -196,6 +196,7 @@
 				height,
 				background: initial.project.background
 			});
+			scene.setInvalidate(draw);
 			if (!audioDisabled) {
 				audio = new AudioPlayer();
 				audio.load(scene.audio);
@@ -211,6 +212,7 @@
 			cancelled = true;
 			teardownRenderBridge();
 			scene.setInvalidate(null);
+			outgoing?.setInvalidate(null);
 			renderer = null;
 			audio?.stop();
 			audio = null;
@@ -242,23 +244,26 @@
 			current.drawScene(
 				scene,
 				duration,
-				exitTransition(activeTransition, renderExit, width, direction)
+				exitTransition(activeTransition, renderExit, width, direction),
+				{ playing: false }
 			);
 		} else if (transitionProgress < 1) {
 			if (outgoing) {
 				current.drawScene(
 					outgoing,
 					outgoingTime,
-					exitTransition(activeTransition, transitionProgress, width, direction)
+					exitTransition(activeTransition, transitionProgress, width, direction),
+					{ playing: false }
 				);
 			}
 			current.drawScene(
 				scene,
 				time,
-				enterTransition(activeTransition, transitionProgress, width, direction)
+				enterTransition(activeTransition, transitionProgress, width, direction),
+				{ playing: false }
 			);
 		} else {
-			current.drawScene(scene, time);
+			current.drawScene(scene, time, undefined, { playing: playing && !isRender });
 		}
 		current.end();
 		audio?.sync(time, playing);
@@ -316,6 +321,7 @@
 			transitionProgress = duration > 0 ? Math.min(1, transitionProgress + delta / duration) : 1;
 			if (transitionProgress >= 1) {
 				transitionProgress = 1;
+				outgoing?.setInvalidate(null);
 				outgoing = null;
 				renderEnter = false;
 			}
@@ -487,6 +493,7 @@
 			transitionFrame = requestAnimationFrame(tickTransition);
 		} else {
 			transitionProgress = 1;
+			outgoing?.setInvalidate(null);
 			outgoing = null;
 		}
 		draw();
@@ -502,7 +509,10 @@
 		}
 		const nextProgress = Math.min(1, (now - transitionStart) / duration);
 		transitionProgress = nextProgress;
-		if (nextProgress >= 1) outgoing = null;
+		if (nextProgress >= 1) {
+			outgoing?.setInvalidate(null);
+			outgoing = null;
+		}
 		draw();
 		if (nextProgress >= 1) return;
 		transitionFrame = requestAnimationFrame(tickTransition);
@@ -512,6 +522,7 @@
 		if (!outgoing) return;
 		cancelAnimationFrame(transitionFrame);
 		transitionProgress = 1;
+		outgoing.setInvalidate(null);
 		outgoing = null;
 		draw();
 	}
