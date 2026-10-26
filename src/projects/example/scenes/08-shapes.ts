@@ -154,14 +154,6 @@ export default defineScene(
 					stroke: '#fbbf24',
 					strokeWidth: 4
 				}),
-				s.polygon({
-					points: [
-						{ x: 96, y: -44 },
-						{ x: 124, y: -26 },
-						{ x: 96, y: -8 }
-					],
-					fill: '#fbbf24'
-				}),
 				s.text('Curves', { y: 58, fontSize: 28, fontWeight: 700, fill: '#fafafa' }),
 				s.text('spline and bezier', { y: 96, fontSize: 19, fill: '#a1a1aa' })
 			)
