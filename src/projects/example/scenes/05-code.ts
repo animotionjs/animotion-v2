@@ -25,6 +25,10 @@ const last = [
 	'}'
 ].join('\n');
 
+const lastLines = last.split('\n');
+const minCols = Math.max(...lastLines.map((line) => line.length));
+const minLines = lastLines.length;
+
 export default defineScene(
 	'code',
 	function* (s) {
@@ -37,6 +41,8 @@ export default defineScene(
 			language: 'typescript',
 			fontSize: 28,
 			lineHeight: 1.6,
+			minCols,
+			minLines,
 			opacity: 0,
 			scale: 0.97
 		});

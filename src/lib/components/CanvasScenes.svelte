@@ -432,7 +432,12 @@
 			playTo(target.end);
 			return;
 		}
-		if (sceneIndex < scenes.length - 1) switchScene(sceneIndex + 1, 'forward');
+		if (sceneIndex < scenes.length - 1) {
+			switchScene(sceneIndex + 1, 'forward');
+			return;
+		}
+		// the last scene can end on a hold, so finish it instead of stalling short of 100%
+		if (time < duration - 1e-4) seek(duration);
 	}
 
 	function prev() {

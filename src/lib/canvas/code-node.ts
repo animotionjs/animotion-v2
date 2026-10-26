@@ -41,6 +41,10 @@ export interface CodeNodeInit extends NodeInit {
 	tabSize?: number;
 	/** Clip the block to this many lines and allow scrolling. */
 	maxLines?: number;
+	/** Reserve at least this many lines so edits do not recenter the block. */
+	minLines?: number;
+	/** Reserve at least this many columns so edits do not recenter the block. */
+	minCols?: number;
 	selectionFill?: string;
 }
 
@@ -128,6 +132,8 @@ export class CodeNode extends Node {
 	readonly fill: Signal<string>;
 	readonly tabSize: Signal<number>;
 	readonly maxLines: Signal<number | null>;
+	readonly minLines: Signal<number>;
+	readonly minCols: Signal<number>;
 	readonly selectionFill: Signal<string>;
 	readonly transition: Signal<number>;
 	readonly selection: Signal<CodeRange | null>;
@@ -155,6 +161,8 @@ export class CodeNode extends Node {
 		this.fill = stringSignal(init.fill ?? '#f0f0f0', `${this.id}.fill`);
 		this.tabSize = numberSignal(init.tabSize ?? 2, `${this.id}.tabSize`);
 		this.maxLines = createSignal(init.maxLines ?? null, discreteInterpolate, `${this.id}.maxLines`);
+		this.minLines = numberSignal(init.minLines ?? 0, `${this.id}.minLines`);
+		this.minCols = numberSignal(init.minCols ?? 0, `${this.id}.minCols`);
 		this.selectionFill = stringSignal(
 			init.selectionFill ?? 'rgba(255, 213, 79, 0.18)',
 			`${this.id}.selectionFill`
@@ -262,10 +270,14 @@ export class CodeNode extends Node {
 
 	#layout(ctx: CanvasRenderingContext2D, code: string): CodeLayout {
 		const lines = code.split('\n');
-		const visibleLines = Math.max(1, Math.min(lines.length, this.maxLines() ?? lines.length));
-		const cols = lines.reduce((longest, line) => Math.max(longest, line.length), 0);
+		const reservedLines = Math.max(lines.length, this.minLines());
+		const visibleLines = Math.max(1, Math.min(reservedLines, this.maxLines() ?? reservedLines));
+		const cols = Math.max(
+			this.minCols(),
+			lines.reduce((longest, line) => Math.max(longest, line.length), 0)
+		);
 		const charWidth = ctx.measureText('M').width;
-		const digits = String(lines.length).length;
+		const digits = String(reservedLines).length;
 		const gutter = this.lineNumbers() ? (digits + 1) * charWidth : 0;
 		return {
 			width: cols * charWidth + gutter,
@@ -353,30 +365,7 @@ export class CodeNode extends Node {
 		ctx.rect(left, top, Math.max(1, width), clipHeight);
 		ctx.clip();
 
-		if (previous !== null && progress < 1) {
-			this.#drawLineNumbers(
-				ctx,
-				previous,
-				left,
-				top,
-				charWidth,
-				lineHeight,
-				gutter,
-				scroll,
-				1 - progress
-			);
-		}
-		this.#drawLineNumbers(
-			ctx,
-			target,
-			left,
-			top,
-			charWidth,
-			lineHeight,
-			gutter,
-			scroll,
-			previous === null ? 1 : progress
-		);
+		this.#drawLineNumbers(ctx, target, left, top, charWidth, lineHeight, gutter, scroll, 1);
 
 		this.#drawSelection(ctx, left, top, charWidth, lineHeight, gutter, scroll);
 
@@ -526,6 +515,8 @@ export class CodeNode extends Node {
 			fill: this.fill(),
 			tabSize: this.tabSize(),
 			maxLines: this.maxLines(),
+			minLines: this.minLines(),
+			minCols: this.minCols(),
 			selectionFill: this.selectionFill(),
 			selection: this.selection(),
 			selectionAlpha: this.selectionAlpha(),
@@ -551,6 +542,8 @@ export class CodeNode extends Node {
 		if (state.maxLines === null || typeof state.maxLines === 'number') {
 			this.maxLines(state.maxLines);
 		}
+		if (typeof state.minLines === 'number') this.minLines(state.minLines);
+		if (typeof state.minCols === 'number') this.minCols(state.minCols);
 		if (typeof state.selectionFill === 'string') this.selectionFill(state.selectionFill);
 		if (state.selection === null || typeof state.selection === 'object') {
 			this.selection(state.selection as CodeRange | null);

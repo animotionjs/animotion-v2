@@ -190,6 +190,6 @@ export default defineScene(
 		chapter: 'Morph',
 		notes:
 			'A card grows into a panel while the other cards reflow around it. The card box is tweened directly so its text stays sharp, and the surrounding cards move with a keyed layout step.',
-		transition: { type: 'zoom', duration: 0.6, scale: 0.9 }
+		transition: { type: 'fade', duration: 0.5 }
 	}
 );

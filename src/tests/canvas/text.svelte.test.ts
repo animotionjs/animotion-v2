@@ -94,6 +94,24 @@ describe('canvas media', () => {
 	});
 });
 
+describe('canvas code layout', () => {
+	it('keeps a reserved block size while the source changes', () => {
+		const code = new CodeNode({
+			code: 'const a = 1;',
+			language: 'typescript',
+			fontSize: 20,
+			minCols: 40,
+			minLines: 8
+		});
+		const ctx = context();
+		const before = code.measure(ctx);
+		code.code('const longer = "a much longer line";\nconst b = 2;');
+		const after = code.measure(ctx);
+		expect(after.width).toBe(before.width);
+		expect(after.height).toBe(before.height);
+	});
+});
+
 describe('canvas code edits', () => {
 	it('diffs tokens and animates insert, replace and selection', () => {
 		const definition = defineScene('edits', function* (s) {
