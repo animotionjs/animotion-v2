@@ -4,6 +4,7 @@
 	import { goto } from '$app/navigation';
 	import { AudioPlayer } from '../canvas/audio.js';
 	import { CanvasRenderer } from '../canvas/renderer.js';
+	import { nextStep, previousStep, stepSpans } from '../canvas/navigation.js';
 	import {
 		enterTransition,
 		exitTransition,
@@ -418,24 +419,31 @@
 	}
 
 	function next() {
-		if (transitioning) return;
+		// a press during a scene transition finishes the transition first
+		if (transitioning) {
+			finishTransition();
+			return;
+		}
 		pause();
-		const target = stepEnds().find((end) => end > time + 1e-4);
-		if (target !== undefined) {
-			playTo(target);
+		const target = nextStep(stepSpans(scene.timeline.steps), time);
+		if (target) {
+			// holds are skipped, so an arrow press always reaches a visible change
+			if (target.start > time + 1e-4) seek(target.start);
+			playTo(target.end);
 			return;
 		}
 		if (sceneIndex < scenes.length - 1) switchScene(sceneIndex + 1, 'forward');
 	}
 
 	function prev() {
-		if (transitioning) return;
+		if (transitioning) {
+			finishTransition();
+			return;
+		}
 		pause();
-		const ends = stepEnds();
-		const starts = [0, ...ends.slice(0, -1)];
-		const target = [...starts].reverse().find((start) => start < time - 1e-4);
-		if (target !== undefined) {
-			seek(target);
+		const target = previousStep(stepSpans(scene.timeline.steps), time);
+		if (target) {
+			seek(target.start);
 			return;
 		}
 		if (sceneIndex > 0) switchScene(sceneIndex - 1, 'backward');
