@@ -1,4 +1,4 @@
-import { all, defineScene, linear, loop, spring, wait } from '#lib/canvas/index.js';
+import { all, defineScene, spring, wait } from '#lib/canvas/index.js';
 
 const dots = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(
 	'<svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 28 28"><circle cx="7" cy="7" r="2" fill="#38bdf8" opacity="0.7"/><circle cx="21" cy="21" r="2" fill="#fbbf24" opacity="0.7"/></svg>'
@@ -18,13 +18,19 @@ const logo = `<svg viewBox="0 0 96 96" xmlns="http://www.w3.org/2000/svg">
 export default defineScene(
 	'primitives',
 	function* (s) {
-		s.h2('Primitives', { y: -410 });
+		s.h2('Primitives', { y: -390 });
+
+		s.body('Shapes, paints, and assets drawn directly on the canvas.', {
+			y: -320,
+			fontSize: 23,
+			fill: '#71717a'
+		});
 
 		const cards = [
 			s.card(
 				{
 					x: -560,
-					y: -20,
+					y: 20,
 					width: 420,
 					height: 290,
 					radius: 34,
@@ -54,7 +60,7 @@ export default defineScene(
 			s.card(
 				{
 					x: 0,
-					y: -20,
+					y: 20,
 					width: 420,
 					height: 290,
 					radius: 34,
@@ -103,7 +109,7 @@ export default defineScene(
 			s.card(
 				{
 					x: 560,
-					y: -20,
+					y: 20,
 					width: 420,
 					height: 290,
 					radius: 34,
@@ -126,14 +132,6 @@ export default defineScene(
 					opacity: 0,
 					scale: 0.94
 				},
-				s.line({
-					points: [
-						{ x: -130, y: 28 },
-						{ x: -130, y: -84 }
-					],
-					stroke: '#3f3f46',
-					strokeWidth: 2
-				}),
 				s.spline({
 					points: [
 						{ x: -130, y: 6 },
@@ -169,44 +167,16 @@ export default defineScene(
 			)
 		];
 
-		const flow = s.path({
-			path: 'M -790 214 C -420 286, 420 154, 790 214',
-			bounds: { x: -790, y: 148, width: 1580, height: 132 },
-			stroke: 'rgba(56, 189, 248, 0.6)',
-			strokeWidth: 3,
-			dash: [16, 16],
-			dashOffset: 0,
-			opacity: 0
-		});
-
-		const arrow = s.polygon({
-			points: [
-				{ x: 0, y: -12 },
-				{ x: 24, y: 12 },
-				{ x: 0, y: 36 }
-			],
-			x: 806,
-			y: 214,
-			fill: '#38bdf8',
-			opacity: 0
-		});
-
-		const flowThread = s.spawn(
-			loop(() => flow.dashOffset.to(flow.dashOffset() - 64, 0.8, linear), 3)
-		);
-
 		yield* all(
 			...cards.map((card) => card.opacity.to(1, 0.5)),
 			...cards.map((card) => card.scale.to(1, 0.8, spring({ stiffness: 140, damping: 17 })))
 		);
-		yield* all(flow.opacity.to(1, 0.5), arrow.opacity.to(1, 0.5));
-		yield* wait(0.3);
-		yield* s.join(flowThread);
+		yield* wait(1.2);
 	},
 	{
 		chapter: 'Primitives',
 		notes:
-			'Circles, lines, splines, beziers, polygons, and SVG all draw on the canvas. The middle card combines a pattern fill with a conic gradient stroke, the cards use smooth corners and subtree caches, and the dashed flow line is animated by a background thread.',
+			'Circles, splines, beziers, polygons, and SVG all draw on the canvas. The middle card combines a pattern fill with a conic gradient stroke, and the cards use smooth corners and subtree caches.',
 		transition: { type: 'slide', duration: 0.55 }
 	}
 );

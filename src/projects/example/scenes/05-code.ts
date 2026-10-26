@@ -43,10 +43,6 @@ export default defineScene(
 			lineHeight: 1.6,
 			minCols,
 			minLines,
-			maxLines: 5,
-			cursorFill: '#fbbf24',
-			scrollFadeColor: '#101014',
-			scrollFadeSize: 22,
 			opacity: 0,
 			scale: 0.97
 		});
@@ -109,17 +105,12 @@ export default defineScene(
 
 		// show the new value being used on the next line
 		yield* code.replaceText('console.log(greeting);', 'console.log(upper);', 0.5, easeInOut);
-		yield* wait(0.25);
-
-		// scroll to the closing brace and place the blinking caret
-		yield* code.scrollTo(1, 0.5, easeInOut);
-		yield* code.placeCursor(position(5, 1), 0.2, easeOut);
 		yield* wait(0.9);
 	},
 	{
 		chapter: 'Code',
 		notes:
-			'Code is highlighted with twinkleplop and drawn on the canvas. Each step makes one visible edit. The function is renamed, the greeting changes, a line is inserted, and the new value is logged. The block then scrolls to the closing brace and shows its caret and fade masks.',
+			'Code is highlighted with twinkleplop and drawn on the canvas. Each step makes one visible edit. The function is renamed, the greeting changes, a line is inserted, and the new value is logged. The whole function stays visible for the final frame.',
 		transition: { type: 'slide', duration: 0.8 }
 	}
 );

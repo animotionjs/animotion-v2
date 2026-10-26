@@ -318,13 +318,19 @@ export class CodeNode extends Node {
 		const charWidth = ctx.measureText('M').width;
 		const digits = String(reservedLines).length;
 		const gutter = this.lineNumbers() ? (digits + 1) * charWidth : 0;
+		const padding = this.#fadePadding();
 		return {
 			width: cols * charWidth + gutter,
-			height: Math.max(1, visibleLines) * this.fontSize() * this.lineHeight(),
+			height: Math.max(1, visibleLines) * this.fontSize() * this.lineHeight() + padding * 2,
 			lines: lines.length,
 			cols,
 			visibleLines
 		};
+	}
+
+	#fadePadding(): number {
+		if (this.maxLines() === null) return 0;
+		return Math.max(0, this.scrollFadeSize());
 	}
 
 	measure(ctx: CanvasRenderingContext2D): Size {
@@ -412,7 +418,8 @@ export class CodeNode extends Node {
 		const width = lerp(previousLayout.width, targetLayout.width, progress);
 		const height = lerp(previousLayout.height, targetLayout.height, progress);
 		const left = -width / 2;
-		const top = -height / 2;
+		const padding = this.#fadePadding();
+		const top = -height / 2 + padding;
 		const charWidth = ctx.measureText('M').width;
 		const lineHeight = this.fontSize() * this.lineHeight();
 		const gutter = this.lineNumbers()
@@ -424,6 +431,7 @@ export class CodeNode extends Node {
 		const drawLeft = anchor.x;
 		const drawTop = anchor.y;
 
+		ctx.save();
 		ctx.beginPath();
 		ctx.rect(drawLeft, drawTop, Math.max(1, width), clipHeight);
 		ctx.clip();
@@ -440,7 +448,9 @@ export class CodeNode extends Node {
 		}
 
 		this.#drawCursor(ctx, drawLeft, drawTop, width, charWidth, lineHeight, gutter, scroll, time);
-		this.#drawScrollFades(ctx, drawLeft, drawTop, width, clipHeight, targetLayout, scroll);
+		ctx.restore();
+
+		this.#drawScrollFades(ctx, drawLeft, drawTop, width, clipHeight, targetLayout, scroll, padding);
 
 		ctx.restore();
 	}
@@ -488,32 +498,32 @@ export class CodeNode extends Node {
 		left: number,
 		top: number,
 		width: number,
-		height: number,
+		contentHeight: number,
 		layout: CodeLayout,
-		scroll: number
+		scroll: number,
+		padding: number
 	) {
-		const size = this.scrollFadeSize();
 		const maxLines = this.maxLines();
-		if (size <= 0 || maxLines === null) return;
+		if (padding <= 0 || maxLines === null) return;
 		const maxScroll = Math.max(0, layout.lines - layout.visibleLines);
 		if (maxScroll <= 0) return;
 		const color = this.scrollFadeColor();
-		const fade = Math.min(size, height / 2);
 
 		if (scroll > 0.01) {
-			const gradient = ctx.createLinearGradient(0, top, 0, top + fade);
+			const gradient = ctx.createLinearGradient(0, top - padding, 0, top);
 			gradient.addColorStop(0, color);
 			gradient.addColorStop(1, 'rgba(0, 0, 0, 0)');
 			ctx.fillStyle = gradient;
-			ctx.fillRect(left, top, Math.max(1, width), fade);
+			ctx.fillRect(left, top - padding, Math.max(1, width), padding);
 		}
 
 		if (scroll < maxScroll - 0.01) {
-			const gradient = ctx.createLinearGradient(0, top + height - fade, 0, top + height);
+			const start = top + contentHeight;
+			const gradient = ctx.createLinearGradient(0, start, 0, start + padding);
 			gradient.addColorStop(0, 'rgba(0, 0, 0, 0)');
 			gradient.addColorStop(1, color);
 			ctx.fillStyle = gradient;
-			ctx.fillRect(left, top + height - fade, Math.max(1, width), fade);
+			ctx.fillRect(left, start, Math.max(1, width), padding);
 		}
 	}
 

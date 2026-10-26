@@ -238,6 +238,7 @@ describe('canvas code polish', () => {
 		expect(code.cursor()).toEqual({ line: 8, col: 4 });
 		expect(code.cursorAlpha()).toBe(1);
 		expect(code.scroll()).toBeGreaterThan(0);
+		expect(code.measure(getMeasureContext()).height).toBeCloseTo(4 * 20 * 1.5 + 40);
 		const ctx = canvasContext();
 		scene.draw(ctx);
 		scene.seek(0);

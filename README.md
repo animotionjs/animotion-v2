@@ -254,7 +254,7 @@ yield * code.scrollTo(2, 0.4);
 yield * code.placeCursor(position(2, 0), 0.2);
 ```
 
-`cursorBlink` sets the caret period in seconds, or zero keeps it steady. `scrollFadeSize` adds top and bottom fades when the block scrolls, and the code token cache avoids re-highlighting unchanged source.
+`cursorBlink` sets the caret period in seconds, or zero keeps it steady. `scrollFadeSize` adds padded top and bottom fades when the block scrolls, so the masks never cover glyphs, and the code token cache avoids re-highlighting unchanged source.
 
 Scenes can override the configured transition. Use `null` to disable it:
 
