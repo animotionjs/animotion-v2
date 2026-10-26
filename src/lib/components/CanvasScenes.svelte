@@ -3,6 +3,7 @@
 	import { SvelteMap } from 'svelte/reactivity';
 	import { goto } from '$app/navigation';
 	import { AudioPlayer } from '../canvas/audio.js';
+	import { loadCanvasFonts } from '../canvas/fonts.js';
 	import { CanvasRenderer } from '../canvas/renderer.js';
 	import { nextStep, previousStep, stepSpans } from '../canvas/navigation.js';
 	import {
@@ -188,7 +189,7 @@
 		if (!canvas) return;
 		let cancelled = false;
 
-		void document.fonts.ready.then(() => {
+		void loadCanvasFonts().then(() => {
 			if (cancelled || !canvas) return;
 			renderer = new CanvasRenderer(canvas, scene, {
 				width,

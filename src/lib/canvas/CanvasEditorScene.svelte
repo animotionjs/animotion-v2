@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onDestroy, onMount, untrack } from 'svelte';
 	import { AudioPlayer } from './audio.js';
+	import { loadCanvasFonts } from './fonts.js';
 	import { CanvasRenderer } from './renderer.js';
 	import { CanvasSceneManager } from './ui.js';
 	import type { SceneEntry } from '../scene/runtime/sequence.js';
@@ -29,39 +30,49 @@
 	let canvas: HTMLCanvasElement | undefined;
 
 	onMount(() => {
-		if (!canvas) return;
+		let cancelled = false;
+		let cleanup: (() => void) | null = null;
 
-		const renderer = new CanvasRenderer(canvas, instance, {
-			width: entry.width ?? 1920,
-			height: entry.height ?? 1080,
-			background: null
+		void loadCanvasFonts().then(() => {
+			if (cancelled || !canvas) return;
+
+			const renderer = new CanvasRenderer(canvas, instance, {
+				width: entry.width ?? 1920,
+				height: entry.height ?? 1080,
+				background: null
+			});
+
+			const audio = new AudioPlayer();
+			audio.load(instance.audio);
+
+			manager.setRenderer((time, transition, playing) => {
+				renderer.begin();
+				renderer.drawScene(instance, time, transition);
+				renderer.end();
+				audio.sync(time, playing);
+			});
+			instance.setInvalidate(() => manager.redraw());
+			onmeasured(entry.id, timeline, entry.chapter ?? '');
+			controller.attach(entry.id, manager);
+
+			const observer = new ResizeObserver(() => {
+				renderer.resize();
+				manager.redraw();
+			});
+			observer.observe(canvas);
+
+			cleanup = () => {
+				observer.disconnect();
+				controller.detach(entry.id);
+				manager.clear();
+				instance.setInvalidate(null);
+				audio.stop();
+			};
 		});
-
-		const audio = new AudioPlayer();
-		audio.load(instance.audio);
-
-		manager.setRenderer((time, transition, playing) => {
-			renderer.begin();
-			renderer.drawScene(instance, time, transition);
-			renderer.end();
-			audio.sync(time, playing);
-		});
-		instance.setInvalidate(() => manager.redraw());
-		onmeasured(entry.id, timeline, entry.chapter ?? '');
-		controller.attach(entry.id, manager);
-
-		const observer = new ResizeObserver(() => {
-			renderer.resize();
-			manager.redraw();
-		});
-		observer.observe(canvas);
 
 		return () => {
-			observer.disconnect();
-			controller.detach(entry.id);
-			manager.clear();
-			instance.setInvalidate(null);
-			audio.stop();
+			cancelled = true;
+			cleanup?.();
 		};
 	});
 

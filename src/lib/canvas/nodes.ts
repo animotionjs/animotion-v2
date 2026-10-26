@@ -1,4 +1,9 @@
 import {
+	layoutWithLines,
+	prepareWithSegments,
+	type PreparedTextWithSegments
+} from '@chenglou/pretext';
+import {
 	applyShadow,
 	clearShadow,
 	resolvePaint,
@@ -312,9 +317,10 @@ export class TextNode extends Node {
 		key: string;
 		canvas: HTMLCanvasElement;
 		scale: number;
-		anchorX: number;
-		anchorY: number;
+		offsetX: number;
+		offsetY: number;
 	} | null = null;
+	#prepared: { key: string; value: PreparedTextWithSegments } | null = null;
 	#wasScaled = false;
 
 	constructor(init: TextInit) {
@@ -334,7 +340,7 @@ export class TextNode extends Node {
 			`${this.id}.maxWidth`
 		);
 		this.lineHeight = numberSignal(init.lineHeight ?? 1.25, `${this.id}.lineHeight`);
-		this.cache = init.cache ?? false;
+		this.cache = init.cache ?? true;
 	}
 
 	override saveState(): NodeState {
@@ -371,25 +377,55 @@ export class TextNode extends Node {
 		return `${this.fontWeight()} ${this.fontSize()}px ${this.fontFamily()}`;
 	}
 
+	#layout(ctx: CanvasRenderingContext2D): {
+		lines: string[];
+		width: number;
+		height: number;
+		lineHeight: number;
+	} {
+		const lineHeight = this.fontSize() * this.lineHeight();
+		const maxWidth = this.maxWidth();
+		const text = this.text();
+
+		if (maxWidth === null || maxWidth <= 0) {
+			ctx.save();
+			ctx.font = this.font;
+			const lines = text.split('\n');
+			const width = lines.reduce(
+				(widest, line) => Math.max(widest, ctx.measureText(line).width),
+				0
+			);
+			ctx.restore();
+			return { lines, width, height: Math.max(1, lines.length) * lineHeight, lineHeight };
+		}
+
+		const key = `${this.font}|${text}`;
+		if (!this.#prepared || this.#prepared.key !== key) {
+			this.#prepared = {
+				key,
+				value: prepareWithSegments(text, this.font, { whiteSpace: 'pre-wrap' })
+			};
+		}
+		const result = layoutWithLines(this.#prepared.value, maxWidth, lineHeight);
+		const lines = result.lines.map((line) => line.text);
+		if (lines.length === 0) lines.push('');
+		const width = result.lines.reduce((widest, line) => Math.max(widest, line.width), 0);
+		return {
+			lines,
+			width: Math.min(maxWidth, width),
+			height: Math.max(1, result.lineCount) * lineHeight,
+			lineHeight
+		};
+	}
+
 	/** The text broken into the lines the node actually draws. */
 	lines(ctx: CanvasRenderingContext2D): string[] {
-		ctx.save();
-		ctx.font = this.font;
-		const lines = wrapText(ctx, this.text(), this.maxWidth());
-		ctx.restore();
-		return lines;
+		return this.#layout(ctx).lines;
 	}
 
 	measure(ctx: CanvasRenderingContext2D): Size {
-		ctx.save();
-		ctx.font = this.font;
-		const lines = wrapText(ctx, this.text(), this.maxWidth());
-		const width = lines.reduce((widest, line) => Math.max(widest, ctx.measureText(line).width), 0);
-		ctx.restore();
-		return {
-			width: this.maxWidth() === null ? width : Math.min(width, this.maxWidth() ?? width),
-			height: Math.max(1, lines.length) * this.fontSize() * this.lineHeight()
-		};
+		const layout = this.#layout(ctx);
+		return { width: layout.width, height: layout.height };
 	}
 
 	drawSelf(ctx: CanvasRenderingContext2D) {
@@ -517,18 +553,21 @@ export class TextNode extends Node {
 			cache.textAlign = this.align();
 			cache.textBaseline = 'middle';
 			this.#drawLines(cache, lines, boxWidth, height, lineHeight, top, false);
-			this.#cached = { key, canvas, scale: roundedScale, anchorX: originX, anchorY: originY };
+			this.#cached = {
+				key,
+				canvas,
+				scale: roundedScale,
+				offsetX: originX,
+				offsetY: originY
+			};
 		}
 
-		// map the bitmap's anchor pixel onto a device pixel so the glyphs stay put
+		// draw the bitmap at the inverse of its cache transform so every line lands
+		// exactly where direct text would put it
 		const drawWidth = this.#cached.canvas.width / this.#cached.scale;
 		const drawHeight = this.#cached.canvas.height / this.#cached.scale;
-		const anchorX =
-			this.align() === 'left' ? -boxWidth / 2 : this.align() === 'right' ? boxWidth / 2 : 0;
-		const anchorY = top + lineHeight / 2;
-		const origin = snapTextPoint(ctx, anchorX, anchorY);
-		const x = origin.x - this.#cached.anchorX / this.#cached.scale;
-		const y = origin.y - this.#cached.anchorY / this.#cached.scale;
+		const x = -this.#cached.offsetX / this.#cached.scale;
+		const y = -this.#cached.offsetY / this.#cached.scale;
 		ctx.drawImage(this.#cached.canvas, x, y, drawWidth, drawHeight);
 	}
 }

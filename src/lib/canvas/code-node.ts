@@ -151,7 +151,7 @@ export class CodeNode extends Node {
 		this.fontSize = numberSignal(init.fontSize ?? 26, `${this.id}.fontSize`);
 		this.lineHeight = numberSignal(init.lineHeight ?? 1.5, `${this.id}.lineHeight`);
 		this.fontFamily = stringSignal(
-			init.fontFamily ?? "'JetBrains Mono', ui-monospace, monospace",
+			init.fontFamily ?? "'JetBrains Mono Variable', ui-monospace, monospace",
 			`${this.id}.fontFamily`
 		);
 		this.lineNumbers = createSignal(

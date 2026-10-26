@@ -96,7 +96,9 @@ The generator runs once when the scene is created and records a step timeline. P
 - `s.image(props)`
 - `s.video(props)`
 
-Text wraps when `maxWidth` is set. `lineHeight` is a multiple of the font size, and `measure()` returns the wrapped height so keyed layouts can follow it.
+Text wraps when `maxWidth` is set. Line breaking uses [Pretext](https://github.com/chenglou/pretext), while drawing stays on canvas. `lineHeight` is a multiple of the font size, and `measure()` returns the wrapped height so keyed layouts can follow it.
+
+Text is rasterized into a bitmap and cached at the current device scale. Scaled or moving text therefore keeps a stable glyph shape instead of being re-rasterized every frame. Canvas font faces are loaded before the first scene draw.
 
 Rect and text fills accept solid colors or gradients. Add `shadow` to any node:
 
