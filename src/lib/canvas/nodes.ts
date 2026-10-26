@@ -308,7 +308,14 @@ export class TextNode extends Node {
 	readonly maxWidth: Signal<number | null>;
 	readonly lineHeight: Signal<number>;
 	readonly cache: boolean;
-	#cached: { key: string; canvas: HTMLCanvasElement; scale: number } | null = null;
+	#cached: {
+		key: string;
+		canvas: HTMLCanvasElement;
+		scale: number;
+		anchorX: number;
+		anchorY: number;
+	} | null = null;
+	#wasScaled = false;
 
 	constructor(init: TextInit) {
 		super(init);
@@ -400,7 +407,10 @@ export class TextNode extends Node {
 		const height = Math.max(1, lines.length) * lineHeight;
 		const top = -height / 2;
 
-		if (this.cache || this.#isScaled()) {
+		const scaled = this.#isScaled();
+		if (scaled) this.#wasScaled = true;
+
+		if (this.cache || this.#wasScaled) {
 			this.#drawCached(ctx, lines, boxWidth, height, lineHeight, top);
 		} else {
 			this.#drawLines(ctx, lines, boxWidth, height, lineHeight, top);
@@ -414,12 +424,15 @@ export class TextNode extends Node {
 		boxWidth: number,
 		height: number,
 		lineHeight: number,
-		top: number
+		top: number,
+		snap = true
 	) {
 		const x = this.align() === 'left' ? -boxWidth / 2 : this.align() === 'right' ? boxWidth / 2 : 0;
 		ctx.fillStyle = resolvePaint(ctx, this.fill(), boxWidth, height, -boxWidth / 2, top);
 		for (let index = 0; index < lines.length; index++) {
-			const point = snapTextPoint(ctx, x, top + (index + 0.5) * lineHeight);
+			const point = snap
+				? snapTextPoint(ctx, x, top + (index + 0.5) * lineHeight)
+				: { x, y: top + (index + 0.5) * lineHeight };
 			ctx.fillText(lines[index]!, point.x, point.y);
 		}
 	}
@@ -491,28 +504,32 @@ export class TextNode extends Node {
 			canvas.height = Math.max(1, Math.ceil((height + padding * 2) * roundedScale));
 			const cache = canvas.getContext('2d');
 			if (!cache) return;
-			cache.setTransform(
-				roundedScale,
-				0,
-				0,
-				roundedScale,
-				(boxWidth / 2 + padding) * roundedScale,
-				(height / 2 + padding) * roundedScale
-			);
+			const anchorX =
+				this.align() === 'left' ? -boxWidth / 2 : this.align() === 'right' ? boxWidth / 2 : 0;
+			const anchorY = top + lineHeight / 2;
+			// put the text anchor on a cache pixel so the bitmap stays crisp at rest
+			const originX =
+				Math.round((boxWidth / 2 + padding + anchorX) * roundedScale) - anchorX * roundedScale;
+			const originY =
+				Math.round((height / 2 + padding + anchorY) * roundedScale) - anchorY * roundedScale;
+			cache.setTransform(roundedScale, 0, 0, roundedScale, originX, originY);
 			cache.font = this.font;
 			cache.textAlign = this.align();
 			cache.textBaseline = 'middle';
-			this.#drawLines(cache, lines, boxWidth, height, lineHeight, top);
-			this.#cached = { key, canvas, scale: roundedScale };
+			this.#drawLines(cache, lines, boxWidth, height, lineHeight, top, false);
+			this.#cached = { key, canvas, scale: roundedScale, anchorX: originX, anchorY: originY };
 		}
 
-		ctx.drawImage(
-			this.#cached.canvas,
-			-boxWidth / 2 - padding,
-			-height / 2 - padding,
-			boxWidth + padding * 2,
-			height + padding * 2
-		);
+		// map the bitmap's anchor pixel onto a device pixel so the glyphs stay put
+		const drawWidth = this.#cached.canvas.width / this.#cached.scale;
+		const drawHeight = this.#cached.canvas.height / this.#cached.scale;
+		const anchorX =
+			this.align() === 'left' ? -boxWidth / 2 : this.align() === 'right' ? boxWidth / 2 : 0;
+		const anchorY = top + lineHeight / 2;
+		const origin = snapTextPoint(ctx, anchorX, anchorY);
+		const x = origin.x - this.#cached.anchorX / this.#cached.scale;
+		const y = origin.y - this.#cached.anchorY / this.#cached.scale;
+		ctx.drawImage(this.#cached.canvas, x, y, drawWidth, drawHeight);
 	}
 }
 
