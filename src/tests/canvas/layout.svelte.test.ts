@@ -83,6 +83,28 @@ describe('canvas layout', () => {
 		expect(logo.layoutScaleX()).toBe(1);
 	});
 
+	it('keeps nodes added after a layout step when the scene rewinds', () => {
+		const definition = defineScene('later-node', function* (s) {
+			const box = s.rect({ layoutKey: 'box', width: 100, height: 100 });
+			yield* s.layout(
+				() => {
+					box.x(100);
+				},
+				{ duration: 0.5 }
+			);
+			s.text('added later', { y: 100 });
+		});
+
+		const scene = definition.create();
+		expect(scene.root.children.some((node) => node.kind === 'text')).toBe(true);
+
+		scene.seek(0);
+		expect(scene.root.children.some((node) => node.kind === 'text')).toBe(true);
+
+		scene.seek(scene.duration);
+		expect(scene.root.children.some((node) => node.kind === 'text')).toBe(true);
+	});
+
 	it('adds and removes keyed nodes with the layout step', () => {
 		const definition = defineScene('enter-exit', function* (s) {
 			const first = s.rect({ layoutKey: 'first', width: 100, height: 100 });

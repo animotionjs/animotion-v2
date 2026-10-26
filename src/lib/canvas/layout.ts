@@ -60,6 +60,7 @@ export class LayoutStep implements Step {
 	#entering: Node[] = [];
 	#exiting: ExitLayout[] = [];
 	#tree: Map<Node, Node[]> | null = null;
+	#afterTree: Map<Node, Node[]> | null = null;
 	#states: Map<Node, NodeState> | null = null;
 
 	constructor(root: Node, change: () => void, options: LayoutOptions = {}) {
@@ -77,6 +78,7 @@ export class LayoutStep implements Step {
 		const before = measureWorld(this.root);
 
 		this.#change();
+		this.#afterTree = snapshotTree(this.root);
 
 		const after = measureWorld(this.root);
 		this.#retained = [];
@@ -138,9 +140,19 @@ export class LayoutStep implements Step {
 
 	revert() {
 		const tree = this.#tree;
+		const afterTree = this.#afterTree;
 		if (tree) {
 			for (const [parent, children] of tree) {
-				parent.replaceChildren(children);
+				/*
+				 * Nodes added after the step are not part of its before or after
+				 * snapshots. Keep them when the tree is restored, or rewinding an
+				 * earlier layout step would delete them.
+				 */
+				const after = afterTree?.get(parent) ?? [];
+				const later = parent.children.filter(
+					(child) => !children.includes(child) && !after.includes(child)
+				);
+				parent.replaceChildren([...children, ...later]);
 			}
 		}
 
@@ -151,6 +163,7 @@ export class LayoutStep implements Step {
 
 		this.#reset();
 		this.#tree = null;
+		this.#afterTree = null;
 		this.#states = null;
 	}
 

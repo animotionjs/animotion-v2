@@ -5,7 +5,6 @@ import {
 	easeOut,
 	getMeasureContext,
 	position,
-	range,
 	wait
 } from '#lib/canvas/index.js';
 
@@ -17,12 +16,12 @@ const first = [
 	'}'
 ].join('\n');
 
-const second = [
+const last = [
 	'function greet(name: string) {',
 	'  const greeting = `Hi ${name}`;',
 	'  const upper = greeting.toUpperCase();',
 	'  console.log(upper);',
-	'  return upper;',
+	'  return greeting;',
 	'}'
 ].join('\n');
 
@@ -33,23 +32,29 @@ export default defineScene(
 
 		const code = s.code({
 			id: 'code',
-			layoutKey: 'code',
-			y: 60,
+			y: 50,
 			code: first,
 			language: 'typescript',
-			fontSize: 26,
-			lineHeight: 1.55,
+			fontSize: 28,
+			lineHeight: 1.6,
 			opacity: 0,
-			scale: 0.96
+			scale: 0.97
 		});
 
-		const size = code.measure(getMeasureContext());
+		const ctx = getMeasureContext();
+		const firstSize = code.measure(ctx);
+		code.code(last);
+		const lastSize = code.measure(ctx);
+		code.code(first);
 		code.detach();
 
+		const width = Math.max(firstSize.width, lastSize.width);
+		const height = Math.max(firstSize.height, lastSize.height);
+
 		const panel = s.rect({
-			y: 60,
-			width: size.width + 104,
-			height: size.height + 80,
+			y: 50,
+			width: width + 104,
+			height: height + 80,
 			radius: 24,
 			fill: {
 				type: 'linear',
@@ -64,7 +69,7 @@ export default defineScene(
 			strokeWidth: 2,
 			shadow: { color: 'rgba(0, 0, 0, 0.55)', blur: 44, offsetY: 20 },
 			opacity: 0,
-			scale: 0.96
+			scale: 0.97
 		});
 
 		s.add(code);
@@ -75,24 +80,31 @@ export default defineScene(
 			panel.opacity.to(1, 0.5),
 			panel.scale.to(1, 0.5, easeOut)
 		);
-		yield* wait(0.3);
-		yield* s.frame(panel, { zoom: 1.16, duration: 1, ease: easeInOut });
+		yield* wait(0.35);
 
-		// the diff keeps matching tokens in place while renamed and new tokens fade
-		yield* code.morphTo(second, 0.9, easeInOut);
-		yield* wait(0.3);
+		// rename the function, then change the greeting inside the template
+		yield* code.replaceText('hello', 'greet', 0.5, easeInOut);
+		yield* wait(0.25);
+		yield* code.replaceText('Hello', 'Hi', 0.4, easeInOut);
+		yield* wait(0.25);
 
-		yield* code.prepend('// greet the visitor\n', 0.55, easeInOut);
-		yield* code.select(range(position(0, 0), position(0, 24)), 0.4, easeInOut);
-		yield* wait(0.5);
+		// add a new line and push the lines below it down
+		yield* code.insertText(
+			'  const upper = greeting.toUpperCase();\n',
+			position(2, 0),
+			0.6,
+			easeInOut
+		);
+		yield* wait(0.25);
 
-		yield* s.frame({ x: 0, y: 0 }, { zoom: 1, duration: 0.8, ease: easeInOut });
-		yield* wait(0.2);
+		// show the new value being used on the next line
+		yield* code.replaceText('console.log(greeting);', 'console.log(upper);', 0.5, easeInOut);
+		yield* wait(1.1);
 	},
 	{
 		chapter: 'Code',
 		notes:
-			'Code is highlighted with twinkleplop and drawn on the canvas. The morph keeps unchanged tokens in place while new tokens fade in and removed tokens fade out. Insert and selection steps animate individual edits.',
+			'Code is highlighted with twinkleplop and drawn on the canvas. Each step makes one visible edit. The function is renamed, the greeting changes, a line is inserted, and the new value is logged.',
 		transition: { type: 'slide', duration: 0.8 }
 	}
 );

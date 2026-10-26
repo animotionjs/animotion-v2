@@ -462,11 +462,12 @@ export class CodeNode extends Node {
 			} else if (token.morph === 'create' && token.to) {
 				line = token.to[1];
 				col = token.to[0];
-				alpha = progress;
+				// fade the old token out before the new one fades in, so they never overlap
+				alpha = Math.max(0, progress * 2 - 1);
 			} else if (token.morph === 'delete' && token.from) {
 				line = token.from[1];
 				col = token.from[0];
-				alpha = 1 - progress;
+				alpha = Math.max(0, 1 - progress * 2);
 			} else {
 				continue;
 			}

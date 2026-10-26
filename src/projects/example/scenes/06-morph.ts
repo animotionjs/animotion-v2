@@ -1,12 +1,4 @@
-import {
-	all,
-	defineScene,
-	easeInOut,
-	easeOut,
-	type Paint,
-	type TextNode,
-	wait
-} from '#lib/canvas/index.js';
+import { all, defineScene, easeInOut, easeOut, type Paint, wait } from '#lib/canvas/index.js';
 
 interface CardSpec {
 	name: string;
@@ -23,8 +15,9 @@ const cards: CardSpec[] = [
 			from: { x: 0, y: 0 },
 			to: { x: 1, y: 1 },
 			stops: [
-				{ offset: 0, color: '#2a2113' },
-				{ offset: 1, color: '#17130d' }
+				{ offset: 0, color: '#3a2a12' },
+				{ offset: 0.55, color: '#1c1710' },
+				{ offset: 1, color: '#12100d' }
 			]
 		}
 	},
@@ -62,7 +55,6 @@ export default defineScene(
 		s.h2('Morph', { y: -380 });
 
 		const glow = s.rect({
-			x: 0,
 			y: 80,
 			width: 1500,
 			height: 760,
@@ -80,7 +72,7 @@ export default defineScene(
 			const node = s.card(
 				{
 					layoutKey: card.name,
-					x: (index - 1) * 520,
+					x: index === 0 ? 0 : index === 1 ? -520 : 520,
 					y: 20,
 					width: 380,
 					height: 300,
@@ -111,7 +103,6 @@ export default defineScene(
 			);
 			node.add(
 				s.rect({
-					x: 0,
 					y: -140,
 					width: 88,
 					height: 4,
@@ -130,6 +121,20 @@ export default defineScene(
 			return node;
 		});
 
+		const indexLabels = nodes.map((node) => node.children[2]!);
+		const body = s.text(
+			'Cards are keyed layout nodes. Their size and position glide to a new state while their children follow. Gradients, rounded corners, and shadows are painted straight into the canvas.',
+			{
+				x: 0,
+				y: 140,
+				maxWidth: 640,
+				lineHeight: 1.5,
+				fontSize: 26,
+				fill: '#d4d4d8',
+				opacity: 0
+			}
+		);
+
 		yield* all(
 			glow.opacity.to(1, 0.7),
 			...nodes.map((node) => node.opacity.to(1, 0.5)),
@@ -137,86 +142,54 @@ export default defineScene(
 		);
 		yield* wait(0.3);
 
-		const indexLabels = nodes.map((node) => node.children[2]!);
-		let body: TextNode | null = null;
+		const expanded = nodes[0]!;
 
-		yield* s.layout(
-			() => {
-				const expanded = nodes[0]!;
-				indexLabels[0]!.visible(false);
-				expanded.x(-140);
-				expanded.width(820);
-				expanded.height(480);
-				expanded.shadow({ color: 'rgba(0, 0, 0, 0.6)', blur: 60, offsetY: 26 });
-				expanded.fill({
-					type: 'linear',
-					from: { x: 0, y: 0 },
-					to: { x: 1, y: 1 },
-					stops: [
-						{ offset: 0, color: '#3a2a12' },
-						{ offset: 0.55, color: '#1c1710' },
-						{ offset: 1, color: '#12100d' }
-					]
-				});
-
-				nodes[1]!.x(540);
-				nodes[1]!.y(-80);
-				nodes[1]!.width(320);
-				nodes[1]!.height(300);
-
-				nodes[2]!.x(540);
-				nodes[2]!.y(260);
-				nodes[2]!.width(320);
-				nodes[2]!.height(300);
-
-				body = s.text(
-					'Cards are keyed layout nodes. Their size and position glide to a new state while their children follow. Gradients, rounded corners, and shadows are painted straight into the canvas.',
-					{
-						layoutKey: 'body',
-						x: -140,
-						y: 96,
-						maxWidth: 640,
-						lineHeight: 1.5,
-						fontSize: 26,
-						fill: '#d4d4d8'
-					}
-				);
-				expanded.add(body);
-			},
-			{ duration: 0.8, enter: 'fade', exit: 'fade', ease: easeInOut }
+		/*
+		 * The card grows through its own box signals. A keyed layout scale would
+		 * stretch the text and image children along with the card during the
+		 * transition, which is why only the surrounding cards use layout here.
+		 */
+		yield* all(
+			expanded.x.to(0, 0.8, easeInOut),
+			expanded.width.to(820, 0.8, easeInOut),
+			expanded.height.to(480, 0.8, easeInOut),
+			s.layout(
+				() => {
+					indexLabels[0]!.visible(false);
+					nodes[1]!.x(-740);
+					nodes[1]!.y(20);
+					nodes[2]!.x(740);
+					nodes[2]!.y(20);
+				},
+				{ duration: 0.8, ease: easeInOut }
+			)
 		);
 
-		yield* wait(1.4);
+		yield* all(body.opacity.to(1, 0.45), body.y.to(120, 0.45, easeOut));
+		yield* wait(1.1);
+		yield* body.opacity.to(0, 0.25, easeInOut);
 
-		yield* s.layout(
-			() => {
-				body?.detach();
-				indexLabels[0]!.visible(true);
-				nodes[0]!.x(-520);
-				nodes[0]!.y(20);
-				nodes[0]!.width(380);
-				nodes[0]!.height(300);
-				nodes[0]!.shadow({ color: 'rgba(0, 0, 0, 0.45)', blur: 34, offsetY: 16 });
-				nodes[0]!.fill(cards[0]!.fill);
-
-				nodes[1]!.x(0);
-				nodes[1]!.y(20);
-				nodes[1]!.width(380);
-				nodes[1]!.height(300);
-
-				nodes[2]!.x(520);
-				nodes[2]!.y(20);
-				nodes[2]!.width(380);
-				nodes[2]!.height(300);
-			},
-			{ duration: 0.8, ease: easeInOut }
+		yield* all(
+			expanded.x.to(0, 0.8, easeInOut),
+			expanded.width.to(380, 0.8, easeInOut),
+			expanded.height.to(300, 0.8, easeInOut),
+			s.layout(
+				() => {
+					indexLabels[0]!.visible(true);
+					nodes[1]!.x(-520);
+					nodes[1]!.y(20);
+					nodes[2]!.x(520);
+					nodes[2]!.y(20);
+				},
+				{ duration: 0.8, ease: easeInOut }
+			)
 		);
 		yield* wait(0.3);
 	},
 	{
 		chapter: 'Morph',
 		notes:
-			'A keyed layout step morphs one card into a larger panel while the other cards reflow. The expanded card uses a gradient fill, a shadow, and wrapped body text.',
+			'A card grows into a panel while the other cards reflow around it. The card box is tweened directly so its text stays sharp, and the surrounding cards move with a keyed layout step.',
 		transition: { type: 'zoom', duration: 0.6, scale: 0.9 }
 	}
 );
