@@ -1,432 +1,401 @@
 <script lang="ts">
-	import { onDestroy, onMount, untrack } from 'svelte';
-	import { afterNavigate, beforeNavigate, goto } from '$app/navigation';
-	import { page } from '$app/state';
-	import { SceneManager } from '../scene/runtime/runtime.svelte.js';
-	import { AudioController } from '../scene/audio/controller.js';
-	import { setSceneId, setSceneManager } from '../scene/runtime/context.svelte.js';
-	import { getOptions } from '../scene/index.js';
-	import { PluginManager } from '../plugins/manager.svelte.js';
+	import { onMount } from 'svelte';
+	import { goto } from '$app/navigation';
+	import { defaultSequence } from '../config/scenes.js';
+	import { SlideRuntime, setSlide } from '../slides/context.svelte.js';
+	import type { SceneEntry, Sequence } from '../slides/sequence.js';
+	import {
+		playExitScene,
+		resolveSceneTransition,
+		type SceneDirection,
+		type SceneTransition
+	} from '../slides/transitions.js';
+	import {
+		speakerChannelName,
+		SpeakerSession,
+		type SpeakerMessage,
+		type SpeakerState
+	} from '../slides/speaker.js';
 	import Scene from './Scene.svelte';
-	import type { Sequence } from '../scene/runtime/sequence.js';
-	import type { Plugin, PresentationState } from '../plugins/types.js';
+	import Markdown from './Markdown.svelte';
 
 	interface Props {
-		/** Ordered scenes to play. */
-		sequence: Sequence;
-		/** Plugins to register. */
-		plugins?: Plugin[];
-		/** Presentation URL for this project. */
-		base?: string;
+		sequence?: Sequence;
+		transition?: SceneTransition;
+		duration?: number;
+		slug?: string;
+		embed?: boolean;
 	}
 
-	let { sequence, plugins = [], base = '/presentation' }: Props = $props();
+	let {
+		sequence = defaultSequence,
+		transition = 'slide',
+		duration = 450,
+		slug,
+		embed = false
+	}: Props = $props();
 
-	const manager = new SceneManager();
-	setSceneManager(manager);
+	const runtime = new SlideRuntime();
+	setSlide(runtime);
 
-	let audio: AudioController | null = null;
-	let audioPlaying = false;
-	let audioUnlocked = false;
-	let audioSuppressed = false;
+	const sceneCount = $derived(sequence.length);
+	let hash = $state('');
+	const position = $derived(readPosition(hash, sceneCount));
+	const current: SceneEntry | undefined = $derived(sequence[position.scene] ?? sequence[0]);
+	const currentTransition = $derived(
+		resolveSceneTransition(current?.transition, transition, duration)
+	);
+	const speakerUrl = $derived(slug ? `/speaker/${encodeURIComponent(slug)}` : undefined);
+	const progress = $derived.by(() => {
+		if (sceneCount === 0) return 0;
+		const within = runtime.max > 0 ? runtime.step / runtime.max : 0;
+		return ((position.scene + within) / sceneCount) * 100;
+	});
 
-	const isRenderMode = page.url.searchParams.has('render');
-	const audioDisabled = isRenderMode || page.url.searchParams.has('embed');
-	const noopUnsubscribe = () => {};
+	let started = false;
+	let targetScene = 0;
+	let direction = $state<SceneDirection>('forward');
+	let exitLayer = $state<HTMLElement>();
+	let speaker: SpeakerSession | null = null;
+	let connected = $state(false);
 
-	const id = $derived(page.params.scene ?? sequence[0].id);
+	runtime.reset(0);
+	runtime.onReady = () => {
+		if (started) writeHash(targetScene, runtime.step);
+	};
 
-	setSceneId(() => id);
-
-	/*
-	 * Seed the current scene's position from the URL hash
-	 * (`/presentation/scene#N`) before the scene child mounts and calls
-	 * `manager.load`. No-op on the server, where the hash is never sent.
-	 */
-	untrack(() => applyUrlStep(id, page.url));
-
-	const index = $derived(sequence.findIndex((s) => s.id === id));
-	const scene = $derived(sequence.find((s) => s.id === id) ?? sequence[0]);
-
-	/*
-	 * Force every declared webfont to load before the scenes render, so the
-	 * layout engine never measures glyphs at a fallback width and reflows
-	 * text mid-animation when the real font swaps in.
-	 */
-	if (typeof document !== 'undefined') {
-		await Promise.all([...document.fonts].map((font) => font.load()));
-		await document.fonts.ready;
+	function closeSpeaker() {
+		speaker?.close();
+		speaker = null;
+		connected = false;
 	}
-
-	const Content = $derived((await scene.component()).default);
-	const progress = $derived(((index + manager.completion) / sequence.length) * 100);
-	const showProgressBar = $derived(
-		!page.url.searchParams.has('render') || page.url.searchParams.has('progress')
-	);
-
-	/*
-	 * Renders use the picked size rather than the presentation config, so the video
-	 * comes out full bleed instead of pillarboxed inside a square stage.
-	 */
-	const renderAspect = $derived.by(() => {
-		if (!page.url.searchParams.has('render')) return undefined;
-		const w = Number(page.url.searchParams.get('w'));
-		const h = Number(page.url.searchParams.get('h'));
-		return w > 0 && h > 0 ? w / h : undefined;
-	});
-
-	/*
-	 * Reactive snapshot of the presentation, exposed to plugins via
-	 * `ctx.state`. The scene fields capture the initial values once;
-	 * navigation and step changes update the snapshot below.
-	 */
-	const presentationState = $state<PresentationState>(
-		untrack(() => ({
-			sceneId: id,
-			sceneIndex: index,
-			totalScenes: sequence.length,
-			step: manager.step,
-			totalSteps: manager.totalSteps,
-			stepCompleted: manager.stepCompleted,
-			playing: manager.playing,
-			finished: manager.finished
-		}))
-	);
-
-	/*
-	 * Subscribed here (before the scene child mounts) so the first scene's
-	 * `manager.load` step change is captured.
-	 */
-	const syncStep = manager.onStepChange((step, total) => {
-		presentationState.step = step;
-		presentationState.totalSteps = total;
-		presentationState.stepCompleted = manager.stepCompleted;
-		presentationState.playing = manager.playing;
-		presentationState.finished = manager.finished;
-		manager.saveState(id);
-		updateUrlStep(step);
-	});
-
-	const syncLoad = audioDisabled
-		? noopUnsubscribe
-		: manager.onLoad(() => {
-				if (audio) loadAudio();
-			});
-
-	const syncPlayback = audioDisabled
-		? noopUnsubscribe
-		: manager.onPlaybackChange((time, playing) => {
-				syncAudio(time, playing);
-			});
-
-	const pluginManager = createPluginManager();
-
-	/*
-	 * True while a scene-change navigation is in flight, so a second press at
-	 * the boundary (which has no exit-transition window while the window is
-	 * hidden) cannot start a second `goto` that would abort the first.
-	 */
-	let navigating = false;
-
-	/*
-	 * Waits a frame before the bar can animate so a scene restoring its step
-	 * from the url hash sets the width instantly instead of sliding there.
-	 */
-	let animated = $state(false);
 
 	onMount(() => {
-		if (!audioDisabled) {
-			audio = new AudioController();
-			loadAudio();
+		if (typeof BroadcastChannel !== 'undefined' && slug) {
+			speaker = new SpeakerSession(speakerChannelName(slug));
+			speaker.onmessage = handleSpeakerMessage;
+			connected = true;
+			if (embed) speaker.post({ type: 'hello' });
 		}
-		// slash alone shows the first scene without its name, so use the named url instead
-		const redirected = useNamedUrl();
-		/*
-		 * Plugins set up on every mount, even when redirecting. The redirect
-		 * is a same-route replace, so this mount is the only one. Skipping
-		 * setup here would leave every plugin silently dead.
-		 */
-		pluginManager.setup();
-		if (redirected) return () => pluginManager.cleanup();
-		// child scenes mount first, so their load already corrected the bar
-		requestAnimationFrame(() => (animated = true));
-		signalReady();
-		return () => pluginManager.cleanup();
+
+		if (sceneCount === 0) return closeSpeaker;
+
+		const nextHash = window.location.hash;
+		const target = readPosition(nextHash, sceneCount);
+		started = true;
+		targetScene = target.scene;
+
+		if (target.scene !== position.scene) {
+			hash = nextHash;
+			runtime.reset(target.step);
+			return closeSpeaker;
+		}
+
+		if (target.step !== runtime.step) runtime.jump(target.step);
+		writeHash(target.scene, runtime.step);
+
+		return closeSpeaker;
 	});
 
-	onDestroy(() => {
-		syncStep();
-		syncLoad();
-		syncPlayback();
-		const controller = audio;
-		audio = null;
-		controller?.destroy();
-		audioPlaying = false;
-	});
-
-	afterNavigate((navigation) => {
-		// shallow navigations only mirror the step in the url hash
-		if (navigation.shallow) return;
-		audioSuppressed = false;
-		if (manager.isAnimating) syncAudio(manager.liveTime, true);
-		// going back can land on slash which shows the first scene without its name, so use the named url instead
-		if (useNamedUrl()) return;
-		presentationState.sceneId = id;
-		presentationState.sceneIndex = index;
-		pluginManager.emitSceneChange({ id, index });
-		navigating = false;
-	});
-
-	// seed the target scene's position from its URL hash before it mounts
-	beforeNavigate((navigation) => {
-		if (navigation.shallow || !navigation.to) return;
-		audioSuppressed = true;
-		stopAudio();
-		applyUrlStep(navigation.to.params?.scene ?? sequence[0].id, navigation.to.url);
-	});
-
-	/*
-	 * The renderer waits for this flag before taking any screenshot, so
-	 * nothing ever captures a half-loaded image or video.
-	 */
-	let resolveReady: (() => void) | undefined;
-	const ready = new Promise<void>((resolve) => (resolveReady = resolve));
-
-	if (typeof window !== 'undefined' && page.url.searchParams.has('render')) {
-		setupRenderBridge();
-	}
-
-	function createPluginManager() {
-		const pluginManager = new PluginManager(
-			{ state: presentationState, sequence, navigateTo, next, prev },
-			manager.onStepChange.bind(manager)
-		);
-		for (const plugin of plugins) pluginManager.register(plugin);
-		return pluginManager;
-	}
-
-	function setupRenderBridge() {
-		const scheduler = manager.enableRenderMode();
-		window.__sequenceRenderer = {
-			manager,
-			scheduler,
-			scenes: sequence.map((s) => s.id),
-			get tracks() {
-				return manager.tracks;
-			},
-			renderOptions: getOptions().render,
-			ready,
-			navigateTo,
-			advanceFrame: (delta: number) => manager.advanceFrame(delta)
+	function buildSpeakerState(): SpeakerState {
+		return {
+			sceneId: current?.id ?? '',
+			sceneIndex: position.scene,
+			totalScenes: sceneCount,
+			step: runtime.step,
+			max: runtime.max,
+			scenes: sequence.map((scene) => ({ id: scene.id })),
+			aspectRatio: { width: 16, height: 9 },
+			notes: runtime.root?.querySelector<HTMLElement>('[data-notes]')?.innerHTML ?? ''
 		};
 	}
 
-	function loadAudio() {
-		const controller = audio;
-		if (!controller) return;
-		controller.stop();
-		controller.load(manager.tracks, manager.timeline.totalDuration);
-		audioPlaying = false;
+	function handleSpeakerMessage(message: SpeakerMessage) {
+		if (embed) {
+			if (message.type === 'state') applySpeakerState(message.state);
+			return;
+		}
+
+		switch (message.type) {
+			case 'next':
+				next();
+				break;
+			case 'prev':
+				prev();
+				break;
+			case 'goto': {
+				const index = sequence.findIndex((scene) => scene.id === message.id);
+				if (index >= 0) goTo(index, 0);
+				break;
+			}
+			case 'hello':
+				speaker?.post({ type: 'state', state: buildSpeakerState() });
+				break;
+		}
 	}
 
-	function syncAudio(time: number, playing: boolean) {
-		const controller = audio;
-		if (!controller) return;
-		if (audioSuppressed) {
-			controller.pause();
-			audioPlaying = false;
-			return;
-		}
-		if (controller.currentTime >= controller.duration) {
-			controller.pause();
-			audioPlaying = false;
-			return;
-		}
-		if (!playing) {
-			if (audioPlaying) syncLiveAudio(controller, time);
-			else {
-				controller.pause();
-				audioPlaying = false;
+	function applySpeakerState(state: SpeakerState) {
+		if (state.sceneIndex < 0 || state.sceneIndex >= sceneCount) return;
+
+		if (state.sceneIndex === position.scene) {
+			if (state.step !== runtime.step) {
+				/*
+				 * Use the normal step path so the preview runs the same layout
+				 * and code animations as the presenter. Only fall back to an
+				 * instant jump when the scene has not measured its steps yet.
+				 */
+				if (runtime.max === 0 && state.step > 0) runtime.jump(state.step);
+				else runtime.setStep(state.step);
+				writeHash(state.sceneIndex, runtime.step);
 			}
 			return;
 		}
-		if (audioPlaying) syncLiveAudio(controller, time);
-		else void controller.play(time);
-		audioPlaying = true;
-	}
 
-	function syncLiveAudio(controller: AudioController, time: number) {
-		const currentTime = controller.currentTime;
-		if (time !== currentTime) controller.sync(time, true);
-	}
-
-	function stopAudio() {
-		audio?.stop();
-		audioPlaying = false;
-	}
-
-	function unlockAudio() {
-		const controller = audio;
-		if (!controller) return;
-		if (audioUnlocked) {
-			if (manager.isAnimating) syncAudio(manager.liveTime, true);
-			return;
-		}
-		audioUnlocked = true;
-		try {
-			Promise.resolve(controller.unlock())
-				.then((unlocked) => {
-					if (audio !== controller) return;
-					if (unlocked === false) {
-						audioUnlocked = false;
-						return;
-					}
-					if (manager.isAnimating) syncAudio(manager.liveTime, true);
-				})
-				.catch(() => {
-					if (audio === controller) audioUnlocked = false;
-				});
-		} catch {
-			audioUnlocked = false;
-		}
-	}
-
-	/** Raises the ready flag once media has settled and a couple of frames painted. */
-	function signalReady() {
-		const resolve = resolveReady;
-		if (!resolve) return;
-		settleMedia().then(() => {
-			// wait two frames so the browser has actually painted the result
-			requestAnimationFrame(() => requestAnimationFrame(resolve));
-		});
-	}
-
-	/**
-	 * Waits until every image and video on the page has finished loading (or
-	 * failed). Media created later by steps isn't covered, since mid-timeline
-	 * slice prerolls already tolerate that.
-	 */
-	function settleMedia(): Promise<unknown> {
-		return Promise.all(
-			Array.from(document.querySelectorAll('img, video'), (el) => {
-				if (el instanceof HTMLImageElement) return waitUntil(el.complete, el, ['load', 'error']);
-				if (el instanceof HTMLVideoElement)
-					return waitUntil(el.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA, el, [
-						'loadeddata',
-						'error'
-					]);
-				return Promise.resolve();
-			})
+		switchScene(
+			state.sceneIndex,
+			state.step,
+			state.sceneIndex > position.scene ? 'forward' : 'backward'
 		);
 	}
 
-	/** Resolves immediately when `done`, else once one of `events` fires on `el`. */
-	function waitUntil(done: boolean, el: Element, events: string[]): Promise<void> {
-		if (done) return Promise.resolve();
-		return new Promise((resolve) => {
-			for (const event of events) el.addEventListener(event, () => resolve(), { once: true });
-		});
+	$effect(() => {
+		void connected;
+		void embed;
+		void position.scene;
+		void runtime.step;
+		void runtime.max;
+		void runtime.root;
+		void current?.id;
+		if (!connected || embed || !speaker) return;
+		speaker.post({ type: 'state', state: buildSpeakerState() });
+	});
+
+	function openSpeaker() {
+		if (embed || !speakerUrl || typeof window === 'undefined') return;
+		window.open(speakerUrl, `animotion-speaker-${slug ?? 'default'}`, 'width=1200,height=800');
 	}
 
-	function useNamedUrl() {
-		if (page.params.scene || !sequence[0]) return false;
-		const search = page.url.search;
-		const hash = page.url.hash;
-		goto(`${base}/${sequence[0].id}${search}${hash}`, { replace: true });
-		return true;
+	function readPosition(value: string, count: number): { scene: number; step: number } {
+		const raw = value.slice(1);
+		if (raw === '') return { scene: 0, step: 0 };
+
+		const [sceneText, stepText] = raw.split('.');
+		const last = Math.max(0, count - 1);
+		const scene = Math.max(0, Math.min((Number(sceneText) || 1) - 1, last));
+		const step = Math.max(0, Number(stepText) || 0);
+		return { scene, step };
 	}
 
-	function navigateTo(targetId: string) {
-		const saved = manager.getSavedState(targetId);
-		let step: number | null = null;
-		if (saved) step = saved.stepCompleted ? saved.stepIndex + 1 : saved.stepIndex;
-		const search = page.url.search;
-		const hash = step === null || step === 0 ? '' : `#${step}`;
-		return goto(`${base}/${targetId}${search}${hash}`);
-	}
-
-	/**
-	 * Restores the saved position for `sceneId` from `url`'s hash fragment
-	 * (`/presentation/scene#N`). A valid non-negative integer becomes the paused step the
-	 * scene resumes at; anything else leaves the scene at its start.
-	 */
-	function applyUrlStep(sceneId: string, url: { hash: string }) {
-		const raw = url.hash.slice(1);
-		if (raw === '') return;
-		const step = Number(raw);
-		if (Number.isInteger(step) && step >= 0) {
-			manager.restoreState(sceneId, step);
-		}
-	}
-
-	/** Mirrors the current step in the URL hash (`/presentation/scene#N`) without navigating. */
-	function updateUrlStep(step: number) {
+	function writeHash(scene: number, step: number) {
+		const next = step > 0 && Number.isFinite(step) ? `#${scene + 1}.${step}` : `#${scene + 1}`;
+		if (hash === next) return;
+		hash = next;
 		if (typeof window === 'undefined') return;
-		if (page.url.searchParams.has('render')) return;
-		const location = window.location;
-		if (step === 0) {
-			if (!location.hash) return;
-			goto(`${location.pathname}${location.search}`, { shallow: true, state: {} });
+
+		const url = `${window.location.pathname}${window.location.search}${next}`;
+		void goto(url, { shallow: true, replace: true });
+	}
+
+	/** Copies the old scene into the stage so it can animate out. */
+	function playExit(nextDirection: SceneDirection) {
+		const root = runtime.root;
+		if (!root || !exitLayer) return;
+
+		const config = resolveSceneTransition(current?.transition, transition, duration);
+		playExitScene(exitLayer, root, config.exit, nextDirection, config.duration);
+	}
+
+	function switchScene(scene: number, step: number, nextDirection: SceneDirection) {
+		if (scene === position.scene) {
+			runtime.setStep(step);
+			writeHash(scene, runtime.step);
 			return;
 		}
-		if (location.hash === `#${step}`) return;
-		goto(`${location.pathname}${location.search}#${step}`, { shallow: true, state: {} });
+		if (scene < 0 || scene >= sceneCount) return;
+
+		playExit(nextDirection);
+		direction = nextDirection;
+		targetScene = scene;
+		runtime.reset(step);
+		writeHash(scene, Number.isFinite(step) ? step : 0);
+	}
+
+	function goTo(scene: number, step = 0) {
+		const nextDirection: SceneDirection = scene < position.scene ? 'backward' : 'forward';
+		switchScene(scene, step, nextDirection);
 	}
 
 	function next() {
-		if (manager.exitBusy || navigating) return;
-		if (manager.finished) {
-			if (index >= sequence.length - 1) return;
-			audioSuppressed = true;
-			stopAudio();
-			navigating = true;
-			manager.saveState(id);
-			manager.setDirection('forward');
-			manager.playExit().then(() => navigateTo(sequence[index + 1].id));
-		} else {
-			manager.next();
+		if (runtime.next()) {
+			writeHash(position.scene, runtime.step);
+			return;
 		}
+		switchScene(position.scene + 1, 0, 'forward');
 	}
 
 	function prev() {
-		if (manager.exitBusy || navigating) return;
-		if (manager.atStart) {
-			if (index <= 0) return;
-			audioSuppressed = true;
-			stopAudio();
-			navigating = true;
-			manager.saveState(id);
-			manager.setDirection('backward');
-			manager.playExit().then(() => navigateTo(sequence[index - 1].id));
-		} else {
-			stopAudio();
-			manager.prev();
+		if (runtime.prev()) {
+			writeHash(position.scene, runtime.step);
+			return;
 		}
+		switchScene(position.scene - 1, Number.POSITIVE_INFINITY, 'backward');
 	}
 
-	function onkeydown(e: KeyboardEvent) {
-		unlockAudio();
-		if (pluginManager.handleKeydown(e)) return;
-		if (e.key === 'ArrowRight') next();
-		if (e.key === 'ArrowLeft') prev();
+	function goToEnd() {
+		const last = sceneCount - 1;
+		if (last < 0) return;
+		if (last === position.scene) {
+			runtime.setStep(runtime.max);
+			writeHash(last, runtime.max);
+			return;
+		}
+		switchScene(last, Number.POSITIVE_INFINITY, 'forward');
+	}
+
+	function onHashChange() {
+		if (!started) return;
+		const nextHash = window.location.hash;
+		if (nextHash === hash) return;
+
+		const before = position.scene;
+		const target = readPosition(nextHash, sceneCount);
+		if (target.scene === before) {
+			hash = nextHash;
+			runtime.jump(target.step);
+			writeHash(target.scene, runtime.step);
+			return;
+		}
+		switchScene(target.scene, target.step, target.scene > before ? 'forward' : 'backward');
+	}
+
+	function toggleFullscreen() {
+		if (typeof document === 'undefined') return;
+		if (document.fullscreenElement) void document.exitFullscreen().catch(() => {});
+		else void document.documentElement.requestFullscreen().catch(() => {});
+	}
+
+	function onkeydown(event: KeyboardEvent) {
+		if (event.metaKey || event.ctrlKey || event.altKey) return;
+
+		if (embed) {
+			if (event.key === 'ArrowRight' || event.key === 'ArrowLeft') {
+				event.preventDefault();
+				speaker?.post({ type: event.key === 'ArrowRight' ? 'next' : 'prev' });
+			}
+			return;
+		}
+
+		const tag = event.target instanceof HTMLElement ? event.target.tagName : '';
+		if (['INPUT', 'TEXTAREA', 'SELECT'].includes(tag)) return;
+		/*
+		 * Let a focused button handle its own activation so space and enter do
+		 * not advance twice.
+		 */
+		if (tag === 'BUTTON' && (event.key === ' ' || event.key === 'Enter')) return;
+
+		switch (event.key) {
+			case 'ArrowRight':
+			case 'ArrowDown':
+			case ' ':
+			case 'PageDown':
+				event.preventDefault();
+				next();
+				break;
+			case 'ArrowLeft':
+			case 'ArrowUp':
+			case 'PageUp':
+				event.preventDefault();
+				prev();
+				break;
+			case 'Home':
+				event.preventDefault();
+				goTo(0, 0);
+				break;
+			case 'End':
+				event.preventDefault();
+				goToEnd();
+				break;
+			case 's':
+			case 'S':
+				openSpeaker();
+				break;
+			case 'f':
+			case 'F':
+				toggleFullscreen();
+				break;
+		}
 	}
 </script>
 
-<svelte:window {onkeydown} onpointerdown={unlockAudio} onclick={unlockAudio} />
+<svelte:window {onkeydown} onhashchange={onHashChange} />
 
-<!-- Every letter is drawn at its true size instead of snapped to the pixel
-	grid. -->
-<div
-	class="flex h-dvh w-dvw items-center justify-center overflow-hidden bg-background"
-	style:text-rendering="geometricprecision"
->
-	<Scene ratio={renderAspect}>
-		<Content />
-	</Scene>
-</div>
+{#if current}
+	<div
+		class="flex h-dvh w-dvw items-center justify-center overflow-hidden bg-background"
+		style:text-rendering="geometricprecision"
+	>
+		<section
+			class="@container relative aspect-video overflow-hidden bg-background text-foreground"
+			style:width="min(100dvw, calc(100dvh * 16 / 9))"
+		>
+			<div bind:this={exitLayer} class="pointer-events-none absolute inset-0 z-20"></div>
 
-{#if showProgressBar}
-	<div class="fixed right-0 bottom-0 left-0 z-10 h-[4px] bg-surface">
-		<div class="h-full bg-accent" class:transition-all={animated} style:width="{progress}%"></div>
+			<div class="relative z-10 h-full w-full">
+				{#key current.id}
+					<Scene enter={currentTransition.enter} {direction} duration={currentTransition.duration}>
+						{#if current.kind === 'markdown'}
+							<Markdown source={current.source} />
+						{:else}
+							{@const Component = current.component}
+							<Component />
+						{/if}
+					</Scene>
+				{/key}
+			</div>
+		</section>
+	</div>
+
+	{#if !embed}
+		<div class="fixed top-4 right-4 z-20 flex items-center gap-2 ui-chrome">
+			{#if speakerUrl}
+				<button
+					type="button"
+					class="cursor-pointer rounded-full bg-black/60 px-4 py-2 text-sm text-white/80 backdrop-blur hover:text-white"
+					title="Speaker view (s)"
+					onclick={openSpeaker}
+				>
+					Speaker
+				</button>
+			{/if}
+			<button
+				type="button"
+				class="cursor-pointer rounded-full bg-black/60 px-4 py-2 text-sm text-white/80 backdrop-blur hover:text-white"
+				title="Fullscreen (f)"
+				onclick={toggleFullscreen}
+			>
+				Fullscreen
+			</button>
+		</div>
+
+		<div
+			class="fixed bottom-6 left-1/2 z-20 flex -translate-x-1/2 items-center gap-4 rounded-full bg-black/60 px-5 py-2 text-sm text-white/80 backdrop-blur ui-chrome"
+		>
+			<button type="button" class="cursor-pointer px-2 hover:text-white" onclick={prev}>
+				Prev
+			</button>
+			<span>{position.scene + 1} / {sceneCount}</span>
+			<span class="opacity-40">step {runtime.step} / {runtime.max}</span>
+			<button type="button" class="cursor-pointer px-2 hover:text-white" onclick={next}>
+				Next
+			</button>
+		</div>
+
+		<div class="fixed right-0 bottom-0 left-0 z-10 h-1 bg-surface">
+			<div class="h-full bg-accent transition-[width] duration-300" style:width="{progress}%"></div>
+		</div>
+	{/if}
+{:else}
+	<div class="flex h-dvh items-center justify-center bg-background text-foreground ui-chrome">
+		<p class="text-lg opacity-60">No scenes found in this presentation.</p>
 	</div>
 {/if}

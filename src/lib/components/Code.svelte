@@ -1,408 +1,220 @@
 <script lang="ts">
-	import { onDestroy, onMount } from 'svelte';
-	import {
-		computeMorphSpans,
-		computeSettledSpans,
-		morphBounds,
-		morphDigitCount,
-		selectionOpacity,
-		type RenderSpan
-	} from '../scene/code/code-render.svelte.js';
-	import {
-		computeIdleTarget,
-		computeRevealTarget,
-		computeSelectionTarget,
-		fadeMaskImage,
-		revealTargetLine,
-		scrollMask
-	} from '../scene/code/code-scroll.js';
-	import { getCodeStates, type CodeRange } from '../scene/code/code.svelte.js';
-	import { clamp, easeInOutSine, lerp } from '../scene/easing.js';
+	import { onDestroy, onMount, untrack } from 'svelte';
+	import { getSlide } from '../slides/context.svelte.js';
+	import { diffTokens, parseHighlight, positioned, type MorphToken } from '../slides/highlight.js';
+	import { computeMorphSpans, computeSettledSpans, morphBounds } from '../slides/code-render.js';
+
+	interface CodeStep {
+		code?: string;
+		append?: string;
+		prepend?: string;
+		replace?: [string, string];
+		remove?: string;
+		highlight?: string;
+	}
 
 	interface Props {
-		/** Size and typography classes, e.g. `text-2xl` (default). */
+		code?: string;
+		steps?: (string | CodeStep)[];
+		language?: string;
 		class?: string;
-		/** Which named code block to render (default `default`). */
-		name?: string;
-		/** Opacity of code outside the current selection (default `0.32`). */
-		unselectedOpacity?: number;
-		/** Line height in `em` (default `1.5`). */
-		lineHeight?: number;
-		/** Show a line-number gutter (default `false`). */
 		lineNumbers?: boolean;
-		/** Fade lines out at the scroll edges (default `true`). */
-		fade?: boolean;
-		/** Fade size in `em` (default `4`). */
-		fadeSize?: number;
-		/** Which scrolling to drive: `'both'`, `'selection'`, `'reveal'`, or `'none'`. */
-		scrollMode?: 'both' | 'selection' | 'reveal' | 'none';
+		lineHeight?: number;
+		unselectedOpacity?: number;
 	}
 
 	let {
-		class: classes = 'text-2xl',
-		name = 'default',
-		unselectedOpacity = 0.32,
-		lineHeight = 1.5,
+		code,
+		steps = [],
+		language = 'ts',
+		class: classes = 'text-lg',
 		lineNumbers = false,
-		fade = true,
-		fadeSize = 4,
-		scrollMode = 'both'
+		lineHeight = 1.5,
+		unselectedOpacity = 0.32
 	}: Props = $props();
-	const states = getCodeStates();
-	const slot = $derived.by(() => {
-		const target = states.get(name);
-		if (!target) {
-			const available = [...states.keys()].join(', ') || '(none)';
-			throw new Error(`unknown code block "${name}". Available: ${available}.`);
-		}
-		return target;
-	});
 
-	const spans: RenderSpan[] = $derived.by(() => {
-		if (Array.isArray(slot.tokens)) {
-			return computeMorphSpans(
-				slot.tokens,
-				slot.rawProgress,
-				slot.morphProgress,
-				slot.selection,
-				slot.selectionProgress,
-				slot.previousSelection,
-				unselectedOpacity
-			);
-		}
-		const settled = slot.settled ?? [];
-		if (settled.length > 0) {
-			return computeSettledSpans(
-				settled,
-				slot.selection,
-				slot.selectionProgress,
-				slot.previousSelection,
-				unselectedOpacity
-			);
-		}
-		return fallbackSpans(slot.resolved);
-	});
+	const states = $derived.by(() => {
+		const list: { code: string; highlight?: string }[] = [];
+		let current = code ?? '';
 
-	const bounds = $derived.by(() => {
-		if (Array.isArray(slot.tokens)) {
-			return morphBounds(slot.tokens, slot.morphProgress);
-		}
-		let mx = 0;
-		let my = 0;
-		for (const span of spans) {
-			const r = span.leftCh + span.text.length;
-			const b = span.topEm + 1;
-			if (r > mx) mx = r;
-			if (b > my) my = b;
-		}
-		return { width: mx, height: my };
-	});
-
-	const lineCount = $derived(Math.max(0, Math.ceil(bounds.height)));
-	const digits = $derived(
-		Array.isArray(slot.tokens) ? morphDigitCount(slot.tokens) : String(lineCount).length
-	);
-	const gap = 1;
-	const gutter = $derived(lineNumbers ? digits + gap : 0);
-	const lineRows = $derived.by(() => {
-		const rows: number[] = [];
-		for (let i = 1; i <= lineCount; i++) rows.push(i);
-		return rows;
-	});
-
-	let fbId = 0;
-
-	function fallbackSpans(code: string): RenderSpan[] {
-		return code.split('\n').map((text, line) => ({
-			key: `fb-${fbId++}`,
-			text,
-			leftCh: 0,
-			topEm: line,
-			alpha: 1,
-			color: '',
-			selected: 1
-		}));
-	}
-
-	let codeBlock = $state<HTMLElement>();
-	let scrollTop = $state(0);
-	let clientHeight = $state(0);
-	let scrollHeight = $state(0);
-	let revealViewportHeight = $state(0);
-
-	function refreshMeasurements() {
-		if (!codeBlock) return;
-		scrollTop = codeBlock.scrollTop;
-		clientHeight = codeBlock.clientHeight;
-		scrollHeight = codeBlock.scrollHeight;
-		if (
-			Array.isArray(slot.tokens) &&
-			revealViewportHeight <= 0 &&
-			codeBlock.scrollHeight > codeBlock.clientHeight
-		) {
-			revealViewportHeight = codeBlock.clientHeight;
-		}
-	}
-
-	/*
-	 * Content height can change without the scroll container resizing, so
-	 * take fresh measurements when the rendered bounds or typography change
-	 * to keep masks and reveal scrolling accurate.
-	 */
-	$effect(() => {
-		void bounds;
-		void classes;
-		void lineHeight;
-		refreshMeasurements();
-	});
-
-	/*
-	 * A resize observer catches height changes that the bounds effect misses,
-	 * such as fonts finishing load or the parent limiting its maximum height.
-	 * It is created once and disconnected on unmount.
-	 */
-	$effect(() => {
-		if (!codeBlock || typeof ResizeObserver === 'undefined') return;
-		const observer = new ResizeObserver(refreshMeasurements);
-		observer.observe(codeBlock);
-		return () => observer.disconnect();
-	});
-
-	const mask = $derived(scrollMask(scrollTop, clientHeight, scrollHeight));
-	const maskImage = $derived.by(() => {
-		if (!fade || mask === 'none' || clientHeight <= 0) return '';
-		return fadeMaskImage(mask, fadeSize);
-	});
-
-	function fontSizePx() {
-		return codeBlock ? parseFloat(getComputedStyle(codeBlock).fontSize) || 0 : 0;
-	}
-
-	function applyScroll(value: number) {
-		if (!codeBlock) return;
-		codeBlock.scrollTop = value;
-		scrollTop = codeBlock.scrollTop;
-	}
-
-	let revealFrom = $state(0);
-	let revealBottomLine = $state<number | null>(null);
-	let previousTokens: typeof slot.tokens = null;
-	let revealFrame: number | null = null;
-
-	function cancelRevealFrame() {
-		if (revealFrame === null) return;
-		cancelAnimationFrame(revealFrame);
-		revealFrame = null;
-	}
-
-	function applyFinalReveal() {
-		revealFrame = null;
-		if (!codeBlock) return;
-		refreshMeasurements();
-		if (scrollMode === 'none' || scrollMode === 'selection') return;
-		if (slot.selectionProgress !== null && scrollMode !== 'reveal') return;
-		if (revealBottomLine === null) return;
-
-		const fontSize = fontSizePx();
-		const lineHeightPx = fontSize * lineHeight;
-		const fadeSizePx = fade ? fadeSize * fontSize : 0;
-		if (lineHeightPx <= 0 || clientHeight <= 0) return;
-
-		const target = computeRevealTarget(
-			revealBottomLine,
-			lineHeightPx,
-			clientHeight,
-			scrollHeight,
-			fadeSizePx,
-			revealFrom
-		);
-		if (target !== null) applyScroll(target);
-	}
-
-	/*
-	 * Scrolling is driven by a frame poll instead of effects. Timeline seeks
-	 * change scene state between frames, which effects never observe, and
-	 * the result must match the rendered video. The poll idles when nothing
-	 * moves so the user keeps manual scrolling control.
-	 */
-	let selectionFrom = 0;
-	let selectionSession: CodeRange[] | null = null;
-	let lastTickActive = false;
-	let lastTickSelection: CodeRange[] | null = null;
-
-	function syncScroll() {
-		if (!codeBlock || scrollMode === 'none') return;
-
-		/*
-		 * Detect the morph start and end so reveal scrolling can anchor to the
-		 * position already on screen before the morph began.
-		 */
-		const tokens = slot.tokens;
-		if (Array.isArray(tokens) && !Array.isArray(previousTokens)) {
-			cancelRevealFrame();
-			revealViewportHeight = 0;
-			revealBottomLine = revealTargetLine(tokens);
-			revealFrom = codeBlock.scrollTop;
-			refreshMeasurements();
-		} else if (!Array.isArray(tokens) && Array.isArray(previousTokens)) {
-			cancelRevealFrame();
-			revealFrame = requestAnimationFrame(applyFinalReveal);
-		}
-		previousTokens = tokens;
-
-		// keep the scroll position a selection started from so its progress can lerp smoothly
-		const progress = slot.selectionProgress;
-		if (progress === null) {
-			selectionSession = null;
-		} else if (selectionSession !== slot.selection) {
-			selectionSession = slot.selection;
-			selectionFrom = codeBlock.scrollTop;
+		if (code !== undefined || steps.length === 0) {
+			list.push({ code: current });
 		}
 
-		const fontSize = fontSizePx();
-		const lineHeightPx = fontSize * lineHeight;
-		const fadeSizePx = fade ? fadeSize * fontSize : 0;
-		if (lineHeightPx <= 0 || clientHeight <= 0) return;
-
-		if (progress !== null && scrollMode !== 'reveal') {
-			const target = computeSelectionTarget(
-				slot.selection,
-				lineCount,
-				lineHeightPx,
-				clientHeight,
-				scrollHeight,
-				fadeSizePx,
-				selectionFrom
-			);
-			if (target !== null) {
-				applyScroll(lerp(selectionFrom, target, easeInOutSine(clamp(progress, 0, 1))));
+		for (const step of steps) {
+			if (typeof step === 'string') {
+				current = step;
+				list.push({ code: current });
+				continue;
 			}
-			lastTickActive = true;
+
+			if (step.code !== undefined) current = step.code;
+			if (step.append !== undefined) current += step.append;
+			if (step.prepend !== undefined) current = step.prepend + current;
+			if (step.replace !== undefined) current = current.replace(step.replace[0], step.replace[1]);
+			if (step.remove !== undefined) current = current.replace(step.remove, '');
+			list.push({ code: current, highlight: step.highlight });
+		}
+
+		if (list.length === 0) list.push({ code: current });
+		return list;
+	});
+
+	const runtime = getSlide();
+	let root: HTMLElement;
+	let start = $state<number | null>(null);
+
+	let displayed = $state<{ code: string; highlight?: string } | null>(null);
+	let tokens = $state<MorphToken[] | null>(null);
+	let progress = $state(1);
+	let selection = $state('');
+	let previousSelection = $state('');
+	let frame = 0;
+	let initialized = false;
+
+	onMount(() => {
+		const parent = root.closest<HTMLElement>('[data-step]');
+		const at = parent ? Number(parent.dataset.step) : 0;
+		start = Number.isFinite(at) ? at : 0;
+	});
+
+	onDestroy(() => cancelAnimationFrame(frame));
+
+	const index = $derived(
+		start === null ? 0 : Math.max(0, Math.min(states.length - 1, runtime.step - start))
+	);
+	const current = $derived(states[index] ?? { code: '' });
+
+	/*
+	 * Morph from the code that was on screen to the new state. The frame clock
+	 * drives token positions, so this cannot run as a CSS transition.
+	 */
+	function morphTo(next: { code: string; highlight?: string }) {
+		if (!initialized) {
+			initialized = true;
+			displayed = next;
 			return;
 		}
 
-		/*
-		 * When the scene settles, park the code at the scroll position its
-		 * selection implies, so scrubbing or rewinding matches the rendered
-		 * video. This runs once per state change that just arrived, then idle
-		 * ticks leave manual scrolling alone.
-		 */
-		if (!Array.isArray(slot.tokens) && scrollMode !== 'reveal') {
-			const idleChanged = lastTickSelection !== null && slot.selection !== lastTickSelection;
-			if (lastTickActive || idleChanged) {
-				const parkTarget = computeIdleTarget(
-					slot.selection,
-					lineCount,
-					lineHeightPx,
-					clientHeight,
-					scrollHeight,
-					fadeSizePx
-				);
-				if (parkTarget !== null && Math.abs(parkTarget - codeBlock.scrollTop) > 0.5)
-					applyScroll(parkTarget);
-			}
+		const before = untrack(() => displayed);
+		if (!before) {
+			displayed = next;
+			return;
 		}
-		lastTickActive = false;
-		lastTickSelection = slot.selection;
 
-		if (scrollMode === 'selection' || !Array.isArray(slot.tokens)) return;
-		const bottomLine = revealBottomLine;
-		if (bottomLine === null) return;
-		const finalBounds = morphBounds(slot.tokens, 1);
-		const revealHeight = revealViewportHeight > 0 ? revealViewportHeight : clientHeight;
-		const finalScrollHeight = Math.max(
-			scrollHeight,
-			finalBounds.height * lineHeightPx,
-			revealHeight
-		);
-		const revealTarget = computeRevealTarget(
-			bottomLine,
-			lineHeightPx,
-			revealHeight,
-			finalScrollHeight,
-			fadeSizePx,
-			revealFrom
-		);
-		if (revealTarget !== null)
-			applyScroll(lerp(revealFrom, revealTarget, clamp(slot.progress ?? slot.rawProgress, 0, 1)));
+		const codeChanged = before.code !== next.code;
+		const highlightChanged = before.highlight !== next.highlight;
+		if (!codeChanged && !highlightChanged) {
+			cancelAnimationFrame(frame);
+			tokens = null;
+			progress = 1;
+			displayed = next;
+			return;
+		}
+
+		tokens = diffTokens(before.code, next.code, language);
+		previousSelection = before.highlight ?? '';
+		selection = next.highlight ?? '';
+		progress = 0;
+		cancelAnimationFrame(frame);
+
+		const started = performance.now();
+		const duration = 420;
+
+		const tick = (now: number) => {
+			const value = Math.min(1, Math.max(0, (now - started) / duration));
+			progress = value;
+			if (value < 1) {
+				frame = requestAnimationFrame(tick);
+				return;
+			}
+			tokens = null;
+			displayed = next;
+		};
+
+		frame = requestAnimationFrame(tick);
 	}
 
-	onMount(() => {
-		let frame = requestAnimationFrame(function drive() {
-			syncScroll();
-			frame = requestAnimationFrame(drive);
-		});
-		return () => cancelAnimationFrame(frame);
+	$effect(() => {
+		if (start === null) return;
+		morphTo(current);
 	});
-	onDestroy(cancelRevealFrame);
+
+	const selected = $derived(parseHighlight(selection));
+	const previouslySelected = $derived(parseHighlight(previousSelection));
+
+	const spans = $derived.by(() => {
+		if (tokens) {
+			return computeMorphSpans(tokens, progress, selected, previouslySelected, unselectedOpacity);
+		}
+		if (!displayed) return [];
+		return computeSettledSpans(
+			positioned(displayed.code, language),
+			parseHighlight(displayed.highlight),
+			unselectedOpacity
+		);
+	});
+
+	const bounds = $derived.by(() => {
+		if (tokens) return morphBounds(tokens, progress);
+
+		let width = 0;
+		let height = 0;
+		for (const span of spans) {
+			width = Math.max(width, span.leftCh + span.text.length);
+			height = Math.max(height, span.topEm + 1);
+		}
+
+		/* a trailing blank line has no token, but still takes a row */
+		const lines = displayed?.code.split('\n').length ?? 1;
+		return { width, height: Math.max(1, height, lines) };
+	});
+
+	const lineCount = $derived(Math.max(1, Math.ceil(bounds.height)));
+	const numberWidth = $derived(
+		Math.max(1, ...states.map((state) => String(state.code.split('\n').length).length))
+	);
+	const gutter = $derived(lineNumbers ? numberWidth + 1 : 0);
+	const lineRows = $derived(Array.from({ length: lineCount }, (_, index) => index + 1));
 </script>
 
 <div
-	bind:this={codeBlock}
-	onscroll={() => (scrollTop = codeBlock?.scrollTop ?? 0)}
-	class="code-block font-mono {classes}"
-	role="code"
-	style:max-height="100%"
-	style:overflow-x="hidden"
-	style:overflow-y="auto"
-	style:-webkit-mask-image={maskImage || undefined}
-	style:mask-image={maskImage || undefined}
-	style:scrollbar-width="none"
+	bind:this={root}
+	data-code-steps={states.length}
+	class={[tokens ? 'overflow-x-hidden' : 'overflow-x-auto', 'overflow-y-hidden', classes]}
 >
 	<div
-		style:position="relative"
-		style:white-space="pre"
-		style:line-height={lineHeight}
+		class="relative font-mono"
 		style:width="{bounds.width + gutter}ch"
 		style:height="{bounds.height * lineHeight}em"
-		style:overflow="hidden"
+		style:line-height={lineHeight}
 	>
 		{#if lineNumbers}
 			<div
-				class="text-right text-white/35"
-				style:position="absolute"
-				style:left="0"
-				style:top="0"
+				class="absolute top-0 left-0 text-right text-white/30 select-none"
 				style:width="{gutter}ch"
 				style:height="{bounds.height * lineHeight}em"
-				style:overflow="hidden"
-				style:user-select="none"
 			>
 				{#each lineRows as row (row)}
 					<span
-						style:position="absolute"
+						class="absolute"
 						style:top="{(row - 1) * lineHeight}em"
-						style:right="{gap}ch"
-						style:width="{digits}ch"
-						style:opacity={selectionOpacity(
-							row - 1,
-							0,
-							Infinity,
-							slot.selection,
-							slot.previousSelection,
-							slot.selectionProgress,
-							unselectedOpacity
-						)}
-						>{row}
-					</span>
+						style:right="1ch"
+						style:width="{numberWidth}ch">{row}</span
+					>
 				{/each}
 			</div>
 		{/if}
+
 		{#each spans as span (span.key)}
 			<span
-				style:color={span.color || undefined}
-				style:position="absolute"
+				data-code-token
+				class="absolute whitespace-pre"
 				style:left="{span.leftCh + gutter}ch"
 				style:top="{span.topEm * lineHeight}em"
-				style:opacity={span.alpha * span.selected}
-				>{span.text}
-			</span>
+				style:opacity={span.alpha}
+				style:color={span.color || undefined}>{span.text}</span
+			>
 		{/each}
 	</div>
 </div>
-
-<style>
-	.code-block::-webkit-scrollbar {
-		display: none;
-	}
-</style>

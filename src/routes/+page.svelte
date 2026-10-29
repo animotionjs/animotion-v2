@@ -1,9 +1,13 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
-	import { projectCreate, projectList, projectRename } from '#lib/projects.remote';
+	import {
+		presentationCreate,
+		presentationList,
+		presentationRename
+	} from '#lib/presentations.remote';
 
-	type Items = Awaited<ReturnType<typeof projectList>>;
+	type Items = Awaited<ReturnType<typeof presentationList>>;
 
 	let items = $state<Items | null>(null);
 	let name = $state('');
@@ -23,7 +27,7 @@
 
 	async function refresh() {
 		/* Awaiting the query again may hand back cached data, so refresh first. */
-		const live = projectList();
+		const live = presentationList();
 		await live.refresh();
 		items = await live;
 	}
@@ -64,7 +68,7 @@
 		renamingBusy = true;
 		renameError = null;
 		try {
-			await projectRename({ slug, name: renameValue });
+			await presentationRename({ slug, name: renameValue });
 			/* Only close if this row is still the one being edited. */
 			if (renaming === slug) cancelRename();
 			await refresh();
@@ -80,7 +84,7 @@
 		creating = true;
 		formError = null;
 		try {
-			const slug = await projectCreate({ name });
+			const slug = await presentationCreate({ name });
 			await goto(`/presentation/${encodeURIComponent(slug)}`);
 		} catch (e) {
 			formError = messageOf(e);
@@ -90,10 +94,16 @@
 	}
 </script>
 
-<div class="flex min-h-dvh w-dvw items-center justify-center bg-background text-foreground">
+<svelte:head>
+	<title>Slides</title>
+</svelte:head>
+
+<div
+	class="flex min-h-dvh w-dvw items-center justify-center bg-background text-foreground ui-chrome"
+>
 	<div class="flex w-full max-w-2xl flex-col gap-10 px-8 py-16">
 		<header class="pt-4 text-center">
-			<h1 class="text-4xl font-bold whitespace-nowrap">Animotion 🪄</h1>
+			<h1 class="text-4xl font-bold whitespace-nowrap">Slides 🪄</h1>
 		</header>
 
 		<section class="flex flex-col gap-1">
@@ -122,8 +132,8 @@
 					<input
 						class="min-w-0 flex-1 bg-transparent text-lg outline-none placeholder:opacity-40"
 						type="text"
-						placeholder="Project name"
-						aria-label="Project name"
+						placeholder="Presentation name"
+						aria-label="Presentation name"
 						bind:this={input}
 						bind:value={name}
 						disabled={creating}
@@ -151,24 +161,23 @@
 					>
 						<path d="M12 5v14M5 12h14" />
 					</svg>
-					New Project
+					New presentation
 				</button>
 			{/if}
 		</section>
 
 		<section class="flex flex-col gap-1">
 			<div class="flex items-center gap-3 pb-1">
-				<h2 class="text-sm tracking-widest uppercase opacity-50">Projects</h2>
+				<h2 class="text-sm tracking-widest uppercase opacity-50">Presentations</h2>
 				<div class="h-px flex-1 bg-white/10"></div>
 			</div>
 			{#if items === null}
 				<p class="px-3 py-2 text-lg opacity-50">Loading…</p>
 			{:else if items.length === 0}
-				<p class="px-3 py-2 text-lg opacity-50">No projects yet.</p>
+				<p class="px-3 py-2 text-lg opacity-50">No presentations yet.</p>
 			{:else}
 				{#each items as item (item.slug)}
 					{const open = `/presentation/${encodeURIComponent(item.slug)}`}
-					{const edit = `/timeline/${encodeURIComponent(item.slug)}`}
 					<div class="flex items-center gap-1 rounded-lg px-3 py-2 hover:bg-white/5">
 						{#if renaming === item.slug}
 							<form
@@ -181,7 +190,7 @@
 								<input
 									class="min-w-0 flex-1 bg-transparent text-lg outline-none"
 									type="text"
-									aria-label="Project name"
+									aria-label="Presentation name"
 									bind:this={renameInput}
 									bind:value={renameValue}
 									disabled={renamingBusy}
@@ -219,28 +228,10 @@
 								<span class="truncate">{item.name}</span>
 							</a>
 						{/if}
-						<a
-							class="shrink-0 px-1 opacity-40 hover:opacity-100"
-							href={edit}
-							title="Open in timeline"
-							aria-label={`Open ${item.name} in timeline`}
-						>
-							<svg
-								width="18"
-								height="18"
-								viewBox="0 0 24 24"
-								fill="none"
-								stroke="currentColor"
-								stroke-width="2"
-								stroke-linejoin="round"
-							>
-								<path d="M8 5v14l11-7z" />
-							</svg>
-						</a>
 						<button
 							type="button"
 							class="shrink-0 cursor-pointer px-1 opacity-40 hover:opacity-100"
-							title="Rename project"
+							title="Rename presentation"
 							aria-label={`Rename ${item.name}`}
 							onclick={() => startRename(item)}
 						>

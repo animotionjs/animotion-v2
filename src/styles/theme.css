@@ -1,2 +1,13 @@
 @import 'tailwindcss';
 @import '../lib/theme.css';
+
+@source '../projects';
+@source '../routes';
+
+/*
+ * Steps stay in the DOM so the layout engine can measure them. The attribute
+ * hides them without touching the display value their own classes provide.
+ */
+[data-slide-hidden] {
+	display: none !important;
+}

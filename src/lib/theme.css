@@ -62,13 +62,14 @@
 	--text-xs: calc(0.75rem * var(--ui-scale));
 	--text-sm: calc(0.875rem * var(--ui-scale));
 	--text-base: calc(1rem * var(--ui-scale));
-}
-
-@layer components {
-	.ui-player {
-		--player-accent: var(--color-accent);
-		--player-hover: color-mix(in oklab, var(--color-foreground) 10%, transparent);
-		--player-track: color-mix(in oklab, var(--color-foreground) 15%, transparent);
-		--player-icon: var(--color-foreground);
-	}
+	--text-lg: calc(1.125rem * var(--ui-scale));
+	--text-xl: calc(1.25rem * var(--ui-scale));
+	--text-2xl: calc(1.5rem * var(--ui-scale));
+	--text-3xl: calc(1.875rem * var(--ui-scale));
+	--text-4xl: calc(2.25rem * var(--ui-scale));
+	--text-5xl: calc(3rem * var(--ui-scale));
+	--text-6xl: calc(3.75rem * var(--ui-scale));
+	--text-7xl: calc(4.5rem * var(--ui-scale));
+	--text-8xl: calc(6rem * var(--ui-scale));
+	--text-9xl: calc(8rem * var(--ui-scale));
 }

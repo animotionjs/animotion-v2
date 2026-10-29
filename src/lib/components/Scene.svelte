@@ -1,38 +1,33 @@
 <script lang="ts">
-	import { getSceneManager, getOptions } from '../scene/index.js';
+	import { onMount } from 'svelte';
 	import type { Snippet } from 'svelte';
+	import { getSlide } from '../slides/context.svelte.js';
+	import {
+		playSceneTransition,
+		type SceneDirection,
+		type SceneTransition
+	} from '../slides/transitions.js';
 
 	interface Props {
-		/** Scene content. */
 		children: Snippet;
-		/** Aspect ratio (width ÷ height) override; defaults to the configured aspect ratio. */
-		ratio?: number;
-		/**
-		 * `'viewport'` sizes the scene to the presentation viewport; `'contain'`
-		 * fills the parent box instead, for embedders like the timeline preview
-		 * that size the stage themselves.
-		 */
-		fit?: 'viewport' | 'contain';
+		enter?: SceneTransition;
+		direction?: SceneDirection;
+		duration?: number;
 	}
 
-	let { children, ratio, fit = 'viewport' }: Props = $props();
-	const manager = getSceneManager();
-	const transition = manager.transitionState;
-	const { aspectRatio } = getOptions();
-	const aspect = $derived(ratio ?? aspectRatio.width / aspectRatio.height);
-	const contained = $derived(fit === 'contain');
-	const transform = $derived(
-		`translate(${transition.x}cqi, ${transition.y}cqi) scale(${transition.scale})`
-	);
+	let { children, enter = 'slide', direction = 'forward', duration = 450 }: Props = $props();
+
+	const runtime = getSlide();
+	let root: HTMLElement;
+
+	onMount(() => {
+		runtime.setRoot(root);
+		root.style.visibility = 'visible';
+		playSceneTransition(root, enter, 'enter', direction, duration);
+		return () => runtime.release(root);
+	});
 </script>
 
-<section
-	class="@container flex flex-col items-center justify-center overflow-hidden text-foreground"
-	style:width={contained ? '100%' : `min(100dvw, calc(100dvh * ${aspect}))`}
-	style:height={contained ? '100%' : null}
-	style:aspect-ratio={aspect}
-	style:opacity={transition.opacity}
-	style:transform
->
+<div bind:this={root} class="relative h-full w-full bg-background" style:visibility="hidden">
 	{@render children()}
-</section>
+</div>
